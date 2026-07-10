@@ -30,6 +30,8 @@ const defaultBillingSettings: BillingSettings = {
   QuotaForInviter: 0,
   QuotaForInvitee: 0,
   TopUpLink: '',
+  OnlineRechargeEnabled: true,
+  OnlineRechargeUrl: 'https://pay.ldxp.cn/shop/L0YH7L8S',
   'general_setting.docs_link': '',
   'quota_setting.enable_free_model_pre_consume': true,
   QuotaPerUnit: 500000,

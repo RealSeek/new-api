@@ -25,6 +25,7 @@ import { PaymentSettingsSection } from '../integrations/payment-settings-section
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { OnlineRechargeSettingsSection } from './online-recharge-settings-section'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -75,6 +76,18 @@ const BILLING_SECTIONS = [
           (settings['payment_setting.compliance_confirmed'] ?? false) &&
           settings['payment_setting.compliance_terms_version'] === 'v1'
         }
+      />
+    ),
+  },
+  {
+    id: 'online-recharge',
+    titleKey: 'Online Recharge',
+    build: (settings: BillingSettings) => (
+      <OnlineRechargeSettingsSection
+        defaultValues={{
+          OnlineRechargeEnabled: settings.OnlineRechargeEnabled,
+          OnlineRechargeUrl: settings.OnlineRechargeUrl,
+        }}
       />
     ),
   },

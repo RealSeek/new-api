@@ -151,6 +151,9 @@ func InitOptionMap() {
 	common.OptionMap["AudioRatio"] = ratio_setting.AudioRatio2JSONString()
 	common.OptionMap["AudioCompletionRatio"] = ratio_setting.AudioCompletionRatio2JSONString()
 	common.OptionMap["TopUpLink"] = common.TopUpLink
+	common.OptionMap["OnlineRechargeEnabled"] = "true"
+	common.OptionMap["OnlineRechargeUrl"] = "https://pay.ldxp.cn/shop/L0YH7L8S"
+	common.OptionMap["HeaderNavCustomLinks"] = `[{"title":"图片生成","titles":{"en":"Image Generation","fr":"Génération d'images","ja":"画像生成","ru":"Генерация изображений","vi":"Tạo hình ảnh","zhCN":"图片生成","zhTW":"圖片生成"},"url":"https://image.realseek.wiki/"}]`
 	//common.OptionMap["ChatLink"] = common.ChatLink
 	//common.OptionMap["ChatLink2"] = common.ChatLink2
 	common.OptionMap["QuotaPerUnit"] = strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)

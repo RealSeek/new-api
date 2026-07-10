@@ -118,6 +118,7 @@ export type SiteSettings = {
   'legal.user_agreement': string
   'legal.privacy_policy': string
   HeaderNavModules: string
+  HeaderNavCustomLinks: string
   SidebarModulesAdmin: string
 }
 
@@ -251,6 +252,8 @@ export type BillingSettings = {
   QuotaForInviter: number
   QuotaForInvitee: number
   TopUpLink: string
+  OnlineRechargeEnabled: boolean
+  OnlineRechargeUrl: string
   'general_setting.docs_link': string
   'quota_setting.enable_free_model_pre_consume': boolean
   QuotaPerUnit: number

@@ -36,7 +36,9 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { type SidebarData } from '@/components/layout/types'
+import type { SidebarData } from '@/components/layout/types'
+import { getOnlineRechargeUrl } from '@/features/online-recharge/config'
+import { useStatus } from '@/hooks/use-status'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -47,6 +49,30 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const { status } = useStatus()
+  const onlineRechargeUrl = getOnlineRechargeUrl(status)
+
+  const personalItems: SidebarData['navGroups'][number]['items'] = [
+    {
+      title: t('Wallet'),
+      url: '/wallet',
+      icon: Wallet,
+    },
+    ...(onlineRechargeUrl
+      ? [
+          {
+            title: t('Online Recharge'),
+            url: '/online-recharge',
+            icon: CreditCard,
+          },
+        ]
+      : []),
+    {
+      title: t('Profile'),
+      url: '/profile',
+      icon: User,
+    },
+  ]
 
   return {
     navGroups: [
@@ -102,18 +128,7 @@ export function useSidebarData(): SidebarData {
       {
         id: 'personal',
         title: t('Personal'),
-        items: [
-          {
-            title: t('Wallet'),
-            url: '/wallet',
-            icon: Wallet,
-          },
-          {
-            title: t('Profile'),
-            url: '/profile',
-            icon: User,
-          },
-        ],
+        items: personalItems,
       },
       {
         id: 'admin',

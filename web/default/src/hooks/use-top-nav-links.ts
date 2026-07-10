@@ -20,6 +20,10 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
+import {
+  parseHeaderNavCustomLinks,
+  resolveHeaderNavCustomLinkTitle,
+} from '@/lib/header-nav-custom-links'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -32,8 +36,8 @@ export type TopNavLink = {
 }
 
 /**
- * Generate top navigation links based on HeaderNavModules configuration from backend /api/status
- * Backend format example (stringified JSON):
+ * 根据后端 /api/status 返回的 HeaderNavModules 配置生成顶部导航链接。
+ * 后端格式示例（JSON 字符串）：
  * {
  *   home: true,
  *   console: true,
@@ -44,49 +48,64 @@ export type TopNavLink = {
  * }
  */
 export function useTopNavLinks(): TopNavLink[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { status } = useStatus()
   const { auth } = useAuthStore()
 
-  // Parse HeaderNavModules
-  const modules = useMemo(() => {
-    return parseHeaderNavModulesFromStatus(
-      status as Record<string, unknown> | null
-    )
+  // 解析内置模块和自定义链接配置。
+  const { modules, customLinks } = useMemo(() => {
+    const statusRecord = status as Record<string, unknown> | null
+    return {
+      modules: parseHeaderNavModulesFromStatus(statusRecord),
+      customLinks: parseHeaderNavCustomLinks(
+        statusRecord?.HeaderNavCustomLinks
+      ),
+    }
   }, [status])
 
-  // Documentation link (may be external)
+  // 文档链接可以是外部地址。
   const docsLink: string | undefined = status?.docs_link as string | undefined
 
   const isAuthed = !!auth?.user
 
   const links: TopNavLink[] = []
 
-  // Home
+  // 主页
   if (modules?.home !== false) {
     links.push({ title: t('Home'), href: '/' })
   }
 
-  // Console -> /dashboard (new console path)
+  // 控制台
   if (modules?.console !== false) {
     links.push({ title: t('Console'), href: '/dashboard' })
   }
 
-  // Pricing
+  // 模型广场
   const pricing = modules?.pricing
   if (pricing && typeof pricing === 'object' && pricing.enabled) {
     const requiresAuth = pricing.requireAuth && !isAuthed
     links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
   }
 
-  // Rankings
+  customLinks.forEach((link) => {
+    links.push({
+      title: resolveHeaderNavCustomLinkTitle(
+        link,
+        i18n.resolvedLanguage ?? i18n.language
+      ),
+      href: link.url,
+      external: true,
+    })
+  })
+
+  // 排行榜
   const rankings = modules?.rankings
   if (rankings && typeof rankings === 'object' && rankings.enabled) {
     const requiresAuth = rankings.requireAuth && !isAuthed
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
-  // Docs (supports external links)
+  // 文档
   if (modules?.docs !== false) {
     if (docsLink) {
       links.push({ title: t('Docs'), href: docsLink, external: true })
@@ -95,7 +114,7 @@ export function useTopNavLinks(): TopNavLink[] {
     }
   }
 
-  // About
+  // 关于
   if (modules?.about !== false) {
     links.push({ title: t('About'), href: '/about' })
   }

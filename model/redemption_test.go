@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -100,7 +101,7 @@ func TestSearchRedemptionsFiltersAndPaginates(t *testing.T) {
 	}
 }
 
-func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
+func setupRedeemFixtures(t *testing.T, quotas []int) (userId int, keys []string) {
 	t.Helper()
 	require.NoError(t, DB.AutoMigrate(&Redemption{}))
 	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
@@ -113,16 +114,27 @@ func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
 	user := &User{Username: "redeem-user", Password: "password", Status: common.UserStatusEnabled, Quota: 0}
 	require.NoError(t, DB.Create(user).Error)
 
-	key = "10000000000000000000000000000001"
-	redemption := &Redemption{
-		Name:        "redeem-test",
-		Key:         key,
-		Status:      common.RedemptionCodeStatusEnabled,
-		Quota:       quota,
-		CreatedTime: common.GetTimestamp(),
+	redemptions := make([]Redemption, 0, len(quotas))
+	keys = make([]string, 0, len(quotas))
+	for i, quota := range quotas {
+		key := fmt.Sprintf("%032d", i+1)
+		keys = append(keys, key)
+		redemptions = append(redemptions, Redemption{
+			Name:        "redeem-test",
+			Key:         key,
+			Status:      common.RedemptionCodeStatusEnabled,
+			Quota:       quota,
+			CreatedTime: common.GetTimestamp(),
+		})
 	}
-	require.NoError(t, DB.Create(redemption).Error)
-	return user.Id, key
+	require.NoError(t, DB.Create(&redemptions).Error)
+	return user.Id, keys
+}
+
+func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
+	t.Helper()
+	userId, keys := setupRedeemFixtures(t, []int{quota})
+	return userId, keys[0]
 }
 
 func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
@@ -146,6 +158,76 @@ func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
 	assert.Equal(t, 500, user.Quota)
+}
+
+func TestRedeemBatchCreditsAllCodesAtomically(t *testing.T) {
+	userId, keys := setupRedeemFixtures(t, []int{100, 200, 300})
+
+	quota, err := RedeemBatch(keys, userId)
+	require.NoError(t, err)
+	assert.Equal(t, 600, quota)
+
+	var user User
+	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
+	assert.Equal(t, 600, user.Quota)
+
+	var redemptions []Redemption
+	require.NoError(t, DB.Where(commonKeyCol+" IN ?", keys).Find(&redemptions).Error)
+	require.Len(t, redemptions, 3)
+	for _, redemption := range redemptions {
+		assert.Equal(t, common.RedemptionCodeStatusUsed, redemption.Status)
+		assert.Equal(t, userId, redemption.UsedUserId)
+	}
+}
+
+func TestRedeemBatchRollsBackWhenAnyCodeIsInvalid(t *testing.T) {
+	userId, keys := setupRedeemFixtures(t, []int{100, 200})
+
+	_, err := RedeemBatch(append(keys, "missing-redemption-code"), userId)
+	require.Error(t, err)
+
+	var user User
+	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
+	assert.Zero(t, user.Quota)
+
+	var redemptions []Redemption
+	require.NoError(t, DB.Where(commonKeyCol+" IN ?", keys).Find(&redemptions).Error)
+	require.Len(t, redemptions, 2)
+	for _, redemption := range redemptions {
+		assert.Equal(t, common.RedemptionCodeStatusEnabled, redemption.Status)
+		assert.Zero(t, redemption.UsedUserId)
+	}
+}
+
+func TestRedeemBatchRejectsDuplicateCodes(t *testing.T) {
+	userId, keys := setupRedeemFixtures(t, []int{100})
+
+	_, err := RedeemBatch([]string{keys[0], keys[0]}, userId)
+	require.Error(t, err)
+
+	var user User
+	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
+	assert.Zero(t, user.Quota)
+
+	var redemption Redemption
+	require.NoError(t, DB.First(&redemption, commonKeyCol+" = ?", keys[0]).Error)
+	assert.Equal(t, common.RedemptionCodeStatusEnabled, redemption.Status)
+}
+
+func TestRedeemBatchRejectsQuotaOverflow(t *testing.T) {
+	userId, keys := setupRedeemFixtures(t, []int{100})
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", userId).Update("quota", common.MaxQuota-50).Error)
+
+	_, err := RedeemBatch(keys, userId)
+	require.Error(t, err)
+
+	var user User
+	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
+	assert.Equal(t, common.MaxQuota-50, user.Quota)
+
+	var redemption Redemption
+	require.NoError(t, DB.First(&redemption, commonKeyCol+" = ?", keys[0]).Error)
+	assert.Equal(t, common.RedemptionCodeStatusEnabled, redemption.Status)
 }
 
 // Exactly one of several concurrent redeems of the same code may win, and

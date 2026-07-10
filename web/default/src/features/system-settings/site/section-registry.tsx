@@ -16,6 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  parseHeaderNavCustomLinks,
+  serializeHeaderNavCustomLinks,
+} from '@/lib/header-nav-custom-links'
+
 import { SystemInfoSection } from '../general/system-info-section'
 import {
   parseHeaderNavModules,
@@ -66,10 +71,16 @@ const SITE_SECTIONS = [
     build: (settings: SiteSettings) => {
       const headerNavConfig = parseHeaderNavModules(settings.HeaderNavModules)
       const headerNavSerialized = serializeHeaderNavModules(headerNavConfig)
+      const customLinks = parseHeaderNavCustomLinks(
+        settings.HeaderNavCustomLinks
+      )
+      const customLinksSerialized = serializeHeaderNavCustomLinks(customLinks)
       return (
         <HeaderNavigationSection
           config={headerNavConfig}
           initialSerialized={headerNavSerialized}
+          customLinks={customLinks}
+          initialCustomLinksSerialized={customLinksSerialized}
         />
       )
     },

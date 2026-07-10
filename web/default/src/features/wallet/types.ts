@@ -171,10 +171,17 @@ export interface PresetAmount {
 /**
  * Redemption code request
  */
-export interface RedemptionRequest {
-  /** Redemption code key */
-  key: string
-}
+export type RedemptionRequest =
+  | {
+      /** 单个兑换码 */
+      key: string
+      keys?: never
+    }
+  | {
+      key?: never
+      /** 多个兑换码 */
+      keys: string[]
+    }
 
 /**
  * Payment request parameters

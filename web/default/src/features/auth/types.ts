@@ -128,6 +128,9 @@ export interface SystemStatus {
     register_enabled?: boolean
     password_login_enabled?: boolean
     password_register_enabled?: boolean
+    online_recharge_enabled?: boolean
+    online_recharge_url?: string
+    HeaderNavCustomLinks?: string
     custom_oauth_providers?: CustomOAuthProviderInfo[]
     [key: string]: unknown
   }
@@ -171,6 +174,9 @@ export interface SystemStatus {
   register_enabled?: boolean
   password_login_enabled?: boolean
   password_register_enabled?: boolean
+  online_recharge_enabled?: boolean
+  online_recharge_url?: string
+  HeaderNavCustomLinks?: string
   custom_oauth_providers?: CustomOAuthProviderInfo[]
   [key: string]: unknown
 }

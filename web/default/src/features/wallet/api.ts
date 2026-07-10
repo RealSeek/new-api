@@ -61,11 +61,14 @@ export async function getTopupInfo(): Promise<TopupInfoResponse> {
 }
 
 /**
- * Redeem a topup code
+ * 兑换一个或多个充值兑换码
  */
-export async function redeemTopupCode(
-  request: RedemptionRequest
+export async function redeemTopupCodes(
+  codes: string[]
 ): Promise<RedemptionResponse> {
+  const firstCode = codes[0]
+  const request: RedemptionRequest =
+    codes.length === 1 && firstCode ? { key: firstCode } : { keys: codes }
   const res = await api.post('/api/user/topup', request)
   return res.data
 }

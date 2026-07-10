@@ -4,12 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 
 	"gorm.io/gorm"
 )
+
+const MaxBatchRedemptionCodes = 100
 
 type Redemption struct {
 	Id           int            `json:"id"`
@@ -135,54 +138,127 @@ func GetRedemptionById(id int) (*Redemption, error) {
 }
 
 func Redeem(key string, userId int) (quota int, err error) {
-	if key == "" {
-		return 0, errors.New("未提供兑换码")
+	quota, redemptionIds, err := redeemKeys([]string{key}, userId)
+	if err != nil {
+		common.SysError("redemption failed: " + err.Error())
+		return 0, ErrRedeemFailed
+	}
+	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(quota), redemptionIds[0]))
+	return quota, nil
+}
+
+func RedeemBatch(keys []string, userId int) (quota int, err error) {
+	quota, redemptionIds, err := redeemKeys(keys, userId)
+	if err != nil {
+		common.SysError("batch redemption failed: " + err.Error())
+		return 0, ErrRedeemFailed
+	}
+	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过 %d 个兑换码充值 %s，兑换码ID %v", len(redemptionIds), logger.LogQuota(quota), redemptionIds))
+	return quota, nil
+}
+
+func redeemKeys(keys []string, userId int) (int, []int, error) {
+	if len(keys) == 0 {
+		return 0, nil, errors.New("未提供兑换码")
+	}
+	if len(keys) > MaxBatchRedemptionCodes {
+		return 0, nil, errors.New("兑换码数量超过上限")
 	}
 	if userId == 0 {
-		return 0, errors.New("无效的 user id")
+		return 0, nil, errors.New("无效的 user id")
 	}
-	redemption := &Redemption{}
 
-	keyCol := "`key`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		keyCol = `"key"`
+	normalizedKeys := make([]string, 0, len(keys))
+	seenKeys := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return 0, nil, errors.New("未提供兑换码")
+		}
+		if _, exists := seenKeys[key]; exists {
+			return 0, nil, errors.New("兑换码不能重复")
+		}
+		seenKeys[key] = struct{}{}
+		normalizedKeys = append(normalizedKeys, key)
 	}
+
+	var totalQuota int
+	var redemptionIds []int
 	common.RandomSleep()
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
-		if err != nil {
-			return errors.New("无效的兑换码")
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		redemptions := make([]Redemption, 0, len(normalizedKeys))
+		if err := lockForUpdate(tx).
+			Where(commonKeyCol+" IN ?", normalizedKeys).
+			Find(&redemptions).Error; err != nil {
+			return err
 		}
-		if redemption.Status != common.RedemptionCodeStatusEnabled {
-			return errors.New("该兑换码已被使用")
+		if len(redemptions) != len(normalizedKeys) {
+			return errors.New("包含无效的兑换码")
 		}
-		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
-			return errors.New("该兑换码已过期")
+
+		redemptionsByKey := make(map[string]*Redemption, len(redemptions))
+		for i := range redemptions {
+			redemptionsByKey[redemptions[i].Key] = &redemptions[i]
 		}
-		// Compare-and-swap on status: only the transaction that flips
-		// enabled -> used may credit quota, so a concurrent redeem of the
-		// same code loses here even without a row lock (e.g. on SQLite).
+
+		now := common.GetTimestamp()
+		totalQuota64 := int64(0)
+		ids := make([]int, 0, len(normalizedKeys))
+		for _, key := range normalizedKeys {
+			redemption, exists := redemptionsByKey[key]
+			if !exists {
+				return errors.New("包含无效的兑换码")
+			}
+			if redemption.Status != common.RedemptionCodeStatusEnabled {
+				return errors.New("包含已使用的兑换码")
+			}
+			if redemption.ExpiredTime != 0 && redemption.ExpiredTime < now {
+				return errors.New("包含已过期的兑换码")
+			}
+			if redemption.Quota <= 0 {
+				return errors.New("兑换码额度无效")
+			}
+
+			totalQuota64 += int64(redemption.Quota)
+			if totalQuota64 > int64(common.MaxQuota) {
+				return errors.New("兑换额度超过上限")
+			}
+			ids = append(ids, redemption.Id)
+		}
+
+		// 只有一次性抢占全部兑换码状态成功的事务才能增加用户额度。
 		result := tx.Model(&Redemption{}).
-			Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
+			Where("id IN ? AND status = ?", ids, common.RedemptionCodeStatusEnabled).
 			Updates(map[string]interface{}{
-				"redeemed_time": common.GetTimestamp(),
+				"redeemed_time": now,
 				"status":        common.RedemptionCodeStatusUsed,
 				"used_user_id":  userId,
 			})
 		if result.Error != nil {
 			return result.Error
 		}
-		if result.RowsAffected == 0 {
-			return errors.New("该兑换码已被使用")
+		if result.RowsAffected != int64(len(ids)) {
+			return errors.New("兑换码已被并发使用")
 		}
-		return tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", redemption.Quota)).Error
+
+		totalQuota = int(totalQuota64)
+		result = tx.Model(&User{}).
+			Where("id = ? AND quota <= ?", userId, common.MaxQuota-totalQuota).
+			Update("quota", gorm.Expr("quota + ?", totalQuota))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("用户不存在或额度超过上限")
+		}
+
+		redemptionIds = ids
+		return nil
 	})
 	if err != nil {
-		common.SysError("redemption failed: " + err.Error())
-		return 0, ErrRedeemFailed
+		return 0, nil, err
 	}
-	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
-	return redemption.Quota, nil
+	return totalQuota, redemptionIds, nil
 }
 
 func (redemption *Redemption) Insert() error {

@@ -16,6 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  DEFAULT_HEADER_NAV_CUSTOM_LINKS,
+  serializeHeaderNavCustomLinks,
+} from '@/lib/header-nav-custom-links'
+
 import { SettingsPage } from '../components/settings-page'
 import type { SiteSettings } from '../types'
 import {
@@ -36,6 +41,9 @@ const defaultSiteSettings: SiteSettings = {
   'legal.user_agreement': '',
   'legal.privacy_policy': '',
   HeaderNavModules: '',
+  HeaderNavCustomLinks: serializeHeaderNavCustomLinks(
+    DEFAULT_HEADER_NAV_CUSTOM_LINKS
+  ),
   SidebarModulesAdmin: '',
 }
 

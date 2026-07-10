@@ -16,55 +16,81 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import i18next from 'i18next'
 import { useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 
-import { redeemTopupCode } from '../api'
+import { redeemTopupCodes } from '../api'
 
 // ============================================================================
 // Redemption Hook
 // ============================================================================
 
 export function useRedemption() {
+  const { t } = useTranslation()
   const [redeeming, setRedeeming] = useState(false)
 
-  const redeemCode = useCallback(async (code: string): Promise<boolean> => {
-    if (!code || code.trim() === '') {
-      toast.error(i18next.t('Please enter a redemption code'))
-      return false
-    }
+  const redeemCodes = useCallback(
+    async (codeInput: string): Promise<boolean> => {
+      const codes = codeInput
+        .split(/\r?\n/)
+        .map((code) => code.trim())
+        .filter(Boolean)
 
-    try {
-      setRedeeming(true)
-      const response = await redeemTopupCode({ key: code })
-
-      if (response.success && response.data) {
-        const quotaAdded = response.data
-        toast.success(
-          i18next.t('Redemption successful! Added: {{quota}}', {
-            quota: formatQuota(quotaAdded),
-          })
+      if (codes.length === 0) {
+        toast.error(t('Please enter a redemption code'))
+        return false
+      }
+      if (codes.length > 100) {
+        toast.error(
+          t('You can redeem up to {{count}} codes at once', { count: 100 })
         )
-        await getSelf()
-        return true
+        return false
+      }
+      if (new Set(codes).size !== codes.length) {
+        toast.error(t('Duplicate redemption codes are not allowed'))
+        return false
       }
 
-      toast.error(response.message || i18next.t('Redemption failed'))
-      return false
-    } catch (_error) {
-      toast.error(i18next.t('Redemption failed'))
-      return false
-    } finally {
-      setRedeeming(false)
-    }
-  }, [])
+      try {
+        setRedeeming(true)
+        const response = await redeemTopupCodes(codes)
+
+        if (response.success && typeof response.data === 'number') {
+          const quotaAdded = formatQuota(response.data)
+          if (codes.length === 1) {
+            toast.success(
+              t('Redemption successful! Added: {{quota}}', {
+                quota: quotaAdded,
+              })
+            )
+          } else {
+            toast.success(
+              t('Redeemed {{count}} codes successfully! Added: {{quota}}', {
+                count: codes.length,
+                quota: quotaAdded,
+              })
+            )
+          }
+          return true
+        }
+
+        toast.error(response.message || t('Redemption failed'))
+        return false
+      } catch {
+        toast.error(t('Redemption failed'))
+        return false
+      } finally {
+        setRedeeming(false)
+      }
+    },
+    [t]
+  )
 
   return {
     redeeming,
-    redeemCode,
+    redeemCodes,
   }
 }

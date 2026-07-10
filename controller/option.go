@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -40,6 +41,69 @@ func isPositiveOptionValue(value string) bool {
 	}
 	floatValue, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 	return err == nil && floatValue > 0
+}
+
+func isValidHTTPURL(value string) bool {
+	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(value))
+	if err != nil || parsedURL.Host == "" {
+		return false
+	}
+	return strings.EqualFold(parsedURL.Scheme, "http") || strings.EqualFold(parsedURL.Scheme, "https")
+}
+
+type headerNavCustomLink struct {
+	Title  string            `json:"title"`
+	Titles map[string]string `json:"titles,omitempty"`
+	URL    string            `json:"url"`
+}
+
+var headerNavCustomLinkLocales = []string{"zhCN", "en", "zhTW", "fr", "ja", "ru", "vi"}
+
+func normalizeHeaderNavCustomLinks(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "[") {
+		return "", fmt.Errorf("自定义顶栏链接配置必须是有效的 JSON 数组")
+	}
+
+	var links []headerNavCustomLink
+	if err := common.UnmarshalJsonStr(trimmed, &links); err != nil {
+		return "", fmt.Errorf("自定义顶栏链接配置必须是有效的 JSON 数组")
+	}
+
+	for index := range links {
+		links[index].Title = strings.TrimSpace(links[index].Title)
+		links[index].URL = strings.TrimSpace(links[index].URL)
+
+		normalizedTitles := make(map[string]string)
+		for _, locale := range headerNavCustomLinkLocales {
+			localizedTitle := strings.TrimSpace(links[index].Titles[locale])
+			if localizedTitle != "" {
+				normalizedTitles[locale] = localizedTitle
+			}
+		}
+		links[index].Titles = normalizedTitles
+
+		if links[index].Title == "" {
+			for _, locale := range headerNavCustomLinkLocales {
+				if normalizedTitles[locale] != "" {
+					links[index].Title = normalizedTitles[locale]
+					break
+				}
+			}
+		}
+		if links[index].Title == "" {
+			return "", fmt.Errorf("第 %d 个自定义顶栏链接至少需要填写一个语言名称", index+1)
+		}
+		if !isValidHTTPURL(links[index].URL) {
+			return "", fmt.Errorf("第 %d 个自定义顶栏链接地址必须是有效的 HTTP 或 HTTPS URL", index+1)
+		}
+	}
+
+	normalized, err := common.Marshal(links)
+	if err != nil {
+		return "", fmt.Errorf("自定义顶栏链接配置序列化失败")
+	}
+	return string(normalized), nil
 }
 
 func collectModelNamesFromOptionValue(raw string, modelNames map[string]struct{}) {
@@ -223,6 +287,29 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "OnlineRechargeUrl":
+		if !isValidHTTPURL(option.Value.(string)) {
+			common.ApiErrorMsg(c, "在线充值地址必须是有效的 HTTP 或 HTTPS URL")
+			return
+		}
+		option.Value = strings.TrimSpace(option.Value.(string))
+	case "OnlineRechargeEnabled":
+		if option.Value == "true" {
+			common.OptionMapRWMutex.RLock()
+			rechargeURL := common.OptionMap["OnlineRechargeUrl"]
+			common.OptionMapRWMutex.RUnlock()
+			if !isValidHTTPURL(rechargeURL) {
+				common.ApiErrorMsg(c, "无法启用在线充值，请先配置有效的充值地址")
+				return
+			}
+		}
+	case "HeaderNavCustomLinks":
+		normalized, err := normalizeHeaderNavCustomLinks(option.Value.(string))
+		if err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
+		option.Value = normalized
 	case "GroupRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {
