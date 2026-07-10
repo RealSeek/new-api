@@ -54,6 +54,29 @@ func GetEnabledModels() []string {
 	return models
 }
 
+// IsModelExistForGroup 检查指定模型是否在指定分组中存在（无论是否启用）
+// 用于区分"模型不存在"和"模型存在但无可用渠道"两种错误场景
+func IsModelExistForGroup(group string, modelName string) bool {
+	var count int64
+	err := DB.Model(&Ability{}).
+		Where(commonGroupCol+" = ? and model = ?", group, modelName).
+		Count(&count).Error
+	return err == nil && count > 0
+}
+
+// IsModelExistForAnyGroup 检查指定模型是否在任意分组中存在
+func IsModelExistForAnyGroup(groups []string, modelName string) bool {
+	if len(groups) == 0 {
+		return false
+	}
+	for _, g := range groups {
+		if IsModelExistForGroup(g, modelName) {
+			return true
+		}
+	}
+	return false
+}
+
 func GetAllEnableAbilities() []Ability {
 	var abilities []Ability
 	DB.Find(&abilities, "enabled = ?", true)

@@ -76,6 +76,8 @@ const (
 	ErrorCodeEmptyResponse          ErrorCode = "empty_response"
 	ErrorCodeAwsInvokeError         ErrorCode = "aws_invoke_error"
 	ErrorCodeModelNotFound          ErrorCode = "model_not_found"
+	ErrorCodeInvalidModelName       ErrorCode = "invalid_model_name"       // 客户端请求了不存在的模型
+	ErrorCodeNoAvailableChannel     ErrorCode = "no_available_channel"     // 模型存在但所有渠道都不可用
 	ErrorCodePromptBlocked          ErrorCode = "prompt_blocked"
 
 	// sql error

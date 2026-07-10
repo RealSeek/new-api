@@ -154,7 +154,26 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+						// 关键修复：区分"模型不存在"和"模型存在但无可用渠道"两种场景
+						// 检查模型是否在分组中存在
+						var modelExists bool
+						if usingGroup == "auto" {
+							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+							autoGroups := service.GetUserAutoGroup(userGroup)
+							modelExists = model.IsModelExistForAnyGroup(autoGroups, modelRequest.Model)
+						} else {
+							modelExists = model.IsModelExistForGroup(usingGroup, modelRequest.Model)
+						}
+
+						if !modelExists {
+							// 模型不存在：客户端错误，返回 400，不应触发熔断器
+							message := i18n.T(c, i18n.MsgDistributorInvalidModelName, map[string]any{"Group": usingGroup, "Model": modelRequest.Model})
+							abortWithOpenAiMessage(c, http.StatusBadRequest, message, types.ErrorCodeInvalidModelName)
+						} else {
+							// 模型存在但无可用渠道：上游问题，返回 503，应触发熔断器
+							message := i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model})
+							abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeNoAvailableChannel)
+						}
 						return
 					}
 				}
