@@ -57,8 +57,15 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			if params["type"] != nil {
 				claudeTool.InputSchema["type"] = params["type"].(string)
 			}
-			claudeTool.InputSchema["properties"] = params["properties"]
-			claudeTool.InputSchema["required"] = params["required"]
+			if params["properties"] != nil {
+				claudeTool.InputSchema["properties"] = params["properties"]
+			}
+			// 仅在源 schema 确实带有 required 时才拷贝：map 缺失键读出来是 nil，
+			// 若显式写入会被序列化成 "required": null，上游 schema 校验会因此以
+			// `null is not of type "array"` 报错（如 list_mcp_resources 这类无必填参数的工具）。
+			if params["required"] != nil {
+				claudeTool.InputSchema["required"] = params["required"]
+			}
 			for s, a := range params {
 				if s == "type" || s == "properties" || s == "required" {
 					continue

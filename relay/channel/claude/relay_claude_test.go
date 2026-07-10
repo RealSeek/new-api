@@ -322,6 +322,61 @@ func TestBuildOpenAIStyleUsageFromClaudeUsageDefaultsAggregateCacheCreationTo5m(
 	require.Equal(t, 0, openAIUsage.ClaudeCacheCreation1hTokens)
 }
 
+func TestRequestOpenAI2ClaudeMessageOmitsAbsentToolRequired(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model: "claude-3-5-sonnet-20241022",
+		Messages: []dto.Message{
+			{Role: "user", Content: "hello"},
+		},
+		Tools: []dto.ToolCallRequest{
+			{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name:        "list_mcp_resources",
+					Description: "Lists resources provided by MCP servers.",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"server": map[string]any{"type": "string"},
+						},
+						"additionalProperties": false,
+						// 不包含 required，模拟 Codex 的 list_mcp_resources 工具。
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name: "read_mcp_resource",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"server": map[string]any{"type": "string"},
+							"uri":    map[string]any{"type": "string"},
+						},
+						"required": []any{"server", "uri"},
+					},
+				},
+			},
+		},
+	}
+
+	claudeRequest, err := RequestOpenAI2ClaudeMessage(nil, request)
+	require.NoError(t, err)
+
+	toolList, ok := claudeRequest.Tools.([]any)
+	require.True(t, ok)
+	tools, _ := dto.ProcessTools(toolList)
+	require.Len(t, tools, 2)
+
+	// 缺失 required 的工具不能被序列化为 "required": null，否则上游会拒绝该 Schema。
+	require.NotContains(t, tools[0].InputSchema, "required")
+	require.Contains(t, tools[0].InputSchema, "properties")
+
+	// 已声明 required 的工具必须保持原值。
+	require.Equal(t, []any{"server", "uri"}, tools[1].InputSchema["required"])
+}
+
 func TestRequestOpenAI2ClaudeMessage_ClaudeOpus48HighUsesAdaptiveThinking(t *testing.T) {
 	request := dto.GeneralOpenAIRequest{
 		Model:       "claude-opus-4-8-high",
