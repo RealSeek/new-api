@@ -30,7 +30,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout main
-          git merge upstream/main --no-edit
+
+          echo "::group::尝试合并上游分支"
+          if ! git merge upstream/main --no-edit; then
+            echo "::endgroup::"
+            echo "::error::❌ Merge 失败！以下是详细信息："
+            echo ""
+            echo "=== Git 状态 ==="
+            git status
+            echo ""
+            echo "=== 冲突文件列表 ==="
+            git diff --name-only --diff-filter=U || echo "无法获取冲突文件列表"
+            echo ""
+            echo "=== 冲突详情 ==="
+            git diff --diff-filter=U || echo "无法获取冲突详情"
+            exit 1
+          fi
+          echo "::endgroup::"
+          echo "✅ Merge 成功完成"
 
       - name: Push changes
         run: git push origin main
