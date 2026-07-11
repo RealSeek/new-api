@@ -26,8 +26,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { BadgeListCellDisplayContext } from './badge-list-cell-context'
-
 interface BadgeListCellProps {
   items: React.ReactNode[]
   max?: number
@@ -35,29 +33,17 @@ interface BadgeListCellProps {
 }
 
 /**
- * Badge collection that stays compact in table cells and can expose every
- * item when rendered inside a detail-oriented card.
+ * Table cell renderer for a list of badges with overflow tooltip.
+ * Displays up to `max` badges inline; remaining items appear in a tooltip.
+ * Applies -ml-1.5 to compensate for badge px-1.5 and align with column header.
  */
 export function BadgeListCell({
   items,
   max = 2,
   tooltipClassName,
 }: BadgeListCellProps) {
-  const display = React.useContext(BadgeListCellDisplayContext)
-
   if (items.length === 0) {
     return <span className='text-muted-foreground text-xs'>-</span>
-  }
-
-  if (display === 'full') {
-    return (
-      <StatusBadgeList
-        items={items}
-        max={items.length}
-        renderItem={(item) => item}
-        className='flex-wrap overflow-visible'
-      />
-    )
   }
 
   const showTooltip = items.length > max
@@ -66,13 +52,14 @@ export function BadgeListCell({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger
-          render={<div className='max-w-full min-w-0 overflow-hidden' />}
+          render={
+            <div className='-ml-1.5 max-w-full min-w-0 overflow-hidden' />
+          }
         >
           <StatusBadgeList
             items={items}
             max={max}
             renderItem={(item) => item}
-            className='overflow-hidden'
           />
         </TooltipTrigger>
         {showTooltip && (
@@ -83,7 +70,7 @@ export function BadgeListCell({
               'border-border bg-popover max-h-48 max-w-[320px] overflow-y-auto p-2'
             }
           >
-            <div className='flex max-w-full flex-wrap gap-1.5'>{items}</div>
+            <div className='flex flex-wrap gap-1'>{items}</div>
           </TooltipContent>
         )}
       </Tooltip>
