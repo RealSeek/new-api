@@ -223,7 +223,7 @@ export function usePricingColumns(
           </div>
         )
       },
-      minSize: 260,
+      minSize: 250,
       enableSorting: false,
     },
     {
@@ -238,7 +238,7 @@ export function usePricingColumns(
           },
           t
         ),
-      size: 130,
+      size: 120,
       enableSorting: false,
     },
     {
@@ -253,7 +253,7 @@ export function usePricingColumns(
           },
           t
         ),
-      size: 130,
+      size: 120,
       enableSorting: false,
     },
     {
@@ -268,7 +268,7 @@ export function usePricingColumns(
           },
           t
         ),
-      size: 130,
+      size: 120,
       enableSorting: false,
     },
     {
@@ -281,7 +281,7 @@ export function usePricingColumns(
         }
         return <ModelPerfBadge perf={perf} className='grid' />
       },
-      size: 160,
+      size: 150,
       enableSorting: false,
     },
     {
@@ -302,7 +302,7 @@ export function usePricingColumns(
           />
         )
       },
-      size: 160,
+      size: 150,
       enableSorting: false,
     },
     {
@@ -323,7 +323,7 @@ export function usePricingColumns(
           />
         )
       },
-      size: 150,
+      size: 140,
       enableSorting: false,
     },
     {
@@ -337,13 +337,14 @@ export function usePricingColumns(
         return (
           <BadgeListCell
             items={groups.map((group) => (
-              <GroupBadge key={group} group={group} size='md' />
+              <GroupBadge key={group} group={group} size='sm' />
             ))}
-            tooltipClassName='max-w-72 p-2'
+            max={1}
+            tooltipClassName='max-h-56 max-w-80 overflow-y-auto p-3'
           />
         )
       },
-      size: 140,
+      size: 150,
       enableSorting: false,
     },
   ]

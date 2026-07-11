@@ -65,11 +65,14 @@ export function BadgeListCell({
   return (
     <TooltipProvider>
       <Tooltip>
-        <TooltipTrigger render={<div className='max-w-full' />}>
+        <TooltipTrigger
+          render={<div className='max-w-full min-w-0 overflow-hidden' />}
+        >
           <StatusBadgeList
             items={items}
             max={max}
             renderItem={(item) => item}
+            className='overflow-hidden'
           />
         </TooltipTrigger>
         {showTooltip && (
@@ -80,7 +83,7 @@ export function BadgeListCell({
               'border-border bg-popover max-h-48 max-w-[320px] overflow-y-auto p-2'
             }
           >
-            <div className='flex flex-wrap gap-1'>{items}</div>
+            <div className='flex max-w-full flex-wrap gap-1.5'>{items}</div>
           </TooltipContent>
         )}
       </Tooltip>
