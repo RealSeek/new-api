@@ -20,6 +20,7 @@ import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 
 import { redeemTopupCodes } from '../api'
@@ -74,6 +75,8 @@ export function useRedemption() {
               })
             )
           }
+          // Refresh user data after successful redemption
+          await getSelf()
           return true
         }
 
