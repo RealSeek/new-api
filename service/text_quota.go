@@ -55,6 +55,7 @@ type textQuotaSummary struct {
 	AudioInputPrice          float64
 	ImageGenerationCallPrice float64
 	ToolCallSurchargeQuota   decimal.Decimal
+	MissingUsagePreConsumed  bool
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -175,10 +176,21 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 	return total
 }
 
+func preConsumedQuotaForMissingUsage(relayInfo *relaycommon.RelayInfo) int {
+	if relayInfo == nil {
+		return 0
+	}
+	if relayInfo.Billing != nil {
+		return relayInfo.Billing.GetPreConsumedQuota()
+	}
+	return relayInfo.FinalPreConsumedQuota
+}
+
 // calculateTextQuotaSummary expects a usage already remapped by
 // effectiveBillingUsage; PostTextConsumeQuota performs that remap once and shares
 // the result with tiered billing, affinity observation and logging.
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
+	missingUsage := usage == nil
 	summary := textQuotaSummary{
 		ModelName:            relayInfo.OriginModelName,
 		TokenName:            ctx.GetString("token_name"),
@@ -326,7 +338,17 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	}
 
 	if summary.TotalTokens == 0 {
-		summary.Quota = 0
+		if missingUsage {
+			preConsumedQuota := preConsumedQuotaForMissingUsage(relayInfo)
+			if preConsumedQuota > 0 {
+				summary.Quota = preConsumedQuota
+				summary.MissingUsagePreConsumed = true
+			} else {
+				summary.Quota = 0
+			}
+		} else {
+			summary.Quota = 0
+		}
 	} else if !ratio.IsZero() && summary.Quota == 0 {
 		summary.Quota = 1
 	}
@@ -359,12 +381,25 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	var tieredResult *billingexpr.TieredResult
 	tieredBillingApplied := false
+	var tieredParams billingexpr.TokenParams
+	shouldTryTieredSettle := false
 	if originUsage != nil {
 		var tieredUsedVars map[string]bool
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 			tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
 		}
-		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(billingUsage, summary.IsClaudeUsageSemantic, tieredUsedVars))
+		tieredParams = BuildTieredTokenParams(billingUsage, summary.IsClaudeUsageSemantic, tieredUsedVars)
+		shouldTryTieredSettle = true
+	} else if summary.TotalTokens > 0 {
+		// 缺少上游 usage 时，仅按本地估算的输入 Token 结算，不计未生成的输出 Token。
+		tieredParams = billingexpr.TokenParams{
+			P:   float64(summary.PromptTokens),
+			Len: float64(summary.PromptTokens),
+		}
+		shouldTryTieredSettle = true
+	}
+	if shouldTryTieredSettle {
+		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredParams)
 		if tieredOk {
 			tieredBillingApplied = true
 			tieredResult = tieredRes
@@ -388,10 +423,14 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
 
-	if summary.TotalTokens == 0 {
+	if summary.TotalTokens == 0 && !summary.MissingUsagePreConsumed {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
+		if summary.MissingUsagePreConsumed {
+			extraContent = append(extraContent, "上游未返回计费信息且本地无法估算输入 Token，按预扣额度结算")
+			logger.LogWarn(ctx, fmt.Sprintf("missing usage without local token estimate, settling pre-consumed quota, userId %d, channelId %d, tokenId %d, model %s, pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, summary.Quota))
+		}
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
 	}
@@ -425,6 +464,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other = GenerateTextOtherInfo(ctx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
+	if summary.MissingUsagePreConsumed {
+		adminInfo := other["admin_info"].(map[string]interface{})
+		adminInfo["missing_usage_pre_consumed"] = true
+		adminInfo["missing_usage_pre_consumed_quota"] = summary.Quota
+	}
 	if adminRejectReason != "" {
 		other["reject_reason"] = adminRejectReason
 	}

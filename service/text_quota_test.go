@@ -14,8 +14,95 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCalculateTextQuotaSummaryChargesEstimatedPromptWhenUsageMissing(t *testing.T) {
+	tests := []struct {
+		name             string
+		isStream         bool
+		endReason        relaycommon.StreamEndReason
+		sentResponses    int
+		usage            *dto.Usage
+		estimatedPrompt  int
+		preConsumedQuota int
+		wantPromptTokens int
+		wantQuota        int
+		wantPreConsumed  bool
+	}{
+		{
+			name:             "异常流在零响应时仍收取估算输入费用",
+			isStream:         true,
+			endReason:        relaycommon.StreamEndReasonClientGone,
+			estimatedPrompt:  100,
+			wantPromptTokens: 100,
+			wantQuota:        100,
+		},
+		{
+			name:             "异常流已有部分响应时保留提示词计费",
+			isStream:         true,
+			endReason:        relaycommon.StreamEndReasonTimeout,
+			sentResponses:    1,
+			estimatedPrompt:  100,
+			wantPromptTokens: 100,
+			wantQuota:        100,
+		},
+		{
+			name:             "正常结束但缺少用量时保留提示词计费",
+			isStream:         true,
+			endReason:        relaycommon.StreamEndReasonDone,
+			estimatedPrompt:  100,
+			wantPromptTokens: 100,
+			wantQuota:        100,
+		},
+		{
+			name:             "异常流优先采用上游实际用量",
+			isStream:         true,
+			endReason:        relaycommon.StreamEndReasonClientGone,
+			usage:            &dto.Usage{PromptTokens: 80, CompletionTokens: 20},
+			wantPromptTokens: 80,
+			wantQuota:        100,
+		},
+		{
+			name:             "无法估算输入时保留预扣额度",
+			isStream:         true,
+			endReason:        relaycommon.StreamEndReasonClientGone,
+			preConsumedQuota: 500,
+			wantQuota:        500,
+			wantPreConsumed:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			streamStatus := relaycommon.NewStreamStatus()
+			streamStatus.SetEndReason(tt.endReason, nil)
+			relayInfo := &relaycommon.RelayInfo{
+				IsStream:          tt.isStream,
+				StreamStatus:      streamStatus,
+				SendResponseCount: tt.sentResponses,
+				OriginModelName:   "test-model",
+				PriceData: types.PriceData{
+					ModelRatio:      1,
+					CompletionRatio: 1,
+					GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+				},
+				StartTime:             time.Now(),
+				FinalPreConsumedQuota: tt.preConsumedQuota,
+			}
+			relayInfo.SetEstimatePromptTokens(tt.estimatedPrompt)
+
+			summary := calculateTextQuotaSummary(ctx, relayInfo, tt.usage)
+
+			assert.Equal(t, tt.wantPromptTokens, summary.PromptTokens)
+			assert.Equal(t, tt.wantQuota, summary.Quota)
+			assert.Equal(t, tt.wantPreConsumed, summary.MissingUsagePreConsumed)
+		})
+	}
+}
 
 func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	gin.SetMode(gin.TestMode)

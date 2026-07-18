@@ -1,14 +1,109 @@
 package channel
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type contextTestAdaptor struct {
+	Adaptor
+	url string
+}
+
+func (a *contextTestAdaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	return a.url, nil
+}
+
+func (a *contextTestAdaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
+	return nil
+}
+
+func TestOutboundRequestsUseClientRequestContext(t *testing.T) {
+	service.InitHttpClient()
+
+	tests := []struct {
+		name    string
+		request func(Adaptor, *gin.Context, *relaycommon.RelayInfo) (*http.Response, error)
+	}{
+		{
+			name: "JSON 请求",
+			request: func(adaptor Adaptor, ctx *gin.Context, info *relaycommon.RelayInfo) (*http.Response, error) {
+				return DoApiRequest(adaptor, ctx, info, strings.NewReader(`{}`))
+			},
+		},
+		{
+			name: "表单请求",
+			request: func(adaptor Adaptor, ctx *gin.Context, info *relaycommon.RelayInfo) (*http.Response, error) {
+				return DoFormRequest(adaptor, ctx, info, strings.NewReader("key=value"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var called atomic.Bool
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called.Store(true)
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(upstream.Close)
+
+			gin.SetMode(gin.TestMode)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
+			reqCtx, cancel := context.WithCancel(req.Context())
+			cancel()
+			ctx.Request = req.WithContext(reqCtx)
+
+			resp, err := tt.request(
+				&contextTestAdaptor{url: upstream.URL},
+				ctx,
+				&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}},
+			)
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.False(t, called.Load())
+		})
+	}
+}
+
+func TestDoWssRequestUsesClientRequestContext(t *testing.T) {
+	var called atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		w.WriteHeader(http.StatusSwitchingProtocols)
+	}))
+	t.Cleanup(upstream.Close)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	req := httptest.NewRequest(http.MethodGet, "/v1/realtime", nil)
+	reqCtx, cancel := context.WithCancel(req.Context())
+	cancel()
+	ctx.Request = req.WithContext(reqCtx)
+
+	conn, err := DoWssRequest(
+		&contextTestAdaptor{url: "ws" + strings.TrimPrefix(upstream.URL, "http")},
+		ctx,
+		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}},
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, conn)
+	assert.False(t, called.Load())
+}
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()
