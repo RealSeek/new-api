@@ -159,7 +159,8 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 	user.Setting = string(settingBytes)
 }
 
-func UpdateUserSetting(userId int, setting dto.UserSetting) error {
+// UpdateUserSettingColumn 仅更新设置列，并同步缓存中的设置字段。
+func UpdateUserSettingColumn(userId int, setting dto.UserSetting) error {
 	if userId == 0 {
 		return errors.New("id 为空！")
 	}
@@ -172,6 +173,19 @@ func UpdateUserSetting(userId int, setting dto.UserSetting) error {
 		return err
 	}
 	return updateUserSettingCache(userId, settingValue)
+}
+
+// UpdateUserSetting 保留旧接口，统一转发到单列更新实现。
+func UpdateUserSetting(userId int, setting dto.UserSetting) error {
+	return UpdateUserSettingColumn(userId, setting)
+}
+
+// UpdateUserAccessTokenColumn 仅更新系统访问令牌列。
+func UpdateUserAccessTokenColumn(userId int, accessToken string) error {
+	if userId == 0 {
+		return errors.New("id 为空！")
+	}
+	return DB.Model(&User{}).Where("id = ?", userId).Update("access_token", accessToken).Error
 }
 
 // 根据用户角色生成默认的边栏配置
@@ -490,14 +504,18 @@ func HardDeleteUserById(id int) error {
 }
 
 func inviteUser(inviterId int) (err error) {
-	user, err := GetUserById(inviterId, true)
-	if err != nil {
-		return err
+	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
+		"aff_count":   gorm.Expr("aff_count + ?", 1),
+		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
+		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+	})
+	if result.Error != nil {
+		return result.Error
 	}
-	user.AffCount++
-	user.AffQuota += common.QuotaForInviter
-	user.AffHistoryQuota += common.QuotaForInviter
-	return DB.Save(user).Error
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
@@ -748,7 +766,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
-	if err = tx.Model(&current).Omit("quota", "used_quota", "request_count", "auth_version").Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit("quota", "used_quota", "request_count", "auth_version", "aff_count", "aff_quota", "aff_history").Updates(newUser).Error; err != nil {
 		return err
 	}
 	return tx.First(user, user.Id).Error

@@ -31,14 +31,17 @@ func TestUserUpdateDoesNotOverwriteAccountingFields(t *testing.T) {
 	setupUserUpdateTestState(t)
 
 	user := User{
-		Id:           1,
-		Username:     "quota-race-user",
-		Password:     "password",
-		DisplayName:  "before",
-		Status:       common.UserStatusEnabled,
-		Quota:        1000,
-		UsedQuota:    20,
-		RequestCount: 3,
+		Id:              1,
+		Username:        "quota-race-user",
+		Password:        "password",
+		DisplayName:     "before",
+		Status:          common.UserStatusEnabled,
+		Quota:           1000,
+		UsedQuota:       20,
+		RequestCount:    3,
+		AffCount:        2,
+		AffQuota:        500,
+		AffHistoryQuota: 700,
 	}
 	require.NoError(t, DB.Create(&user).Error)
 
@@ -49,6 +52,9 @@ func TestUserUpdateDoesNotOverwriteAccountingFields(t *testing.T) {
 		"quota":         gorm.Expr("quota - ?", 400),
 		"used_quota":    gorm.Expr("used_quota + ?", 400),
 		"request_count": gorm.Expr("request_count + ?", 1),
+		"aff_count":     gorm.Expr("aff_count + ?", 1),
+		"aff_quota":     gorm.Expr("aff_quota + ?", 100),
+		"aff_history":   gorm.Expr("aff_history + ?", 100),
 	}).Error)
 
 	staleUser.DisplayName = "after"
@@ -60,6 +66,78 @@ func TestUserUpdateDoesNotOverwriteAccountingFields(t *testing.T) {
 	assert.Equal(t, 600, got.Quota)
 	assert.Equal(t, 420, got.UsedQuota)
 	assert.Equal(t, 4, got.RequestCount)
+	assert.Equal(t, 3, got.AffCount)
+	assert.Equal(t, 600, got.AffQuota)
+	assert.Equal(t, 800, got.AffHistoryQuota)
+}
+
+func TestUpdateUserAccessTokenColumnOnlyUpdatesAccessToken(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	user := User{
+		Id:           3,
+		Username:     "access-token-user",
+		Password:     "password",
+		Status:       common.UserStatusEnabled,
+		Quota:        1000,
+		UsedQuota:    20,
+		RequestCount: 3,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+		"quota":         gorm.Expr("quota - ?", 250),
+		"used_quota":    gorm.Expr("used_quota + ?", 250),
+		"request_count": gorm.Expr("request_count + ?", 1),
+	}).Error)
+
+	accessToken := "access-token-column-only"
+	require.NoError(t, UpdateUserAccessTokenColumn(user.Id, accessToken))
+
+	var got User
+	require.NoError(t, DB.First(&got, user.Id).Error)
+	assert.Equal(t, accessToken, got.GetAccessToken())
+	assert.Equal(t, 750, got.Quota)
+	assert.Equal(t, 270, got.UsedQuota)
+	assert.Equal(t, 4, got.RequestCount)
+}
+
+func TestInviteUserPreservesConcurrentAccountingUpdates(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	user := User{
+		Id:           4,
+		Username:     "inviter",
+		Password:     "password",
+		Status:       common.UserStatusEnabled,
+		Quota:        1000,
+		UsedQuota:    20,
+		RequestCount: 3,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	mutated := false
+	callbackName := "test:preserve-accounting-in-invite"
+	require.NoError(t, DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if mutated || tx.Statement.Table != "users" {
+			return
+		}
+		mutated = true
+		tx.Exec("UPDATE users SET quota = ?, used_quota = ?, request_count = ? WHERE id = ?", 700, 220, 4, user.Id)
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Update().Remove(callbackName) })
+
+	require.NoError(t, inviteUser(user.Id))
+
+	var got User
+	require.NoError(t, DB.First(&got, user.Id).Error)
+	assert.True(t, mutated)
+	assert.Equal(t, 700, got.Quota)
+	assert.Equal(t, 220, got.UsedQuota)
+	assert.Equal(t, 4, got.RequestCount)
+	assert.Equal(t, 1, got.AffCount)
+	assert.Equal(t, common.QuotaForInviter, got.AffQuota)
+	assert.Equal(t, common.QuotaForInviter, got.AffHistoryQuota)
 }
 
 func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
@@ -82,7 +160,7 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 		"request_count": gorm.Expr("request_count + ?", 1),
 	}).Error)
 
-	require.NoError(t, UpdateUserSetting(user.Id, dto.UserSetting{Language: "zh"}))
+	require.NoError(t, UpdateUserSettingColumn(user.Id, dto.UserSetting{Language: "zh"}))
 
 	var got User
 	require.NoError(t, DB.First(&got, user.Id).Error)

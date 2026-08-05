@@ -419,7 +419,7 @@ func GenerateAccessToken(c *gin.Context) {
 		return
 	}
 
-	if err := user.Update(false); err != nil {
+	if err := model.UpdateUserAccessTokenColumn(user.Id, user.GetAccessToken()); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -811,7 +811,7 @@ func UpdateSelf(c *gin.Context) {
 			currentSetting.SidebarModules = sidebarModulesStr
 		}
 
-		if err := model.UpdateUserSetting(user.Id, currentSetting); err != nil {
+		if err := model.UpdateUserSettingColumn(user.Id, currentSetting); err != nil {
 			common.ApiErrorI18n(c, i18n.MsgUpdateFailed)
 			return
 		}
@@ -837,7 +837,7 @@ func UpdateSelf(c *gin.Context) {
 			currentSetting.Language = langStr
 		}
 
-		if err := model.UpdateUserSetting(user.Id, currentSetting); err != nil {
+		if err := model.UpdateUserSettingColumn(user.Id, currentSetting); err != nil {
 			common.ApiErrorI18n(c, i18n.MsgUpdateFailed)
 			return
 		}
@@ -1555,7 +1555,7 @@ func UpdateUserSetting(c *gin.Context) {
 	}
 
 	// 更新用户设置
-	if err := model.UpdateUserSetting(user.Id, settings); err != nil {
+	if err := model.UpdateUserSettingColumn(user.Id, settings); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUpdateFailed)
 		return
 	}
