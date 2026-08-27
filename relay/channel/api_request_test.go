@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	rootconstant "github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -285,4 +286,28 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Set(string(rootconstant.ContextKeyUserName), "测试 用户")
+	header := http.Header{
+		"X-Rs-Newapi-User-Id":  []string{"999"},
+		"X-Rs-Newapi-Username": []string{"spoofed"},
+	}
+	info := &relaycommon.RelayInfo{
+		UserId: 42,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: rootconstant.ChannelTypeRSGateway,
+		},
+	}
+
+	applyRSGatewayIdentityHeaders(header, ctx, info)
+
+	assert.Equal(t, "42", header.Get("X-RS-NewAPI-User-ID"))
+	assert.Equal(t, "%E6%B5%8B%E8%AF%95%20%E7%94%A8%E6%88%B7", header.Get("X-RS-NewAPI-Username"))
 }

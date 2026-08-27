@@ -224,6 +224,23 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if ok {
 		channelMeta.ChannelOtherSettings = channelOtherSettings
 	}
+	if channelType == constant.ChannelTypeRSGateway {
+		channelMeta.ParamOverride = nil
+		channelMeta.HeadersOverride = nil
+		channelMeta.ChannelSetting.ForceFormat = false
+		channelMeta.ChannelSetting.ThinkingToContent = false
+		channelMeta.ChannelSetting.PassThroughBodyEnabled = true
+		channelMeta.ChannelSetting.SystemPrompt = ""
+		channelMeta.ChannelSetting.SystemPromptOverride = false
+		channelMeta.ChannelOtherSettings.ClaudeBetaQuery = false
+		channelMeta.ChannelOtherSettings.AllowServiceTier = false
+		channelMeta.ChannelOtherSettings.AllowInferenceGeo = false
+		channelMeta.ChannelOtherSettings.AllowSpeed = false
+		channelMeta.ChannelOtherSettings.AllowSafetyIdentifier = false
+		channelMeta.ChannelOtherSettings.DisableStore = false
+		channelMeta.ChannelOtherSettings.AllowIncludeObfuscation = false
+		channelMeta.ChannelOtherSettings.DisableTaskPollingSleep = false
+	}
 
 	if streamSupportedChannels[channelMeta.ChannelType] {
 		channelMeta.SupportStreamOptions = true
@@ -345,6 +362,7 @@ var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeAdvancedCustom: true,
 	constant.ChannelTypeSub2API:        true,
 	constant.ChannelTypeNewAPI:         true,
+	constant.ChannelTypeRSGateway:      true,
 	constant.ChannelTypeTencent:        true,
 }
 

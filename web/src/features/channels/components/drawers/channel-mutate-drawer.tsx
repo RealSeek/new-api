@@ -140,6 +140,7 @@ import {
   ADD_MODE_OPTIONS,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_RS_GATEWAY,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_WARNINGS,
   ERROR_MESSAGES,
@@ -723,6 +724,7 @@ export function ChannelMutateDrawer({
   const keyMode = form.watch('key_mode')
   const currentGroups = form.watch('group')
   const currentType = form.watch('type')
+  const isRSGateway = currentType === CHANNEL_TYPE_RS_GATEWAY
   const currentStatus = form.watch('status')
   const currentBaseUrl = form.watch('base_url')
   const currentKey = form.watch('key')
@@ -1019,12 +1021,13 @@ export function ChannelMutateDrawer({
   )
   const extraSettingsConfigured = Boolean(
     currentForceFormat ||
-    currentThinkingToContent ||
-    currentPassThroughBodyEnabled ||
-    currentDisableTaskPollingSleep ||
+    (!isRSGateway &&
+      (currentThinkingToContent ||
+        currentPassThroughBodyEnabled ||
+        currentDisableTaskPollingSleep ||
+        currentSystemPrompt?.trim() ||
+        currentSystemPromptOverride)) ||
     currentProxy?.trim() ||
-    currentSystemPrompt?.trim() ||
-    currentSystemPromptOverride ||
     (currentHttpProtocol && currentHttpProtocol !== 'auto') ||
     (currentHttp2ConnectionShards != null && currentHttp2ConnectionShards > 1)
   )
@@ -1073,16 +1076,18 @@ export function ChannelMutateDrawer({
       configured: internalNotesConfigured,
     },
     {
-      id: ADVANCED_SETTINGS_SECTION_IDS.overrideRules,
-      title: t('Override Rules'),
-      configured: overrideRulesConfigured,
-    },
-    {
       id: ADVANCED_SETTINGS_SECTION_IDS.extraSettings,
       title: t('Channel Extra Settings'),
       configured: extraSettingsConfigured,
     },
   ]
+  if (!isRSGateway) {
+    advancedNavChildren.splice(2, 0, {
+      id: ADVANCED_SETTINGS_SECTION_IDS.overrideRules,
+      title: t('Override Rules'),
+      configured: overrideRulesConfigured,
+    })
+  }
   if (FIELD_PASSTHROUGH_TYPES.has(currentType)) {
     advancedNavChildren.push({
       id: ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough,
@@ -3798,7 +3803,7 @@ export function ChannelMutateDrawer({
                             </div>
                           </div>
 
-                          <div
+                          {!isRSGateway ? <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.overrideRules}
                             className={configuredAdvancedSectionClassName(
                               'flex scroll-mt-4 flex-col gap-4 border-t pt-4',
@@ -4043,7 +4048,7 @@ export function ChannelMutateDrawer({
                                 )}
                               />
                             </fieldset>
-                          </div>
+                          </div> : null}
                         </div>
 
                         {/* ── Extra Settings ── */}
@@ -4100,7 +4105,7 @@ export function ChannelMutateDrawer({
                                 />
                               )}
 
-                              <FormField
+                              {!isRSGateway ? <FormField
                                 control={form.control}
                                 name='thinking_to_content'
                                 render={({ field }) => (
@@ -4123,9 +4128,9 @@ export function ChannelMutateDrawer({
                                     </FormControl>
                                   </FormItem>
                                 )}
-                              />
+                              /> : null}
 
-                              <FormField
+                              {!isRSGateway ? <FormField
                                 control={form.control}
                                 name='pass_through_body_enabled'
                                 render={({ field }) => (
@@ -4148,9 +4153,9 @@ export function ChannelMutateDrawer({
                                     </FormControl>
                                   </FormItem>
                                 )}
-                              />
+                              /> : null}
 
-                              <FormField
+                              {!isRSGateway ? <FormField
                                 control={form.control}
                                 name='disable_task_polling_sleep'
                                 render={({ field }) => (
@@ -4173,7 +4178,7 @@ export function ChannelMutateDrawer({
                                     </FormControl>
                                   </FormItem>
                                 )}
-                              />
+                              /> : null}
                             </div>
 
                             <FormField
@@ -4321,7 +4326,7 @@ export function ChannelMutateDrawer({
                               }}
                             />
 
-                            <FormField
+                            {!isRSGateway ? <FormField
                               control={form.control}
                               name='system_prompt'
                               render={({ field }) => (
@@ -4344,9 +4349,9 @@ export function ChannelMutateDrawer({
                                   <FormMessage />
                                 </FormItem>
                               )}
-                            />
+                            /> : null}
 
-                            <FormField
+                            {!isRSGateway ? <FormField
                               control={form.control}
                               name='system_prompt_override'
                               render={({ field }) => (
@@ -4369,7 +4374,7 @@ export function ChannelMutateDrawer({
                                   </FormControl>
                                 </FormItem>
                               )}
-                            />
+                            /> : null}
                           </fieldset>
                         </div>
 

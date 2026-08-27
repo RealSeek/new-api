@@ -79,7 +79,7 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeAdvancedCustom
 	case constant.ChannelTypeSub2API:
 		apiType = constant.APITypeSub2API
-	case constant.ChannelTypeNewAPI:
+	case constant.ChannelTypeNewAPI, constant.ChannelTypeRSGateway:
 		apiType = constant.APITypeNewAPI
 	}
 	if apiType == -1 {

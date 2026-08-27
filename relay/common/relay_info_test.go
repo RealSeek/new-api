@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -175,4 +176,28 @@ func TestInitChannelMetaRestoresRequestReasoningEffortForRetry(t *testing.T) {
 	info.SetReasoningEffort("low")
 	info.InitChannelMeta(ctx)
 	assert.Equal(t, "max", info.ReasoningEffort)
+}
+
+func TestInitChannelMetaRSGatewayForcesRawBodyPassThrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	ctx.Set(string(constant.ContextKeyChannelType), constant.ChannelTypeRSGateway)
+	ctx.Set(string(constant.ContextKeyChannelParamOverride), map[string]interface{}{"temperature": 0.5})
+	ctx.Set(string(constant.ContextKeyChannelHeaderOverride), map[string]interface{}{"x-test": "value"})
+	ctx.Set(string(constant.ContextKeyChannelSetting), dto.ChannelSettings{
+		ForceFormat:            true,
+		ThinkingToContent:      true,
+		PassThroughBodyEnabled: false,
+	})
+
+	info := &RelayInfo{}
+	info.InitChannelMeta(ctx)
+
+	require.NotNil(t, info.ChannelMeta)
+	assert.True(t, info.ChannelSetting.PassThroughBodyEnabled)
+	assert.False(t, info.ChannelSetting.ForceFormat)
+	assert.False(t, info.ChannelSetting.ThinkingToContent)
+	assert.Nil(t, info.ParamOverride)
+	assert.Nil(t, info.HeadersOverride)
 }

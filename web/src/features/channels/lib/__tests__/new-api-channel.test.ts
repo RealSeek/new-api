@@ -20,6 +20,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_RS_GATEWAY,
   CHANNEL_TYPE_OPTIONS,
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
@@ -87,5 +88,27 @@ describe('New API channel', () => {
     })
 
     expect(result.success).toBe(true)
+  })
+})
+
+describe('RS Gateway channel', () => {
+  test('registers as a model-fetchable multi-protocol gateway', () => {
+    expect(
+      CHANNEL_TYPE_OPTIONS.find(
+        (item) => item.value === CHANNEL_TYPE_RS_GATEWAY
+      )
+    ).toEqual({ value: CHANNEL_TYPE_RS_GATEWAY, label: 'RS Gateway' })
+    expect(MODEL_FETCHABLE_TYPES.has(CHANNEL_TYPE_RS_GATEWAY)).toBe(true)
+    expect(getChannelTypeIcon(CHANNEL_TYPE_RS_GATEWAY)).toBe('NewAPI')
+    expect(getChannelTypeConfig(CHANNEL_TYPE_RS_GATEWAY).icon).toBe('NewAPI')
+  })
+
+  test('requires a non-blank Base URL', () => {
+    const result = channelFormSchema.safeParse({
+      ...newAPIForm(' '),
+      type: CHANNEL_TYPE_RS_GATEWAY,
+    })
+
+    expect(result.success).toBe(false)
   })
 })
