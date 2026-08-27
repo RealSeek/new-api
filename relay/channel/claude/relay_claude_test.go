@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -325,7 +326,8 @@ func TestBuildOpenAIStyleUsageFromClaudeUsageDefaultsAggregateCacheCreationTo5m(
 
 func TestOpenAIChatRequestToClaudeMessagesOmitsAbsentToolRequired(t *testing.T) {
 	request := dto.GeneralOpenAIRequest{
-		Model: "claude-3-5-sonnet-20241022",
+		Model:     "claude-3-5-sonnet-20241022",
+		MaxTokens: commonPointer(uint(1024)),
 		Messages: []dto.Message{
 			{Role: "user", Content: "hello"},
 		},
@@ -361,7 +363,7 @@ func TestOpenAIChatRequestToClaudeMessagesOmitsAbsentToolRequired(t *testing.T) 
 		},
 	}
 
-	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(context.Background(), nil, request)
 	require.NoError(t, err)
 
 	toolList, ok := claudeRequest.Tools.([]any)

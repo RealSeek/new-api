@@ -16,8 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { describe, expect, test } from 'vitest'
 
 import {
   DEFAULT_HEADER_NAV_CUSTOM_LINKS,
@@ -32,14 +31,14 @@ describe('自定义顶栏链接配置', () => {
     const first = parseHeaderNavCustomLinks(undefined)
     const second = parseHeaderNavCustomLinks(undefined)
 
-    assert.deepEqual(first, DEFAULT_HEADER_NAV_CUSTOM_LINKS)
-    assert.notEqual(first, second)
-    assert.notEqual(first[0], second[0])
-    assert.notEqual(first[0]?.titles, second[0]?.titles)
+    expect(first).toEqual(DEFAULT_HEADER_NAV_CUSTOM_LINKS)
+    expect(first).not.toBe(second)
+    expect(first[0]).not.toBe(second[0])
+    expect(first[0]?.titles).not.toBe(second[0]?.titles)
   })
 
   test('显式空数组会关闭所有自定义入口', () => {
-    assert.deepEqual(parseHeaderNavCustomLinks('[]'), [])
+    expect(parseHeaderNavCustomLinks('[]')).toEqual([])
   })
 
   test('兼容旧版默认名称并补齐内置翻译', () => {
@@ -47,9 +46,9 @@ describe('自定义顶栏链接配置', () => {
       { title: 'Image Generation', url: 'https://image.realseek.wiki/' },
     ])
 
-    assert.equal(links[0]?.titles.zhCN, '图片生成')
-    assert.equal(links[0]?.titles.en, 'Image Generation')
-    assert.equal(links[0]?.titles.ja, '画像生成')
+    expect(links[0]?.titles.zhCN).toBe('图片生成')
+    expect(links[0]?.titles.en).toBe('Image Generation')
+    expect(links[0]?.titles.ja).toBe('画像生成')
   })
 
   test('只保留至少有一个语言名称且地址安全的入口', () => {
@@ -62,9 +61,9 @@ describe('自定义顶栏链接配置', () => {
       { titles: {}, url: 'https://example.com/' },
     ])
 
-    assert.equal(links.length, 1)
-    assert.equal(links[0]?.titles.zhCN, '图片生成')
-    assert.equal(links[0]?.titles.en, 'Image Generation')
+    expect(links).toHaveLength(1)
+    expect(links[0]?.titles.zhCN).toBe('图片生成')
+    expect(links[0]?.titles.en).toBe('Image Generation')
   })
 
   test('按当前界面语言取名称，并回退到简体中文和英文', () => {
@@ -73,9 +72,9 @@ describe('自定义顶栏链接配置', () => {
     titles.en = 'Help Center'
     const link = { titles, url: 'https://example.com/help' }
 
-    assert.equal(resolveHeaderNavCustomLinkTitle(link, 'zh-CN'), '帮助中心')
-    assert.equal(resolveHeaderNavCustomLinkTitle(link, 'en-US'), 'Help Center')
-    assert.equal(resolveHeaderNavCustomLinkTitle(link, 'ja'), '帮助中心')
+    expect(resolveHeaderNavCustomLinkTitle(link, 'zh-CN')).toBe('帮助中心')
+    expect(resolveHeaderNavCustomLinkTitle(link, 'en-US')).toBe('Help Center')
+    expect(resolveHeaderNavCustomLinkTitle(link, 'ja')).toBe('帮助中心')
   })
 
   test('序列化时清理多语言名称并写入兼容回退名称', () => {
@@ -87,7 +86,7 @@ describe('自定义顶栏链接配置', () => {
       { titles, url: ' https://example.com/docs ' },
     ])
 
-    assert.deepEqual(JSON.parse(serialized), [
+    expect(JSON.parse(serialized)).toEqual([
       {
         title: '文档',
         titles: {

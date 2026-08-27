@@ -216,18 +216,47 @@ func TestRedeemBatchRejectsDuplicateCodes(t *testing.T) {
 
 func TestRedeemBatchRejectsQuotaOverflow(t *testing.T) {
 	userId, keys := setupRedeemFixtures(t, []int{100})
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", userId).Update("quota", common.MaxQuota-50).Error)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", userId).Update("quota", common.MaxWalletQuota-50).Error)
 
 	_, err := RedeemBatch(keys, userId)
 	require.Error(t, err)
 
 	var user User
 	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
-	assert.Equal(t, common.MaxQuota-50, user.Quota)
+	assert.Equal(t, common.MaxWalletQuota-50, user.Quota)
 
 	var redemption Redemption
 	require.NoError(t, DB.First(&redemption, commonKeyCol+" = ?", keys[0]).Error)
 	assert.Equal(t, common.RedemptionCodeStatusEnabled, redemption.Status)
+}
+
+func TestRedeemRejectsWalletOverflow(t *testing.T) {
+	userId, key := setupRedeemFixture(t, 11)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", userId).Update("quota", common.MaxWalletQuota-10).Error)
+
+	_, err := Redeem(key, userId)
+	require.ErrorIs(t, err, ErrRedeemFailed)
+
+	var user User
+	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
+	assert.Equal(t, common.MaxWalletQuota-10, user.Quota)
+
+	var redemption Redemption
+	require.NoError(t, DB.First(&redemption, "key = ?", key).Error)
+	assert.Equal(t, common.RedemptionCodeStatusEnabled, redemption.Status)
+}
+
+func TestRedemptionQuotaRejectsWalletOverflow(t *testing.T) {
+	setupRedeemFixture(t, 500)
+
+	redemption := &Redemption{
+		Name:        "overflow-redemption",
+		Key:         "10000000000000000000000000000002",
+		Status:      common.RedemptionCodeStatusEnabled,
+		Quota:       common.MaxWalletQuota + 1,
+		CreatedTime: common.GetTimestamp(),
+	}
+	require.Error(t, redemption.Insert())
 }
 
 // Exactly one of several concurrent redeems of the same code may win, and

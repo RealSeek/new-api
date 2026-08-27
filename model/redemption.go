@@ -220,7 +220,7 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 			}
 
 			totalQuota64 += int64(redemption.Quota)
-			if totalQuota64 > int64(common.MaxQuota) {
+			if totalQuota64 > int64(common.MaxWalletQuota) {
 				return errors.New("兑换额度超过上限")
 			}
 			ids = append(ids, redemption.Id)
@@ -242,26 +242,23 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 		}
 
 		totalQuota = int(totalQuota64)
-		result = tx.Model(&User{}).
-			Where("id = ? AND quota <= ?", userId, common.MaxQuota-totalQuota).
-			Update("quota", gorm.Expr("quota + ?", totalQuota))
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return errors.New("用户不存在或额度超过上限")
-		}
-
 		redemptionIds = ids
-		return nil
+		return creditTopUpQuota(tx, userId, totalQuota, nil)
 	})
 	if err != nil {
 		return 0, nil, err
 	}
+	syncCreditUserQuotaCache(userId, totalQuota, "redemption")
 	return totalQuota, redemptionIds, nil
 }
 
 func (redemption *Redemption) Insert() error {
+	if redemption.Quota <= 0 {
+		return errors.New("redemption quota must be positive")
+	}
+	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+		return err
+	}
 	var err error
 	err = DB.Create(redemption).Error
 	return err
@@ -274,6 +271,12 @@ func (redemption *Redemption) SelectUpdate() error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (redemption *Redemption) Update() error {
+	if redemption.Quota <= 0 {
+		return errors.New("redemption quota must be positive")
+	}
+	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+		return err
+	}
 	var err error
 	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
 	return err
