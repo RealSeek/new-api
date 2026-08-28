@@ -301,11 +301,13 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 	ctx.Request.Header.Set("Authorization", "Bearer client-secret")
 	ctx.Request.Header.Set("X-Gateway-Client-Type", "spoofed")
 	ctx.Set(string(rootconstant.ContextKeyUserName), "测试 用户")
+	ctx.Set("token_name", "生产 Key")
 	header := http.Header{
-		"X-Rs-Newapi-User-Id":  []string{"999"},
-		"X-Rs-Newapi-Username": []string{"spoofed"},
-		"User-Agent":           []string{"new-api"},
-		"Authorization":        []string{"Bearer upstream-secret"},
+		"X-Rs-Newapi-User-Id":    []string{"999"},
+		"X-Rs-Newapi-Username":   []string{"spoofed"},
+		"X-Rs-Newapi-Token-Name": []string{"spoofed-key"},
+		"User-Agent":             []string{"new-api"},
+		"Authorization":          []string{"Bearer upstream-secret"},
 	}
 	info := &relaycommon.RelayInfo{
 		UserId: 42,
@@ -318,6 +320,7 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 
 	assert.Equal(t, "42", header.Get("X-RS-NewAPI-User-ID"))
 	assert.Equal(t, "%E6%B5%8B%E8%AF%95%20%E7%94%A8%E6%88%B7", header.Get("X-RS-NewAPI-Username"))
+	assert.Equal(t, "%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Token-Name"))
 	assert.Equal(t, "codex-cli/0.116.0", header.Get("User-Agent"))
 	assert.Equal(t, "codex_cli_rs", header.Get("Originator"))
 	assert.Equal(t, "client-session", header.Get("Session_id"))
