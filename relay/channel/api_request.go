@@ -319,7 +319,55 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	}
 	header.Del("X-RS-NewAPI-User-ID")
 	header.Del("X-RS-NewAPI-Username")
-	if info.UserId <= 0 || c == nil {
+	if c == nil || c.Request == nil {
+		return
+	}
+	// RS Gateway 需要使用直连客户端的身份和会话信息做日志归类与会话关联。
+	// 仅透传已知客户端头，鉴权头和网关内部头仍由当前渠道独立管理。
+	for _, name := range []string{
+		"User-Agent",
+		"Originator",
+		"Version",
+		"Session_id",
+		"Session-Id",
+		"Thread_id",
+		"Thread-Id",
+		"X-Session-Id",
+		"X-Claude-Session-Id",
+		"X-Claude-Code-Session-Id",
+		"X-Client-Request-Id",
+		"X-Codex-Beta-Features",
+		"X-Codex-Turn-State",
+		"X-Codex-Turn-Metadata",
+		"X-Codex-Window-Id",
+		"X-Codex-Parent-Thread-Id",
+		"X-OpenAI-Subagent",
+		"X-OpenAI-Memgen-Request",
+		"X-ResponsesAPI-Include-Timing-Metrics",
+		"X-OpenAI-Internal-Codex-Responses-Lite",
+		"X-Stainless-Arch",
+		"X-Stainless-Lang",
+		"X-Stainless-Os",
+		"X-Stainless-Package-Version",
+		"X-Stainless-Retry-Count",
+		"X-Stainless-Runtime",
+		"X-Stainless-Runtime-Version",
+		"X-Stainless-Timeout",
+		"X-App",
+		"Anthropic-Beta",
+		"Anthropic-Dangerous-Direct-Browser-Access",
+		"Anthropic-Version",
+	} {
+		values := c.Request.Header.Values(name)
+		if len(values) == 0 {
+			continue
+		}
+		header.Del(name)
+		for _, value := range values {
+			header.Add(name, value)
+		}
+	}
+	if info.UserId <= 0 {
 		return
 	}
 	username := common2.GetContextKeyString(c, rootconstant.ContextKeyUserName)

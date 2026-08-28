@@ -376,6 +376,17 @@ func GenRelayInfoWs(c *gin.Context, ws *websocket.Conn) *RelayInfo {
 	return info
 }
 
+// GenRSGatewayRelayInfo 构造透明转发所需的最小上下文，不解析客户端请求 DTO。
+func GenRSGatewayRelayInfo(c *gin.Context, relayFormat types.RelayFormat, ws *websocket.Conn) *RelayInfo {
+	if relayFormat == types.RelayFormatOpenAIRealtime {
+		return GenRelayInfoWs(c, ws)
+	}
+	info := genBaseRelayInfo(c, nil)
+	info.RelayFormat = relayFormat
+	info.InitRequestConversionChain()
+	return info
+}
+
 func GenRelayInfoClaude(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatClaude

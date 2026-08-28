@@ -109,6 +109,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeRSGateway {
+		relayInfo := relaycommon.GenRSGatewayRelayInfo(c, relayFormat, ws)
+		if relayFormat == types.RelayFormatOpenAIRealtime {
+			newAPIError = relay.WssHelper(c, relayInfo)
+		} else {
+			newAPIError = relay.RSGatewayHelper(c, relayInfo)
+		}
+		return
+	}
+
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
 	if err != nil {
 		// Map "request body too large" to 413 so clients can handle it correctly
@@ -125,7 +135,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
-
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
@@ -237,6 +246,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		if clientRequestDone(c) {
+			break
+		}
+		// RS Gateway 自己负责供应商重试和熔断，New API 不重复处理或自动禁用该渠道。
+		if channel.Type == constant.ChannelTypeRSGateway {
 			break
 		}
 
