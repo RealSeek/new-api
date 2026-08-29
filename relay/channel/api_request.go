@@ -325,6 +325,7 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	header.Del("X-Gateway-NewAPI-Token-Name")
 	header.Del("X-RS-NewAPI-Using-Group")
 	header.Del("X-RS-NewAPI-Group-Ratio")
+	header.Del("X-RS-NewAPI-Request-ID")
 	if c == nil || c.Request == nil {
 		return
 	}
@@ -382,6 +383,9 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	}
 	header.Set("X-RS-NewAPI-User-ID", strconv.Itoa(info.UserId))
 	header.Set("X-RS-NewAPI-Username", url.PathEscape(username))
+	if info.RequestId != "" {
+		header.Set("X-RS-NewAPI-Request-ID", info.RequestId)
+	}
 	tokenName := strings.TrimSpace(info.TokenName)
 	tokenID := info.TokenId
 	if tokenID <= 0 {

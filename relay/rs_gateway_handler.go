@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -114,7 +116,14 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			return
 		}
 		usage := usageTracker.Usage()
-		service.PostTextConsumeQuota(c, info, usage, nil)
+		quota := service.PostTextConsumeQuota(c, info, usage, nil)
+		if httpResponse.Request != nil && httpResponse.Request.URL != nil {
+			callbackURL := *httpResponse.Request.URL
+			callbackURL.Path = "/api/new-api-usage"
+			callbackURL.RawPath = ""
+			callbackURL.RawQuery = ""
+			reportRSGatewayUsage(callbackURL.String(), info.ApiKey, info.RequestId, quota)
+		}
 		settled = true
 	}()
 
@@ -168,6 +177,53 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		logger.LogError(c, "RS Gateway 响应转发失败: "+err.Error())
 	}
 	return nil
+}
+
+func reportRSGatewayUsage(callbackURL, apiKey, requestID string, quota int) {
+	if callbackURL == "" || apiKey == "" || requestID == "" || quota < 0 {
+		return
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"request_id": requestID,
+		"quota":      quota,
+	})
+	if err != nil {
+		return
+	}
+	client := service.GetHttpClient()
+	if client == nil {
+		client = http.DefaultClient
+	}
+	gopool.Go(func() {
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt*attempt) * 250 * time.Millisecond)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(payload))
+			if reqErr != nil {
+				cancel()
+				lastErr = reqErr
+				break
+			}
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, requestErr := client.Do(req)
+			if requestErr == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+					cancel()
+					return
+				}
+				lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			} else {
+				lastErr = requestErr
+			}
+			cancel()
+		}
+		logger.LogError(context.Background(), fmt.Sprintf("RS Gateway 结算回写失败: %v", lastErr))
+	})
 }
 
 const rsGatewayUsageCaptureLimit = 8 << 20

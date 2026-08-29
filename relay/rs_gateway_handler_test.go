@@ -1,11 +1,36 @@
 package relay
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestReportRSGatewayUsage(t *testing.T) {
+	received := make(chan map[string]interface{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer gateway-key", r.Header.Get("Authorization"))
+		var payload map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		received <- payload
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	reportRSGatewayUsage(server.URL+"/api/new-api-usage", "gateway-key", "request-42", 1250)
+	select {
+	case payload := <-received:
+		assert.Equal(t, "request-42", payload["request_id"])
+		assert.Equal(t, float64(1250), payload["quota"])
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 RS Gateway 结算回写超时")
+	}
+}
 
 func TestRSGatewayRequestIsStream(t *testing.T) {
 	assert.True(t, rsGatewayRequestIsStream([]byte(`{"model":"gpt-5.6-sol","stream":true}`)))

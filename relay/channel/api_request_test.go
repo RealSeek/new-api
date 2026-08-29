@@ -316,6 +316,7 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 		UserId:     42,
 		TokenName:  "生产 Key",
 		UsingGroup: "测试",
+		RequestId:  "req-new-api-42",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelType: rootconstant.ChannelTypeRSGateway,
 		},
@@ -328,6 +329,7 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 	assert.Equal(t, "%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Token-Name"))
 	assert.Equal(t, "%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Key-Name"))
 	assert.Equal(t, "%E6%B5%8B%E8%AF%95;x-token-name=%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Using-Group"))
+	assert.Equal(t, "req-new-api-42", header.Get("X-RS-NewAPI-Request-ID"))
 	assert.Equal(t, "codex-cli/0.116.0", header.Get("User-Agent"))
 	assert.Equal(t, "codex_cli_rs", header.Get("Originator"))
 	assert.Equal(t, "client-session", header.Get("Session_id"))
