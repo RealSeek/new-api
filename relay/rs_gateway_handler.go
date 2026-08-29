@@ -21,7 +21,15 @@ import (
 func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	startTime := time.Now()
 	info.TokenId = c.GetInt("token_id")
+	if info.TokenId <= 0 {
+		info.TokenId = common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+	}
 	info.TokenName = c.GetString("token_name")
+	if strings.TrimSpace(info.TokenName) == "" && info.TokenId > 0 {
+		if token, err := model.GetTokenById(info.TokenId); err == nil {
+			info.TokenName = strings.TrimSpace(token.Name)
+		}
+	}
 	info.InitChannelMeta(c)
 	recordError := func(content string, statusCode int) {
 		if !constant.ErrorLogEnabled {
