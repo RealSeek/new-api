@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) {
+func TestRelayRSGatewaySkipsRequestValidationAndNormalizesErrorResponse(t *testing.T) {
 	service.InitHttpClient()
 	originalRatios := ratio_setting.ModelRatio2JSONString()
 	originalFreeModelPreConsume := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
@@ -53,10 +53,10 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 			turnMetadata:     r.Header.Get("X-Codex-Turn-Metadata"),
 			requestReadError: err,
 		}
-		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Upstream-Test", "preserved")
-		w.WriteHeader(http.StatusTeapot)
-		_, _ = w.Write([]byte("upstream raw response"))
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limit exceeded","type":"rate_limit_error","code":"rate_limit_exceeded"}}`))
 	}))
 	t.Cleanup(upstream.Close)
 
@@ -91,8 +91,15 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 	assert.Equal(t, "%E6%B5%8B%E8%AF%95%E4%BB%A4%E7%89%8C", captured.tokenName)
 	assert.Equal(t, "%E6%B5%8B%E8%AF%95%E4%BB%A4%E7%89%8C", captured.keyName)
 	assert.Equal(t, "turn-123", captured.turnMetadata)
-	assert.Equal(t, http.StatusTeapot, recorder.Code)
-	assert.Equal(t, "text/plain", recorder.Header().Get("Content-Type"))
-	assert.Equal(t, "preserved", recorder.Header().Get("X-Upstream-Test"))
-	assert.Equal(t, "upstream raw response", recorder.Body.String())
+	assert.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	assert.Equal(t, "application/json; charset=utf-8", recorder.Header().Get("Content-Type"))
+	assert.Empty(t, recorder.Header().Get("X-Upstream-Test"))
+	var response struct {
+		Error types.OpenAIError `json:"error"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "rate limit exceeded", response.Error.Message)
+	assert.Equal(t, "rate_limit_error", response.Error.Type)
+	assert.Equal(t, "rate_limit_exceeded", response.Error.Code)
+	assert.Empty(t, response.Error.Param)
 }

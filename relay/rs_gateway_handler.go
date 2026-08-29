@@ -109,12 +109,13 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		info.IsStream = true
 		c.Set(string(constant.ContextKeyIsStream), true)
 	}
+	if httpResponse.StatusCode < http.StatusOK || httpResponse.StatusCode >= http.StatusMultipleChoices {
+		newAPIError := service.RelayErrorHandler(c.Request.Context(), httpResponse, false)
+		recordError(newAPIError.MaskSensitiveErrorWithStatusCode(), newAPIError.StatusCode)
+		return newAPIError
+	}
 	usageTracker := newRSGatewayUsageTracker(info.IsStream)
 	defer func() {
-		if httpResponse.StatusCode < http.StatusOK || httpResponse.StatusCode >= http.StatusMultipleChoices {
-			recordError(fmt.Sprintf("RS Gateway 返回 HTTP %d", httpResponse.StatusCode), httpResponse.StatusCode)
-			return
-		}
 		usage := usageTracker.Usage()
 		quota := service.PostTextConsumeQuota(c, info, usage, nil)
 		if httpResponse.Request != nil && httpResponse.Request.URL != nil {
