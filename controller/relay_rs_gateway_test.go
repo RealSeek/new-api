@@ -26,6 +26,7 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 		trace            string
 		authorization    string
 		tokenName        string
+		keyName          string
 		turnMetadata     string
 		requestReadError error
 	}
@@ -38,6 +39,7 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 			trace:            r.URL.Query().Get("trace"),
 			authorization:    r.Header.Get("Authorization"),
 			tokenName:        r.Header.Get("X-RS-NewAPI-Token-Name"),
+			keyName:          r.Header.Get("X-RS-NewAPI-Key-Name"),
 			turnMetadata:     r.Header.Get("X-Codex-Turn-Metadata"),
 			requestReadError: err,
 		}
@@ -77,6 +79,7 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 	assert.Equal(t, "trace-value", captured.trace)
 	assert.Equal(t, "Bearer upstream-key", captured.authorization)
 	assert.Equal(t, "%E6%B5%8B%E8%AF%95%E4%BB%A4%E7%89%8C", captured.tokenName)
+	assert.Equal(t, "%E6%B5%8B%E8%AF%95%E4%BB%A4%E7%89%8C", captured.keyName)
 	assert.Equal(t, "turn-123", captured.turnMetadata)
 	assert.Equal(t, http.StatusTeapot, recorder.Code)
 	assert.Equal(t, "text/plain", recorder.Header().Get("Content-Type"))

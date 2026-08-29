@@ -325,6 +325,7 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 	assert.Equal(t, "42", header.Get("X-RS-NewAPI-User-ID"))
 	assert.Equal(t, "%E6%B5%8B%E8%AF%95%20%E7%94%A8%E6%88%B7", header.Get("X-RS-NewAPI-Username"))
 	assert.Equal(t, "%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Token-Name"))
+	assert.Equal(t, "%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Key-Name"))
 	assert.Equal(t, "codex-cli/0.116.0", header.Get("User-Agent"))
 	assert.Equal(t, "codex_cli_rs", header.Get("Originator"))
 	assert.Equal(t, "client-session", header.Get("Session_id"))
@@ -358,4 +359,5 @@ func TestApplyRSGatewayIdentityHeadersLoadsMissingTokenName(t *testing.T) {
 	applyRSGatewayIdentityHeaders(header, ctx, info)
 
 	assert.Equal(t, "%E8%BF%99%E4%B8%AA%E6%98%AF%E6%B5%8B%E8%AF%95%E5%88%86%E7%BB%84%E4%BB%A4%E7%89%8C%E5%90%8D", header.Get("X-RS-NewAPI-Token-Name"))
+	assert.Equal(t, "%E8%BF%99%E4%B8%AA%E6%98%AF%E6%B5%8B%E8%AF%95%E5%88%86%E7%BB%84%E4%BB%A4%E7%89%8C%E5%90%8D", header.Get("X-RS-NewAPI-Key-Name"))
 }
