@@ -25,6 +25,7 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 		path             string
 		trace            string
 		authorization    string
+		tokenName        string
 		turnMetadata     string
 		requestReadError error
 	}
@@ -36,6 +37,7 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 			path:             r.URL.Path,
 			trace:            r.URL.Query().Get("trace"),
 			authorization:    r.Header.Get("Authorization"),
+			tokenName:        r.Header.Get("X-RS-NewAPI-Token-Name"),
 			turnMetadata:     r.Header.Get("X-Codex-Turn-Metadata"),
 			requestReadError: err,
 		}
@@ -61,6 +63,10 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 	common.SetContextKey(ctx, constant.ContextKeyChannelBaseUrl, upstream.URL)
 	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "upstream-key")
 	common.SetContextKey(ctx, constant.ContextKeyOriginalModel, "gateway-model")
+	ctx.Set("id", 42)
+	ctx.Set("token_id", 3)
+	ctx.Set("token_name", "测试令牌")
+	ctx.Set(string(constant.ContextKeyUserName), "RealSeek")
 
 	Relay(ctx, types.RelayFormatOpenAI)
 
@@ -70,6 +76,7 @@ func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) 
 	assert.Equal(t, "/v1/chat/completions", captured.path)
 	assert.Equal(t, "trace-value", captured.trace)
 	assert.Equal(t, "Bearer upstream-key", captured.authorization)
+	assert.Equal(t, "%E6%B5%8B%E8%AF%95%E4%BB%A4%E7%89%8C", captured.tokenName)
 	assert.Equal(t, "turn-123", captured.turnMetadata)
 	assert.Equal(t, http.StatusTeapot, recorder.Code)
 	assert.Equal(t, "text/plain", recorder.Header().Get("Content-Type"))

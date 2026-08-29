@@ -20,6 +20,8 @@ import (
 // RSGatewayHelper 将已完成鉴权和渠道选择的请求原样交给 RS Gateway。
 func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	startTime := time.Now()
+	info.TokenId = c.GetInt("token_id")
+	info.TokenName = c.GetString("token_name")
 	info.InitChannelMeta(c)
 	recordError := func(content string, statusCode int) {
 		if !constant.ErrorLogEnabled {
