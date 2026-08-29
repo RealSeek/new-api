@@ -398,6 +398,14 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 		header.Set("X-RS-NewAPI-Key-Name", encodedTokenName)
 		header.Set("X-Gateway-NewAPI-Token-Name", encodedTokenName)
 	}
+	logger.LogInfo(c, fmt.Sprintf(
+		"RS Gateway identity: token_id=%d context_name=%q info_name=%q resolved_name=%q token_header=%t",
+		tokenID,
+		c.GetString("token_name"),
+		info.TokenName,
+		tokenName,
+		header.Get("X-Gateway-NewAPI-Token-Name") != "",
+	))
 	if usingGroup := strings.TrimSpace(info.UsingGroup); usingGroup != "" {
 		header.Set("X-RS-NewAPI-Using-Group", url.PathEscape(usingGroup))
 		header.Set("X-RS-NewAPI-Group-Ratio", strconv.FormatFloat(service.GetUserGroupRatio(info.UserGroup, usingGroup), 'f', -1, 64))
