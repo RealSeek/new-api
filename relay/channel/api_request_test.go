@@ -310,7 +310,8 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 		"Authorization":          []string{"Bearer upstream-secret"},
 	}
 	info := &relaycommon.RelayInfo{
-		UserId: 42,
+		UserId:    42,
+		TokenName: "生产 Key",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelType: rootconstant.ChannelTypeRSGateway,
 		},

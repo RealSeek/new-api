@@ -379,7 +379,7 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	}
 	header.Set("X-RS-NewAPI-User-ID", strconv.Itoa(info.UserId))
 	header.Set("X-RS-NewAPI-Username", url.PathEscape(username))
-	if tokenName := c.GetString("token_name"); tokenName != "" {
+	if tokenName := strings.TrimSpace(info.TokenName); tokenName != "" {
 		header.Set("X-RS-NewAPI-Token-Name", url.PathEscape(tokenName))
 	}
 	if usingGroup := strings.TrimSpace(info.UsingGroup); usingGroup != "" {
