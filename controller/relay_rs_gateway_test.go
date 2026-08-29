@@ -11,6 +11,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,6 +20,14 @@ import (
 
 func TestRelayRSGatewaySkipsRequestValidationAndPreservesResponse(t *testing.T) {
 	service.InitHttpClient()
+	originalRatios := ratio_setting.ModelRatio2JSONString()
+	originalFreeModelPreConsume := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
+	operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gateway-model":0}`))
+	t.Cleanup(func() {
+		operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = originalFreeModelPreConsume
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(originalRatios))
+	})
 
 	requestBody := `{"model":"gateway-model","custom_field":{"kept":true}}`
 	type capturedRequest struct {

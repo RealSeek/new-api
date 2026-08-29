@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +15,10 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -65,6 +70,28 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		recordError("读取请求体失败", http.StatusBadRequest)
 		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
+	requestBody, err := storage.Bytes()
+	if err != nil {
+		recordError("读取请求体失败", http.StatusBadRequest)
+		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+	}
+	info.IsStream = rsGatewayRequestIsStream(requestBody)
+	c.Set(string(constant.ContextKeyIsStream), info.IsStream)
+	priceData, err := relayhelper.ModelPriceHelper(c, info, 0, &types.TokenCountMeta{})
+	if err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if !priceData.FreeModel {
+		if apiErr := service.PreConsumeBilling(c, priceData.QuotaToPreConsume, info); apiErr != nil {
+			return apiErr
+		}
+	}
+	settled := false
+	defer func() {
+		if !settled && info.Billing != nil {
+			info.Billing.Refund(c)
+		}
+	}()
 	response, err := adaptor.DoRequest(c, info, common.NewReplayableBodyReader(storage))
 	if err != nil {
 		recordError("RS Gateway 连接失败", http.StatusBadGateway)
@@ -76,26 +103,19 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		return types.NewError(errors.New("invalid http response"), types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	defer httpResponse.Body.Close()
-	// RS Gateway 负责实际计费和用量解析，New-API 仍需保留一条消费日志，
-	// 方便按 New-API Key 在管理端追踪请求。用量字段由网关侧日志提供，这里不重复估算。
+	if strings.HasPrefix(strings.ToLower(httpResponse.Header.Get("Content-Type")), "text/event-stream") {
+		info.IsStream = true
+		c.Set(string(constant.ContextKeyIsStream), true)
+	}
+	usageTracker := newRSGatewayUsageTracker(info.IsStream)
 	defer func() {
 		if httpResponse.StatusCode < http.StatusOK || httpResponse.StatusCode >= http.StatusMultipleChoices {
 			recordError(fmt.Sprintf("RS Gateway 返回 HTTP %d", httpResponse.StatusCode), httpResponse.StatusCode)
 			return
 		}
-		model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-			ChannelId:      info.ChannelId,
-			ModelName:      info.OriginModelName,
-			TokenName:      c.GetString("token_name"),
-			TokenId:        info.TokenId,
-			UseTimeSeconds: int(time.Since(startTime).Seconds()),
-			IsStream:       info.IsStream,
-			Group:          info.UsingGroup,
-			Other: map[string]interface{}{
-				"rs_gateway":  true,
-				"status_code": httpResponse.StatusCode,
-			},
-		})
+		usage := usageTracker.Usage()
+		service.PostTextConsumeQuota(c, info, usage, nil)
+		settled = true
 	}()
 
 	connectionHeaders := make(map[string]struct{})
@@ -128,6 +148,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			for {
 				read, readErr := httpResponse.Body.Read(buffer)
 				if read > 0 {
+					_, _ = usageTracker.Write(buffer[:read])
 					if _, writeErr := c.Writer.Write(buffer[:read]); writeErr != nil {
 						logger.LogError(c, "RS Gateway 响应写入失败: "+writeErr.Error())
 						return nil
@@ -143,8 +164,149 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			}
 		}
 	}
-	if _, err = io.Copy(c.Writer, httpResponse.Body); err != nil {
+	if _, err = io.Copy(io.MultiWriter(c.Writer, usageTracker), httpResponse.Body); err != nil {
 		logger.LogError(c, "RS Gateway 响应转发失败: "+err.Error())
 	}
 	return nil
+}
+
+const rsGatewayUsageCaptureLimit = 8 << 20
+
+type rsGatewayUsageTracker struct {
+	stream  bool
+	pending []byte
+	body    []byte
+	usage   dto.Usage
+	found   bool
+}
+
+func newRSGatewayUsageTracker(stream bool) *rsGatewayUsageTracker {
+	return &rsGatewayUsageTracker{stream: stream}
+}
+
+func (t *rsGatewayUsageTracker) Write(data []byte) (int, error) {
+	if !t.stream {
+		remaining := rsGatewayUsageCaptureLimit - len(t.body)
+		if remaining > 0 {
+			t.body = append(t.body, data[:min(len(data), remaining)]...)
+		}
+		return len(data), nil
+	}
+	t.pending = append(t.pending, data...)
+	for {
+		lineEnd := bytes.IndexByte(t.pending, '\n')
+		if lineEnd < 0 {
+			break
+		}
+		t.consumeSSELine(t.pending[:lineEnd])
+		t.pending = t.pending[lineEnd+1:]
+	}
+	if len(t.pending) > rsGatewayUsageCaptureLimit {
+		t.pending = append([]byte(nil), t.pending[len(t.pending)-rsGatewayUsageCaptureLimit:]...)
+	}
+	return len(data), nil
+}
+
+func (t *rsGatewayUsageTracker) consumeSSELine(line []byte) {
+	line = bytes.TrimSpace(line)
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+		return
+	}
+	t.mergeJSON(payload)
+}
+
+func (t *rsGatewayUsageTracker) mergeJSON(data []byte) {
+	var value interface{}
+	if json.Unmarshal(data, &value) != nil {
+		return
+	}
+	walkRSGatewayUsage(value, func(usage dto.Usage) {
+		normalizeRSGatewayUsage(&usage)
+		mergeRSGatewayUsage(&t.usage, &usage)
+		t.found = t.usage.TotalTokens > 0
+	})
+}
+
+func (t *rsGatewayUsageTracker) Usage() *dto.Usage {
+	if t.stream {
+		if len(t.pending) > 0 {
+			t.consumeSSELine(t.pending)
+			t.pending = nil
+		}
+	} else {
+		t.mergeJSON(t.body)
+	}
+	if !t.found {
+		return nil
+	}
+	usage := t.usage
+	return &usage
+}
+
+func rsGatewayRequestIsStream(body []byte) bool {
+	var request struct {
+		Stream bool `json:"stream"`
+	}
+	return json.Unmarshal(body, &request) == nil && request.Stream
+}
+
+func walkRSGatewayUsage(value interface{}, visit func(dto.Usage)) {
+	switch current := value.(type) {
+	case map[string]interface{}:
+		for key, child := range current {
+			if key == "usage" {
+				if raw, err := json.Marshal(child); err == nil {
+					var usage dto.Usage
+					if json.Unmarshal(raw, &usage) == nil {
+						visit(usage)
+					}
+				}
+			}
+			walkRSGatewayUsage(child, visit)
+		}
+	case []interface{}:
+		for _, child := range current {
+			walkRSGatewayUsage(child, visit)
+		}
+	}
+}
+
+func normalizeRSGatewayUsage(usage *dto.Usage) {
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = usage.InputTokens
+	}
+	if usage.CompletionTokens == 0 {
+		usage.CompletionTokens = usage.OutputTokens
+	}
+	if usage.InputTokens == 0 {
+		usage.InputTokens = usage.PromptTokens
+	}
+	if usage.OutputTokens == 0 {
+		usage.OutputTokens = usage.CompletionTokens
+	}
+	if usage.InputTokensDetails != nil && usage.PromptTokensDetails.CachedTokens == 0 {
+		usage.PromptTokensDetails = *usage.InputTokensDetails
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+}
+
+func mergeRSGatewayUsage(target, next *dto.Usage) {
+	if next.PromptTokens > 0 {
+		target.PromptTokens = next.PromptTokens
+		target.InputTokens = next.InputTokens
+		target.PromptTokensDetails = next.PromptTokensDetails
+		target.InputTokensDetails = next.InputTokensDetails
+	}
+	if next.CompletionTokens > 0 {
+		target.CompletionTokens = next.CompletionTokens
+		target.OutputTokens = next.OutputTokens
+		target.CompletionTokenDetails = next.CompletionTokenDetails
+	}
+	target.TotalTokens = target.PromptTokens + target.CompletionTokens
 }
