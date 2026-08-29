@@ -13,9 +13,9 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -313,8 +313,9 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 		"Authorization":          []string{"Bearer upstream-secret"},
 	}
 	info := &relaycommon.RelayInfo{
-		UserId:    42,
-		TokenName: "生产 Key",
+		UserId:     42,
+		TokenName:  "生产 Key",
+		UsingGroup: "测试",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelType: rootconstant.ChannelTypeRSGateway,
 		},
@@ -326,6 +327,7 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 	assert.Equal(t, "%E6%B5%8B%E8%AF%95%20%E7%94%A8%E6%88%B7", header.Get("X-RS-NewAPI-Username"))
 	assert.Equal(t, "%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Token-Name"))
 	assert.Equal(t, "%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Key-Name"))
+	assert.Equal(t, "%E6%B5%8B%E8%AF%95;x-token-name=%E7%94%9F%E4%BA%A7%20Key", header.Get("X-RS-NewAPI-Using-Group"))
 	assert.Equal(t, "codex-cli/0.116.0", header.Get("User-Agent"))
 	assert.Equal(t, "codex_cli_rs", header.Get("Originator"))
 	assert.Equal(t, "client-session", header.Get("Session_id"))
