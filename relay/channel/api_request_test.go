@@ -346,10 +346,10 @@ func TestApplyRSGatewayIdentityHeadersLoadsMissingTokenName(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	ctx.Set(string(rootconstant.ContextKeyUserName), "RealSeek")
+	ctx.Set(string(rootconstant.ContextKeyTokenId), 3)
 	header := http.Header{}
 	info := &relaycommon.RelayInfo{
-		UserId:  42,
-		TokenId: 3,
+		UserId: 42,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelType: rootconstant.ChannelTypeRSGateway,
 		},

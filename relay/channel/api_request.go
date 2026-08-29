@@ -381,8 +381,12 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	header.Set("X-RS-NewAPI-User-ID", strconv.Itoa(info.UserId))
 	header.Set("X-RS-NewAPI-Username", url.PathEscape(username))
 	tokenName := strings.TrimSpace(info.TokenName)
-	if tokenName == "" && info.TokenId > 0 {
-		if token, err := model.GetTokenById(info.TokenId); err == nil {
+	tokenID := info.TokenId
+	if tokenID <= 0 {
+		tokenID = common2.GetContextKeyInt(c, rootconstant.ContextKeyTokenId)
+	}
+	if tokenName == "" && tokenID > 0 {
+		if token, err := model.GetTokenById(tokenID); err == nil {
 			tokenName = strings.TrimSpace(token.Name)
 		}
 	}
