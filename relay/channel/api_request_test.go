@@ -9,11 +9,14 @@ import (
 	"testing"
 
 	rootconstant "github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
 
 type contextTestAdaptor struct {
@@ -328,4 +331,31 @@ func TestApplyRSGatewayIdentityHeaders(t *testing.T) {
 	assert.Equal(t, `{"session_id":"turn-session"}`, header.Get("X-Codex-Turn-Metadata"))
 	assert.Equal(t, "Bearer upstream-secret", header.Get("Authorization"))
 	assert.Empty(t, header.Get("X-Gateway-Client-Type"))
+}
+
+func TestApplyRSGatewayIdentityHeadersLoadsMissingTokenName(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Token{}))
+	require.NoError(t, db.Create(&model.Token{Id: 3, UserId: 42, Name: "这个是测试分组令牌名"}).Error)
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Set(string(rootconstant.ContextKeyUserName), "RealSeek")
+	header := http.Header{}
+	info := &relaycommon.RelayInfo{
+		UserId:  42,
+		TokenId: 3,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: rootconstant.ChannelTypeRSGateway,
+		},
+	}
+
+	applyRSGatewayIdentityHeaders(header, ctx, info)
+
+	assert.Equal(t, "%E8%BF%99%E4%B8%AA%E6%98%AF%E6%B5%8B%E8%AF%95%E5%88%86%E7%BB%84%E4%BB%A4%E7%89%8C%E5%90%8D", header.Get("X-RS-NewAPI-Token-Name"))
 }

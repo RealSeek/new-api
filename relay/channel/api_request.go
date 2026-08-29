@@ -16,6 +16,7 @@ import (
 	common2 "github.com/QuantumNous/new-api/common"
 	rootconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -379,7 +380,13 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	}
 	header.Set("X-RS-NewAPI-User-ID", strconv.Itoa(info.UserId))
 	header.Set("X-RS-NewAPI-Username", url.PathEscape(username))
-	if tokenName := strings.TrimSpace(info.TokenName); tokenName != "" {
+	tokenName := strings.TrimSpace(info.TokenName)
+	if tokenName == "" && info.TokenId > 0 {
+		if token, err := model.GetTokenById(info.TokenId); err == nil {
+			tokenName = strings.TrimSpace(token.Name)
+		}
+	}
+	if tokenName != "" {
 		header.Set("X-RS-NewAPI-Token-Name", url.PathEscape(tokenName))
 	}
 	if usingGroup := strings.TrimSpace(info.UsingGroup); usingGroup != "" {
