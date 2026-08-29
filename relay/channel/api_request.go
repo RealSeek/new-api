@@ -320,6 +320,8 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	header.Del("X-RS-NewAPI-User-ID")
 	header.Del("X-RS-NewAPI-Username")
 	header.Del("X-RS-NewAPI-Token-Name")
+	header.Del("X-RS-NewAPI-Using-Group")
+	header.Del("X-RS-NewAPI-Group-Ratio")
 	if c == nil || c.Request == nil {
 		return
 	}
@@ -379,6 +381,10 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	header.Set("X-RS-NewAPI-Username", url.PathEscape(username))
 	if tokenName := c.GetString("token_name"); tokenName != "" {
 		header.Set("X-RS-NewAPI-Token-Name", url.PathEscape(tokenName))
+	}
+	if usingGroup := strings.TrimSpace(info.UsingGroup); usingGroup != "" {
+		header.Set("X-RS-NewAPI-Using-Group", url.PathEscape(usingGroup))
+		header.Set("X-RS-NewAPI-Group-Ratio", strconv.FormatFloat(service.GetUserGroupRatio(info.UserGroup, usingGroup), 'f', -1, 64))
 	}
 }
 
