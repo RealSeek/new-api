@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +39,21 @@ func TestRSGatewayRequestIsStream(t *testing.T) {
 	assert.True(t, rsGatewayRequestIsStream([]byte(`{"model":"gpt-5.6-sol","stream":true}`)))
 	assert.False(t, rsGatewayRequestIsStream([]byte(`{"model":"gpt-5.6-sol"}`)))
 	assert.False(t, rsGatewayRequestIsStream([]byte(`not-json`)))
+}
+
+func TestRSGatewayFirstResponseTimeOnlyRecordsOnce(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := relaycommon.GenRSGatewayRelayInfo(c, types.RelayFormatOpenAIResponses, nil)
+
+	time.Sleep(time.Millisecond)
+	info.SetFirstResponseTime()
+	first := info.FirstResponseTime
+	require.True(t, first.After(info.StartTime))
+
+	time.Sleep(time.Millisecond)
+	info.SetFirstResponseTime()
+	assert.Equal(t, first, info.FirstResponseTime)
 }
 
 func TestRSGatewayUsageTrackerReadsResponsesSSE(t *testing.T) {

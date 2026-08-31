@@ -158,6 +158,8 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			for {
 				read, readErr := httpResponse.Body.Read(buffer)
 				if read > 0 {
+					// RS Gateway 使用自定义直通循环，首个实际响应块需要在这里记录首字时间。
+					info.SetFirstResponseTime()
 					_, _ = usageTracker.Write(buffer[:read])
 					if _, writeErr := c.Writer.Write(buffer[:read]); writeErr != nil {
 						logger.LogError(c, "RS Gateway 响应写入失败: "+writeErr.Error())
