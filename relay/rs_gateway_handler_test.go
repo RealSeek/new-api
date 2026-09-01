@@ -78,14 +78,18 @@ func TestRSGatewayUsageTrackerReadsResponsesSSE(t *testing.T) {
 
 func TestRSGatewayUsageTrackerMergesClaudeStreamUsage(t *testing.T) {
 	tracker := newRSGatewayUsageTracker(true)
-	_, _ = tracker.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":120,\"cache_read_input_tokens\":80}}}\n\n"))
-	_, _ = tracker.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":15}}\n\n"))
+	_, _ = tracker.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7948,\"cache_read_input_tokens\":0,\"output_tokens\":0}}}\n\n"))
+	_, _ = tracker.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":16314,\"cache_read_input_tokens\":14656,\"output_tokens\":66,\"billing_usage\":{\"source\":\"oai_chat\",\"semantic\":\"openai\",\"openai_usage\":{\"prompt_tokens\":16314,\"completion_tokens\":66,\"total_tokens\":16380,\"prompt_tokens_details\":{\"cached_tokens\":14656}}}}}\n\n"))
 
 	usage := tracker.Usage()
 	require.NotNil(t, usage)
-	assert.Equal(t, 120, usage.PromptTokens)
-	assert.Equal(t, 15, usage.CompletionTokens)
-	assert.Equal(t, 135, usage.TotalTokens)
+	assert.Equal(t, 16314, usage.PromptTokens)
+	assert.Equal(t, 14656, usage.PromptTokensDetails.CachedTokens)
+	assert.Equal(t, 66, usage.CompletionTokens)
+	assert.Equal(t, 16380, usage.TotalTokens)
+	require.NotNil(t, usage.BillingUsage)
+	require.NotNil(t, usage.BillingUsage.OpenAIUsage)
+	assert.Equal(t, 14656, usage.BillingUsage.OpenAIUsage.PromptTokensDetails.CachedTokens)
 }
 
 func TestRSGatewayUsageTrackerReadsNonStreamUsage(t *testing.T) {

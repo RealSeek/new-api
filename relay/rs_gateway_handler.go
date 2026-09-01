@@ -321,6 +321,21 @@ func walkRSGatewayUsage(value interface{}, visit func(dto.Usage)) {
 				if raw, err := json.Marshal(child); err == nil {
 					var usage dto.Usage
 					if json.Unmarshal(raw, &usage) == nil {
+						if childMap, ok := child.(map[string]interface{}); ok && hasRSGatewayClaudeCacheUsage(childMap) {
+							var claudeUsage dto.ClaudeUsage
+							if json.Unmarshal(raw, &claudeUsage) == nil {
+								if claudeUsage.CacheReadInputTokens > 0 {
+									usage.PromptTokensDetails.CachedTokens = claudeUsage.CacheReadInputTokens
+								}
+								cacheCreationTokens := claudeUsage.GetCacheCreationTotalTokens()
+								if cacheCreationTokens == 0 {
+									cacheCreationTokens = claudeUsage.ClaudeCacheCreation5mTokens + claudeUsage.ClaudeCacheCreation1hTokens
+								}
+								if cacheCreationTokens > 0 {
+									usage.PromptTokensDetails.CachedCreationTokens = cacheCreationTokens
+								}
+							}
+						}
 						visit(usage)
 					}
 				}
@@ -332,6 +347,21 @@ func walkRSGatewayUsage(value interface{}, visit func(dto.Usage)) {
 			walkRSGatewayUsage(child, visit)
 		}
 	}
+}
+
+func hasRSGatewayClaudeCacheUsage(usage map[string]interface{}) bool {
+	for _, key := range []string{
+		"cache_read_input_tokens",
+		"cache_creation_input_tokens",
+		"cache_creation",
+		"claude_cache_creation_5_m_tokens",
+		"claude_cache_creation_1_h_tokens",
+	} {
+		if _, ok := usage[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeRSGatewayUsage(usage *dto.Usage) {
@@ -361,11 +391,22 @@ func mergeRSGatewayUsage(target, next *dto.Usage) {
 		target.InputTokens = next.InputTokens
 		target.PromptTokensDetails = next.PromptTokensDetails
 		target.InputTokensDetails = next.InputTokensDetails
+		target.ClaudeCacheCreation5mTokens = next.ClaudeCacheCreation5mTokens
+		target.ClaudeCacheCreation1hTokens = next.ClaudeCacheCreation1hTokens
 	}
 	if next.CompletionTokens > 0 {
 		target.CompletionTokens = next.CompletionTokens
 		target.OutputTokens = next.OutputTokens
 		target.CompletionTokenDetails = next.CompletionTokenDetails
+	}
+	if next.BillingUsage != nil {
+		target.BillingUsage = dto.CloneBillingUsage(next.BillingUsage)
+	}
+	if next.UsageSemantic != "" {
+		target.UsageSemantic = next.UsageSemantic
+	}
+	if next.UsageSource != "" {
+		target.UsageSource = next.UsageSource
 	}
 	target.TotalTokens = target.PromptTokens + target.CompletionTokens
 }
