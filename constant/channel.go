@@ -186,7 +186,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAdvancedCustom: "Advanced Custom",
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
-	ChannelTypeRSGateway:      "RS Gateway",
+	ChannelTypeRSGateway:      "网关",
 }
 
 func GetChannelTypeName(channelType int) string {

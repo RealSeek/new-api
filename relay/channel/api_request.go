@@ -329,7 +329,7 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	if c == nil || c.Request == nil {
 		return
 	}
-	// RS Gateway 需要使用直连客户端的身份和会话信息做日志归类与会话关联。
+	// 网关需要使用直连客户端的身份和会话信息做日志归类与会话关联。
 	// 仅透传已知客户端头，鉴权头和网关内部头仍由当前渠道独立管理。
 	for _, name := range []string{
 		"User-Agent",

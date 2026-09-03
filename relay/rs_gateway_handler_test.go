@@ -1,7 +1,10 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +16,56 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestClassifyRSGatewayRequestError(t *testing.T) {
+	tests := []struct {
+		name              string
+		requestErr        error
+		requestContextErr error
+		wantMessage       string
+		wantStatus        int
+		wantCanceled      bool
+	}{
+		{
+			name:              "客户端主动取消",
+			requestErr:        errors.New("上游请求失败"),
+			requestContextErr: context.Canceled,
+			wantMessage:       "客户端已取消网关请求",
+			wantStatus:        499,
+			wantCanceled:      true,
+		},
+		{
+			name:         "传输层收到取消",
+			requestErr:   fmt.Errorf("发送失败: %w", context.Canceled),
+			wantMessage:  "客户端已取消网关请求",
+			wantStatus:   499,
+			wantCanceled: true,
+		},
+		{
+			name:         "网关请求超时",
+			requestErr:   fmt.Errorf("发送失败: %w", context.DeadlineExceeded),
+			wantMessage:  "网关请求超时",
+			wantStatus:   http.StatusGatewayTimeout,
+			wantCanceled: false,
+		},
+		{
+			name:         "网关连接失败",
+			requestErr:   errors.New("connection refused"),
+			wantMessage:  "网关连接失败",
+			wantStatus:   http.StatusBadGateway,
+			wantCanceled: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			message, statusCode, clientCanceled := classifyRSGatewayRequestError(test.requestErr, test.requestContextErr)
+			assert.Equal(t, test.wantMessage, message)
+			assert.Equal(t, test.wantStatus, statusCode)
+			assert.Equal(t, test.wantCanceled, clientCanceled)
+		})
+	}
+}
 
 func TestReportRSGatewayUsage(t *testing.T) {
 	received := make(chan map[string]interface{}, 1)
@@ -31,7 +84,7 @@ func TestReportRSGatewayUsage(t *testing.T) {
 		assert.Equal(t, "request-42", payload["request_id"])
 		assert.Equal(t, float64(1250), payload["quota"])
 	case <-time.After(2 * time.Second):
-		t.Fatal("等待 RS Gateway 结算回写超时")
+		t.Fatal("等待网关结算回写超时")
 	}
 }
 

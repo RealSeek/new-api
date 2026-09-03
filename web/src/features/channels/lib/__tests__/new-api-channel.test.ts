@@ -91,13 +91,13 @@ describe('New API channel', () => {
   })
 })
 
-describe('RS Gateway channel', () => {
+describe('网关渠道', () => {
   test('registers as a model-fetchable multi-protocol gateway', () => {
     expect(
       CHANNEL_TYPE_OPTIONS.find(
         (item) => item.value === CHANNEL_TYPE_RS_GATEWAY
       )
-    ).toEqual({ value: CHANNEL_TYPE_RS_GATEWAY, label: 'RS Gateway' })
+    ).toEqual({ value: CHANNEL_TYPE_RS_GATEWAY, label: '网关' })
     expect(MODEL_FETCHABLE_TYPES.has(CHANNEL_TYPE_RS_GATEWAY)).toBe(true)
     expect(getChannelTypeIcon(CHANNEL_TYPE_RS_GATEWAY)).toBe('NewAPI')
     expect(getChannelTypeConfig(CHANNEL_TYPE_RS_GATEWAY).icon).toBe('NewAPI')

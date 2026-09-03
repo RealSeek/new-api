@@ -82,7 +82,7 @@ export const CHANNEL_TYPES = {
   58: 'Advanced Custom',
   59: 'Sub2API',
   60: 'New API',
-  61: 'RS Gateway',
+  61: '网关',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [

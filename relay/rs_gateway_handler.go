@@ -24,7 +24,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RSGatewayHelper 将已完成鉴权和渠道选择的请求原样交给 RS Gateway。
+// RSGatewayHelper 将已完成鉴权和渠道选择的请求原样交给网关。
 func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	startTime := time.Now()
 	info.TokenId = c.GetInt("token_id")
@@ -62,7 +62,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 	}
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
-		recordError(fmt.Sprintf("RS Gateway 不支持 API 类型 %d", info.ApiType), http.StatusBadGateway)
+		recordError(fmt.Sprintf("网关不支持 API 类型 %d", info.ApiType), http.StatusBadGateway)
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
@@ -96,12 +96,23 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 	}()
 	response, err := adaptor.DoRequest(c, info, common.NewReplayableBodyReader(storage))
 	if err != nil {
-		recordError("RS Gateway 连接失败", http.StatusBadGateway)
-		return types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
+		message, statusCode, clientCanceled := classifyRSGatewayRequestError(err, c.Request.Context().Err())
+		if clientCanceled {
+			logger.LogInfo(c, message)
+			c.Status(statusCode)
+			return nil
+		}
+		recordError(message, statusCode)
+		return types.NewErrorWithStatusCode(
+			errors.New(message),
+			types.ErrorCodeDoRequestFailed,
+			statusCode,
+			types.ErrOptionWithSkipRetry(),
+		)
 	}
 	httpResponse, ok := response.(*http.Response)
 	if !ok || httpResponse == nil {
-		recordError("RS Gateway 返回了无效响应", http.StatusBadGateway)
+		recordError("网关返回了无效响应", http.StatusBadGateway)
 		return types.NewError(errors.New("invalid http response"), types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	defer httpResponse.Body.Close()
@@ -158,18 +169,18 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			for {
 				read, readErr := httpResponse.Body.Read(buffer)
 				if read > 0 {
-					// RS Gateway 使用自定义直通循环，首个实际响应块需要在这里记录首字时间。
+					// 网关使用自定义直通循环，首个实际响应块需要在这里记录首字时间。
 					info.SetFirstResponseTime()
 					_, _ = usageTracker.Write(buffer[:read])
 					if _, writeErr := c.Writer.Write(buffer[:read]); writeErr != nil {
-						logger.LogError(c, "RS Gateway 响应写入失败: "+writeErr.Error())
+						logger.LogError(c, "网关响应写入失败: "+writeErr.Error())
 						return nil
 					}
 					flusher.Flush()
 				}
 				if readErr != nil {
 					if !errors.Is(readErr, io.EOF) {
-						logger.LogError(c, "RS Gateway 响应读取失败: "+readErr.Error())
+						logger.LogError(c, "网关响应读取失败: "+readErr.Error())
 					}
 					return nil
 				}
@@ -177,9 +188,20 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		}
 	}
 	if _, err = io.Copy(io.MultiWriter(c.Writer, usageTracker), httpResponse.Body); err != nil {
-		logger.LogError(c, "RS Gateway 响应转发失败: "+err.Error())
+		logger.LogError(c, "网关响应转发失败: "+err.Error())
 	}
 	return nil
+}
+
+func classifyRSGatewayRequestError(requestErr, requestContextErr error) (string, int, bool) {
+	if errors.Is(requestContextErr, context.Canceled) || errors.Is(requestErr, context.Canceled) {
+		// 499 与 Nginx 的“客户端关闭请求”状态保持一致。
+		return "客户端已取消网关请求", 499, true
+	}
+	if errors.Is(requestContextErr, context.DeadlineExceeded) || errors.Is(requestErr, context.DeadlineExceeded) {
+		return "网关请求超时", http.StatusGatewayTimeout, false
+	}
+	return "网关连接失败", http.StatusBadGateway, false
 }
 
 func reportRSGatewayUsage(callbackURL, apiKey, requestID string, quota int) {
@@ -225,7 +247,7 @@ func reportRSGatewayUsage(callbackURL, apiKey, requestID string, quota int) {
 			}
 			cancel()
 		}
-		logger.LogError(context.Background(), fmt.Sprintf("RS Gateway 结算回写失败: %v", lastErr))
+		logger.LogError(context.Background(), fmt.Sprintf("网关结算回写失败: %v", lastErr))
 	})
 }
 

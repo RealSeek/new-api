@@ -102,7 +102,7 @@ func TestRSGatewayChannelRegistration(t *testing.T) {
 
 	require.True(t, ok)
 	assert.Equal(t, constant.APITypeNewAPI, apiType)
-	assert.Equal(t, "RS Gateway", constant.GetChannelTypeName(constant.ChannelTypeRSGateway))
+	assert.Equal(t, "网关", constant.GetChannelTypeName(constant.ChannelTypeRSGateway))
 	require.Greater(t, len(constant.ChannelBaseURLs), constant.ChannelTypeRSGateway)
 	assert.Empty(t, constant.ChannelBaseURLs[constant.ChannelTypeRSGateway])
 	assert.Equal(
@@ -125,7 +125,7 @@ func TestResponsesCompactChannelSupport(t *testing.T) {
 		{name: "Advanced Custom", channelType: constant.ChannelTypeAdvancedCustom, apiType: constant.APITypeAdvancedCustom, want: true},
 		{name: "Sub2API", channelType: constant.ChannelTypeSub2API, apiType: constant.APITypeSub2API, want: true},
 		{name: "New API", channelType: constant.ChannelTypeNewAPI, apiType: constant.APITypeNewAPI, want: true},
-		{name: "RS Gateway", channelType: constant.ChannelTypeRSGateway, apiType: constant.APITypeNewAPI, want: true},
+		{name: "网关", channelType: constant.ChannelTypeRSGateway, apiType: constant.APITypeNewAPI, want: true},
 		{name: "Anthropic", channelType: constant.ChannelTypeAnthropic, apiType: constant.APITypeAnthropic, want: false},
 	}
 

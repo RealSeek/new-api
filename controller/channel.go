@@ -486,7 +486,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		case constant.ChannelTypeNewAPI:
 			return fmt.Errorf("New API channel base URL cannot be empty")
 		case constant.ChannelTypeRSGateway:
-			return fmt.Errorf("RS Gateway channel base URL cannot be empty")
+			return fmt.Errorf("网关渠道基础地址不能为空")
 		}
 	}
 

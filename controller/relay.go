@@ -248,7 +248,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if clientRequestDone(c) {
 			break
 		}
-		// RS Gateway 自己负责供应商重试和熔断，New API 不重复处理或自动禁用该渠道。
+		// 网关自己负责供应商重试和熔断，New API 不重复处理或自动禁用该渠道。
 		if channel.Type == constant.ChannelTypeRSGateway {
 			break
 		}
