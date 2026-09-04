@@ -315,6 +315,9 @@ docker run --name new-api -d --restart always \
 | Variable Name | Description | Default Value |
 |--------|------|--------|
 | `SESSION_SECRET` | Authentication signing secret; must be identical on every node | - |
+| `ART_SSO_CLIENT_ID` | Client identifier accepted by the built-in OnlyArt SSO endpoint | - |
+| `ART_SSO_CLIENT_SECRET` | Shared secret used only by the OnlyArt backend when exchanging one-time codes | - |
+| `ART_SSO_REDIRECT_URIS` | Comma-separated exact OnlyArt callback URLs | - |
 | `SESSION_COOKIE_SECURE` | `false`/unset disables the refresh/logout OriginGuard for local HTTP dev proxies; `true` enables the Secure cookie and strict Origin checks | `false` |
 | `SESSION_COOKIE_TRUSTED_URL` | Required with Secure mode: comma-separated exact HTTPS Origins allowed to call refresh/logout; not a relay CORS allowlist | - |
 | `TRUSTED_PROXIES` | Unset/blank trusts loopback, RFC 1918 and IPv6 ULA with a startup warning; `none` trusts no proxies; an explicit proxy IP/CIDR list replaces the defaults | `127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7` |
