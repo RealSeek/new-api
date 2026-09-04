@@ -65,6 +65,9 @@ func SetApiRouter(router *gin.Engine) {
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.UniversalVerify)
 		apiRouter.POST("/sso/art/token", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOToken)
+		apiRouter.POST("/sso/art/account", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOAccount)
+		apiRouter.POST("/sso/art/groups", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOGroups)
+		apiRouter.POST("/sso/art/provision-token", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOProvisionToken)
 
 		userRoute := apiRouter.Group("/user")
 		{
