@@ -34,6 +34,12 @@ type artSSOAccountRequest struct {
 	Subject      string `json:"subject"`
 }
 
+type artSSOGroupsRequest struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	Details      bool   `json:"details"`
+}
+
 type artSSOProvisionTokenRequest struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
@@ -170,18 +176,38 @@ func ArtSSOAccount(c *gin.Context) {
 
 // ArtSSOGroups 向受信任的 OnlyArt 服务端返回当前可用的真实分组名。
 func ArtSSOGroups(c *gin.Context) {
-	var request artSSOAccountRequest
+	var request artSSOGroupsRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil || !validArtSSOClient(request.ClientID, request.ClientSecret) {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "SSO 客户端无效"})
 		return
 	}
-	groups := make([]string, 0, len(ratio_setting.GetGroupRatioCopy()))
-	for group := range ratio_setting.GetGroupRatioCopy() {
+	ratioCopy := ratio_setting.GetGroupRatioCopy()
+	groups := make([]string, 0, len(ratioCopy))
+	for group := range ratioCopy {
 		if group != "" && group != "auto" {
 			groups = append(groups, group)
 		}
 	}
 	sort.Strings(groups)
+	if request.Details {
+		details := make([]gin.H, 0, len(groups))
+		for _, group := range groups {
+			models := model.GetGroupEnabledModels(group)
+			seen := make(map[string]struct{}, len(models))
+			sortedModels := make([]string, 0, len(models))
+			for _, modelName := range models {
+				if _, exists := seen[modelName]; exists {
+					continue
+				}
+				seen[modelName] = struct{}{}
+				sortedModels = append(sortedModels, modelName)
+			}
+			sort.Strings(sortedModels)
+			details = append(details, gin.H{"name": group, "ratio": ratioCopy[group], "models": sortedModels})
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": details})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": groups})
 }
 

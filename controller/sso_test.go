@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -26,9 +27,10 @@ func setupArtSSOTest(t *testing.T) *model.User {
 	previousSecret := common.SessionSecret
 	previousQuotaPerUnit := common.QuotaPerUnit
 	previousDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AuthFlow{}, &model.Token{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AuthFlow{}, &model.Token{}, &model.Ability{}))
 	model.DB = db
 	common.SessionSecret = "art-sso-test-session-secret"
 	common.QuotaPerUnit = 500000
@@ -42,11 +44,23 @@ func setupArtSSOTest(t *testing.T) *model.User {
 		common.SessionSecret = previousSecret
 		common.QuotaPerUnit = previousQuotaPerUnit
 		operation_setting.GetGeneralSetting().QuotaDisplayType = previousDisplayType
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
 		common.SetMainDatabaseType(previousType)
 	})
 	user := &model.User{Username: "sso-user", DisplayName: "SSO 用户", Email: "sso@example.com", Password: "unused-password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, Quota: 1000000}
 	require.NoError(t, db.Create(user).Error)
 	return user
+}
+
+func queryArtSSOGroups(t *testing.T, request artSSOGroupsRequest) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := common.Marshal(request)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/sso/art/groups", bytes.NewReader(body))
+	ArtSSOGroups(context)
+	return recorder
 }
 
 func queryArtSSOAccount(t *testing.T, subject, secret string) *httptest.ResponseRecorder {
@@ -127,6 +141,40 @@ func TestArtSSOAccountRejectsInvalidClient(t *testing.T) {
 
 	response := queryArtSSOAccount(t, strconv.Itoa(user.Id), "wrong-secret")
 
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+}
+
+func TestArtSSOGroupsKeepsDefaultStringResponse(t *testing.T) {
+	setupArtSSOTest(t)
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"zeta":2,"":3,"auto":4,"alpha":1}`))
+
+	response := queryArtSSOGroups(t, artSSOGroupsRequest{ClientID: "onlyart", ClientSecret: "test-client-secret-at-least-32-chars"})
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.JSONEq(t, `{"success":true,"data":["alpha","zeta"]}`, response.Body.String())
+}
+
+func TestArtSSOGroupsDetailsIncludesSortedRatioAndModels(t *testing.T) {
+	setupArtSSOTest(t)
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"zeta":2,"alpha":1,"auto":4,"":3}`))
+	abilities := []model.Ability{
+		{Group: "zeta", Model: "model-z", ChannelId: 1, Enabled: true},
+		{Group: "zeta", Model: "model-a", ChannelId: 2, Enabled: true},
+		{Group: "zeta", Model: "model-z", ChannelId: 3, Enabled: true},
+		{Group: "alpha", Model: "model-b", ChannelId: 4, Enabled: true},
+		{Group: "alpha", Model: "model-a", ChannelId: 5, Enabled: false},
+	}
+	require.NoError(t, model.DB.Create(&abilities).Error)
+
+	response := queryArtSSOGroups(t, artSSOGroupsRequest{ClientID: "onlyart", ClientSecret: "test-client-secret-at-least-32-chars", Details: true})
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.JSONEq(t, `{"success":true,"data":[{"name":"alpha","ratio":1,"models":["model-b"]},{"name":"zeta","ratio":2,"models":["model-a","model-z"]}]}`, response.Body.String())
+}
+
+func TestArtSSOGroupsRejectsInvalidClient(t *testing.T) {
+	setupArtSSOTest(t)
+	response := queryArtSSOGroups(t, artSSOGroupsRequest{ClientID: "onlyart", ClientSecret: "wrong-secret", Details: true})
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 }
 
