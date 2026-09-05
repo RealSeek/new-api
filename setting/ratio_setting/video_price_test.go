@@ -55,3 +55,15 @@ func TestValidateVideoPriceJSONString(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateVideoPriceAllowsResolutionOnlyPricing(t *testing.T) {
+	require.NoError(t, ValidateVideoPriceJSONString(`{
+		"video-resolution-only": {
+			"default_price": 0,
+			"default_duration": 5,
+			"billing_step": 1,
+			"minimum_duration": 1,
+			"resolution_prices": {"480p": 0.4, "720p": 0.45}
+		}
+	}`))
+}

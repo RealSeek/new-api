@@ -2,6 +2,7 @@ package ratio_setting
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -367,7 +368,8 @@ func ValidateVideoPriceJSONString(jsonStr string) error {
 		return err
 	}
 	for model, config := range configs {
-		if config.DefaultPrice <= 0 || config.DefaultDuration <= 0 || config.BillingStep <= 0 || config.MinimumDuration <= 0 {
+		hasResolutionPrices := len(config.ResolutionPrices) > 0
+		if (!hasResolutionPrices && config.DefaultPrice <= 0) || config.DefaultDuration <= 0 || config.BillingStep <= 0 || config.MinimumDuration <= 0 {
 			return fmt.Errorf("模型 %s 的按秒计费参数必须大于 0", model)
 		}
 		if config.DefaultDuration > 3600 || config.BillingStep > 3600 || config.MinimumDuration > 3600 {
@@ -403,6 +405,14 @@ func GetVideoPrice(model, resolution string) (float64, bool) {
 		if strings.EqualFold(strings.TrimSpace(configuredResolution), resolution) && price > 0 {
 			return price, true
 		}
+	}
+	if resolution == "default" && len(config.ResolutionPrices) > 0 {
+		keys := make([]string, 0, len(config.ResolutionPrices))
+		for configuredResolution := range config.ResolutionPrices {
+			keys = append(keys, configuredResolution)
+		}
+		sort.Strings(keys)
+		return config.ResolutionPrices[keys[0]], config.ResolutionPrices[keys[0]] > 0
 	}
 	return config.DefaultPrice, config.DefaultPrice > 0
 }

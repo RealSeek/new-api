@@ -5183,6 +5183,7 @@
     "Video Preview": "视频预览",
     "Video price by duration": "按视频时长计费",
     "Video price per second is required.": "必须填写视频每秒价格。",
+    "Video price per second is required when no resolution prices are configured.": "未配置分辨率价格时必须填写默认每秒价格。",
     "Video pricing": "视频价格",
     "Video Remix": "视频 Remix",
     "Video second pricing": "视频按秒定价",

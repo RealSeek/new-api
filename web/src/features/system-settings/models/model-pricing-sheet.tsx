@@ -464,10 +464,13 @@ export const ModelPricingEditorPanel = forwardRef<
   const validatePricingValues = useCallback(() => {
     form.clearErrors('price')
     if (pricingMode === 'per-second') {
+      const hasResolutionPrices = videoResolutionPrices.some(
+        (row) => row.resolution.trim() && row.price.trim()
+      )
       const price = Number(videoDefaultPrice)
-      if (!Number.isFinite(price) || price <= 0) {
+      if (!hasResolutionPrices && (!Number.isFinite(price) || price <= 0)) {
         form.setError('price', {
-          message: t('Video price per second is required.'),
+          message: t('Video price per second is required when no resolution prices are configured.'),
         })
         return false
       }
