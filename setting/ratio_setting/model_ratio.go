@@ -1,12 +1,23 @@
 package ratio_setting
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 )
+
+type VideoPriceConfig struct {
+	DefaultPrice     float64            `json:"default_price"`
+	DefaultDuration  int                `json:"default_duration"`
+	BillingStep      int                `json:"billing_step"`
+	MinimumDuration  int                `json:"minimum_duration"`
+	ResolutionPrices map[string]float64 `json:"resolution_prices,omitempty"`
+}
+
+var videoPriceMap = types.NewRWMap[string, VideoPriceConfig]()
 
 // from songquanpeng/one-api
 const (
@@ -346,6 +357,58 @@ func InitRatioSettings() {
 
 func GetModelPriceMap() map[string]float64 {
 	return modelPriceMap.ReadAll()
+}
+
+func VideoPrice2JSONString() string { return videoPriceMap.MarshalJSONString() }
+
+func ValidateVideoPriceJSONString(jsonStr string) error {
+	var configs map[string]VideoPriceConfig
+	if err := common.UnmarshalJsonStr(jsonStr, &configs); err != nil {
+		return err
+	}
+	for model, config := range configs {
+		if config.DefaultPrice <= 0 || config.DefaultDuration <= 0 || config.BillingStep <= 0 || config.MinimumDuration <= 0 {
+			return fmt.Errorf("模型 %s 的按秒计费参数必须大于 0", model)
+		}
+		if config.DefaultDuration > 3600 || config.BillingStep > 3600 || config.MinimumDuration > 3600 {
+			return fmt.Errorf("模型 %s 的时长参数不能超过 3600 秒", model)
+		}
+		for resolution, price := range config.ResolutionPrices {
+			if strings.TrimSpace(resolution) == "" || price <= 0 {
+				return fmt.Errorf("模型 %s 的分辨率名称和价格必须有效", model)
+			}
+		}
+	}
+	return nil
+}
+
+func UpdateVideoPriceByJSONString(jsonStr string) error {
+	if err := ValidateVideoPriceJSONString(jsonStr); err != nil {
+		return err
+	}
+	return types.LoadFromJsonStringWithCallback(videoPriceMap, jsonStr, InvalidateExposedDataCache)
+}
+
+func GetVideoPrice(model, resolution string) (float64, bool) {
+	model = FormatMatchingModelName(model)
+	config, ok := videoPriceMap.Get(model)
+	if !ok {
+		return 0, false
+	}
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	if price, ok := config.ResolutionPrices[resolution]; ok && price > 0 {
+		return price, true
+	}
+	for configuredResolution, price := range config.ResolutionPrices {
+		if strings.EqualFold(strings.TrimSpace(configuredResolution), resolution) && price > 0 {
+			return price, true
+		}
+	}
+	return config.DefaultPrice, config.DefaultPrice > 0
+}
+
+func GetVideoPriceConfig(model string) (VideoPriceConfig, bool) {
+	return videoPriceMap.Get(FormatMatchingModelName(model))
 }
 
 func ModelPrice2JSONString() string {

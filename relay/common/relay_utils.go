@@ -146,14 +146,70 @@ func validatePrompt(prompt string) *dto.TaskError {
 const MaxTaskDurationSeconds = 3600
 
 func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
-	seconds := req.Duration
-	if seconds == 0 && req.Seconds != "" {
-		seconds, _ = strconv.Atoi(req.Seconds)
-	}
+	seconds := ResolveTaskDuration(req, 0)
 	if seconds < 0 || seconds > MaxTaskDurationSeconds {
 		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
 	}
 	return nil
+}
+
+// ResolveTaskDuration 统一读取视频请求时长，避免 metadata 绕过计费校验。
+func ResolveTaskDuration(req TaskSubmitReq, fallback int) int {
+	for _, key := range []string{"durationSeconds", "duration", "seconds"} {
+		value, ok := req.Metadata[key]
+		if !ok {
+			continue
+		}
+		switch duration := value.(type) {
+		case float64:
+			return int(duration)
+		case int:
+			return duration
+		case string:
+			if parsed, err := strconv.Atoi(duration); err == nil {
+				return parsed
+			}
+		}
+	}
+	if req.Duration != 0 {
+		return req.Duration
+	}
+	if req.Seconds != "" {
+		if seconds, err := strconv.Atoi(req.Seconds); err == nil {
+			return seconds
+		}
+	}
+	return fallback
+}
+
+func NormalizeVideoResolution(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return ""
+	}
+	if strings.HasSuffix(normalized, "p") || normalized == "4k" {
+		return normalized
+	}
+	parts := strings.FieldsFunc(normalized, func(r rune) bool { return r == 'x' || r == '*' })
+	if len(parts) != 2 {
+		return normalized
+	}
+	width, widthErr := strconv.Atoi(parts[0])
+	height, heightErr := strconv.Atoi(parts[1])
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return normalized
+	}
+	maxDimension := max(width, height)
+	switch {
+	case maxDimension >= 3840:
+		return "4k"
+	case maxDimension >= 1920:
+		return "1080p"
+	case maxDimension >= 1280:
+		return "720p"
+	default:
+		return "480p"
+	}
 }
 
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
