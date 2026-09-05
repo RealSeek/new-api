@@ -3646,28 +3646,6 @@ export function ChannelMutateDrawer({
                               )}
                             />
                           </div>
-                          {isRSGateway && (
-                            <div className='border-border/60 rounded-lg border p-4'>
-                              <div className='space-y-1'>
-                                <FormLabel>{t('Gateway endpoints')}</FormLabel>
-                                <FormDescription>
-                                  {t('Choose the endpoint types exposed by this gateway channel. Leave empty to keep all endpoints.')}
-                                </FormDescription>
-                              </div>
-                              <div className='mt-3'>
-                                <MultiSelect
-                                  options={GATEWAY_ENDPOINT_OPTIONS.map((option) => ({
-                                    value: option.value,
-                                    label: t(option.label),
-                                  }))}
-                                  selected={gatewayEndpointTypes}
-                                  onChange={handleGatewayEndpointTypesChange}
-                                  placeholder={t('Select endpoint types')}
-                                  maxVisibleChips={6}
-                                />
-                              </div>
-                            </div>
-                          )}
                         </div>
                       </ChannelModelsSection>
                     </div>
@@ -4128,6 +4106,28 @@ export function ChannelMutateDrawer({
                             disabled={sensitiveLocked}
                             className='space-y-4 disabled:opacity-60'
                           >
+                            {isRSGateway && (
+                              <div className='border-border/60 rounded-lg border p-4'>
+                                <div className='space-y-1'>
+                                  <FormLabel>{t('Gateway endpoints')}</FormLabel>
+                                  <FormDescription>
+                                    {t('Choose the endpoint types exposed by this gateway channel. Leave empty to keep all endpoints.')}
+                                  </FormDescription>
+                                </div>
+                                <div className='mt-3'>
+                                  <MultiSelect
+                                    options={GATEWAY_ENDPOINT_OPTIONS.map((option) => ({
+                                      value: option.value,
+                                      label: t(option.label),
+                                    }))}
+                                    selected={gatewayEndpointTypes}
+                                    onChange={handleGatewayEndpointTypesChange}
+                                    placeholder={t('Select endpoint types')}
+                                    maxVisibleChips={6}
+                                  />
+                                </div>
+                              </div>
+                            )}
                             <div className='divide-border space-y-0 divide-y border-y'>
                               {currentType === 1 && (
                                 <FormField
