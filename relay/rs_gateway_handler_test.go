@@ -11,6 +11,7 @@ import (
 	"time"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -155,4 +156,20 @@ func TestRSGatewayUsageTrackerReadsNonStreamUsage(t *testing.T) {
 	assert.Equal(t, 30, usage.PromptTokens)
 	assert.Equal(t, 7, usage.CompletionTokens)
 	assert.Equal(t, 37, usage.TotalTokens)
+}
+
+func TestRSGatewayUsageTrackerReadsGeminiUsageMetadata(t *testing.T) {
+	tracker := newRSGatewayUsageTracker(false)
+	_, err := tracker.Write([]byte(`{"usageMetadata":{"promptTokenCount":120,"candidatesTokenCount":17,"totalTokenCount":137,"cachedContentTokenCount":32}}`))
+	require.NoError(t, err)
+
+	usage := tracker.Usage()
+	require.NotNil(t, usage)
+	assert.Equal(t, 120, usage.PromptTokens)
+	assert.Equal(t, 17, usage.CompletionTokens)
+	assert.Equal(t, 137, usage.TotalTokens)
+	require.NotNil(t, usage.BillingUsage)
+	assert.Equal(t, dto.BillingUsageSemanticGemini, usage.BillingUsage.Semantic)
+	require.NotNil(t, usage.BillingUsage.GeminiUsageMetadata)
+	assert.Equal(t, 32, usage.BillingUsage.GeminiUsageMetadata.CachedContentTokenCount)
 }

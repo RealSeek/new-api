@@ -114,6 +114,10 @@ func VideoProxy(c *gin.Context) {
 	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
+	case constant.ChannelTypeRSGateway:
+		// 网关渠道的上游任务 ID 仍由网关解释；new-api 只访问配置的网关地址。
+		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(channel.GetBaseURL(), "/"), task.GetUpstreamTaskID())
+		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()

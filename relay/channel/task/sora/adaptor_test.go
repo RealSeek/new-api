@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -38,4 +39,23 @@ func TestSoraBuildRequestBodyReturnsReplayablePassThroughBody(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, replayBody.Close())
 	assert.Equal(t, payload, replay)
+}
+
+func TestRSGatewayResponseRemovesUpstreamVideoURLs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:  &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	}
+	resp := &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(bytes.NewBufferString(
+		`{"id":"video_upstream","status":"queued","metadata":{"url":"https://provider.example/signed.mp4","content_url":"https://provider.example/v1/videos/video_upstream/content"}}`)), Header: make(http.Header)}
+	upstreamID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, "video_upstream", upstreamID)
+	assert.NotContains(t, string(taskData), "provider.example")
+	assert.Contains(t, string(taskData), "task_public")
+	assert.NotContains(t, recorder.Body.String(), "provider.example")
+	assert.Contains(t, recorder.Body.String(), "task_public")
 }

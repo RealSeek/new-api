@@ -55,6 +55,7 @@ type responseTask struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
 	} `json:"error,omitempty"`
+	Metadata           map[string]any `json:"metadata,omitempty"`
 }
 
 // ============================
@@ -243,6 +244,18 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	upstreamID := dResp.ID
 	if upstreamID == "" {
 		upstreamID = dResp.TaskID
+	}
+	if info.ChannelType == constant.ChannelTypeRSGateway {
+		// 网关响应中的签名下载地址属于上游，不能进入 new-api 的任务或客户端响应。
+		if dResp.Metadata == nil {
+			dResp.Metadata = map[string]any{}
+		}
+		dResp.Metadata["content_url"] = taskcommon.BuildProxyURL(info.PublicTaskID)
+		delete(dResp.Metadata, "url")
+		// 保存到任务表的正文也必须是脱敏后的版本，避免后台任务详情泄露上游地址。
+		if sanitized, err := common.Marshal(dResp); err == nil {
+			responseBody = sanitized
+		}
 	}
 	if upstreamID == "" {
 		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)

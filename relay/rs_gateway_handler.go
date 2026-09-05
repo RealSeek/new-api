@@ -18,6 +18,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/bytedance/gopkg/util/gopool"
@@ -339,6 +340,16 @@ func walkRSGatewayUsage(value interface{}, visit func(dto.Usage)) {
 	switch current := value.(type) {
 	case map[string]interface{}:
 		for key, child := range current {
+			if key == "usageMetadata" {
+				if raw, err := json.Marshal(child); err == nil {
+					var metadata dto.GeminiUsageMetadata
+					if json.Unmarshal(raw, &metadata) == nil {
+						if usage := relayconvert.UsageFromGeminiMetadata(&metadata, 0); usage != nil {
+							visit(*usage)
+						}
+					}
+				}
+			}
 			if key == "usage" {
 				if raw, err := json.Marshal(child); err == nil {
 					var usage dto.Usage

@@ -19,6 +19,8 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -188,16 +190,22 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
-	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
-		for k, v := range estimatedRatios {
-			info.PriceData.AddOtherRatio(k, v)
+	isPerSecond := billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModePerSecond
+	if !isPerSecond {
+		if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
+			for k, v := range estimatedRatios {
+				info.PriceData.AddOtherRatio(k, v)
+			}
+		}
+	} else {
+		if req, reqErr := relaycommon.GetTaskRequest(c); reqErr == nil {
+			applyPerSecondBilling(info, req)
 		}
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
-		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+	if isPerSecond || !common.StringsContains(constant.TaskPricePatches, modelName) {
+		quota, clamp := calculateTaskSubmitQuota(info, isPerSecond)
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
 	}
@@ -221,7 +229,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
+	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
@@ -257,6 +265,35 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func applyPerSecondBilling(info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) {
+	config, ok := ratio_setting.GetVideoPriceConfig(info.OriginModelName)
+	if !ok {
+		return
+	}
+	seconds := relaycommon.ResolveTaskDuration(req, config.DefaultDuration)
+	seconds = max(seconds, config.MinimumDuration)
+	seconds = ((seconds + config.BillingStep - 1) / config.BillingStep) * config.BillingStep
+	seconds = min(seconds, relaycommon.MaxTaskDurationSeconds)
+	info.PriceData.AddOtherRatio("seconds", float64(seconds))
+
+	resolution := relaycommon.NormalizeVideoResolution(req.Size)
+	if raw, ok := req.Metadata["resolution"].(string); ok && raw != "" {
+		resolution = relaycommon.NormalizeVideoResolution(raw)
+	}
+	resolutionPrice, hasResolutionPrice := ratio_setting.GetVideoPrice(info.OriginModelName, resolution)
+	if hasResolutionPrice && config.DefaultPrice > 0 {
+		info.PriceData.AddOtherRatio("resolution_price", resolutionPrice/config.DefaultPrice)
+	}
+}
+
+func calculateTaskSubmitQuota(info *relaycommon.RelayInfo, preserveUnitPricePrecision bool) (int, *common.QuotaClamp) {
+	baseQuota := float64(info.PriceData.Quota)
+	if preserveUnitPricePrecision && info.PriceData.UsePrice {
+		baseQuota = info.PriceData.ModelPrice * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio
+	}
+	return common.QuotaFromFloatChecked(info.PriceData.ApplyOtherRatiosToFloat(baseQuota))
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
