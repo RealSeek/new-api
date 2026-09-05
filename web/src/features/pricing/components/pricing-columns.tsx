@@ -188,7 +188,7 @@ export function usePricingColumns(
           return (
             <div className='max-w-full min-w-0'>
               <span className='font-mono text-sm tabular-nums'>
-                {resolution.toUpperCase()}{' '}
+                {resolution !== 'default' && `${resolution.toUpperCase()} `}
                 {formatUnitPrice(
                   model,
                   unitPrice,

@@ -725,9 +725,11 @@ function PriceSection(props: {
         <div className='grid grid-cols-2 gap-2'>
           {visiblePrices.map(([resolution, price]) => (
             <div key={resolution} className='bg-muted/20 rounded-lg border p-3'>
-              <div className='text-muted-foreground text-xs'>
-                {resolution.toUpperCase()}
-              </div>
+              {resolution !== 'default' && (
+                <div className='text-muted-foreground text-xs'>
+                  {resolution.toUpperCase()}
+                </div>
+              )}
               <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
                 {formatUnitPriceForGroup(
                   price,

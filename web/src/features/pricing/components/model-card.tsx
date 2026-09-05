@@ -143,9 +143,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             key={resolution}
             className='grid grid-cols-[3.5rem_auto] items-baseline gap-1 whitespace-nowrap'
           >
-            <span className='text-foreground font-mono text-xs font-semibold'>
-              {resolution.toUpperCase()}
-            </span>
+            {resolution !== 'default' && (
+              <span className='text-foreground font-mono text-xs font-semibold'>
+                {resolution.toUpperCase()}
+              </span>
+            )}
             <span className='text-foreground font-mono font-semibold'>
               {formatUnitPrice(
                 props.model,
