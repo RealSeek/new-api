@@ -116,8 +116,15 @@ func VideoProxy(c *gin.Context) {
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	case constant.ChannelTypeRSGateway:
 		// 网关渠道的上游任务 ID 仍由网关解释；new-api 只访问配置的网关地址。
-		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(channel.GetBaseURL(), "/"), task.GetUpstreamTaskID())
+		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(channel.GetBaseURL(), "/"), url.PathEscape(task.GetUpstreamTaskID()))
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
+		// 固定渠道地址可以位于内网，但禁止跟随重定向扩展访问范围。
+		if proxy == "" {
+			client = service.GetHttpClient()
+		}
+		gatewayClient := *client
+		gatewayClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+		client = &gatewayClient
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()
@@ -139,11 +146,13 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	var validateErr error
-	if proxy == "" {
-		validateErr = service.ValidateSSRFProtectedFetchURL(videoURL)
-	} else {
-		fetchSetting := system_setting.GetFetchSetting()
-		validateErr = common.ValidateURLWithFetchSetting(videoURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain)
+	if channel.Type != constant.ChannelTypeRSGateway {
+		if proxy == "" {
+			validateErr = service.ValidateSSRFProtectedFetchURL(videoURL)
+		} else {
+			fetchSetting := system_setting.GetFetchSetting()
+			validateErr = common.ValidateURLWithFetchSetting(videoURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain)
+		}
 	}
 	if validateErr != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Video URL blocked for task %s: %v", taskID, validateErr))
