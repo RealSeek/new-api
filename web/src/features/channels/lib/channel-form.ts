@@ -635,6 +635,31 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
 /**
  * Build the settings JSON string (for type-specific config like vertex_key_type)
  */
+export function readGatewayEndpoints(
+  settings?: string | null,
+  legacyOther?: string | null
+): string[] {
+  for (const raw of [settings, legacyOther]) {
+    try {
+      const value = JSON.parse(raw || '{}')?.supported_endpoint_types
+      if (Array.isArray(value)) {
+        return value.filter((item): item is string => typeof item === 'string')
+      }
+    } catch {
+      // 旧 other 字段可能包含普通文本，仅迁移有效端点配置。
+    }
+  }
+  return []
+}
+
+export function writeGatewayEndpoints(
+  settings: string | undefined,
+  endpoints: string[]
+): string {
+  const record = JSON.parse(settings || '{}')
+  return JSON.stringify({ ...record, supported_endpoint_types: endpoints })
+}
+
 function buildSettingsJSON(formData: ChannelFormValues): string {
   let settingsObj: Record<string, unknown> = {}
 
@@ -646,6 +671,13 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       // eslint-disable-next-line no-console
       console.error('Failed to parse existing settings:', error)
     }
+  }
+
+  if (formData.type === CHANNEL_TYPE_RS_GATEWAY) {
+    settingsObj.supported_endpoint_types = readGatewayEndpoints(
+      formData.settings,
+      formData.other
+    )
   }
 
   // Add vertex_key_type for Vertex AI channels (type 41)

@@ -57,6 +57,19 @@ func TestPricingRSGatewayUsesConfiguredEndpointTypes(t *testing.T) {
 	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIVideo}, byModel["grok-imagine-video-1.5"])
 }
 
+func TestPricingRSGatewayImageEndpointUsesConfiguredAlias(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	insertPricingEndpointChannel(t, 106, constant.ChannelTypeRSGateway, dto.ChannelOtherSettings{
+		SupportedEndpointTypes: []string{string(constant.EndpointTypeImageGeneration)},
+	})
+	insertPricingEndpointAbility(t, 106, "my-image-alias")
+	byModel := pricingEndpointTypesByModel(t)
+	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeImageGeneration}, byModel["my-image-alias"])
+	endpoint, ok := common.GetDefaultEndpointInfo(constant.EndpointTypeImageGeneration)
+	require.True(t, ok)
+	assert.Equal(t, "/v1/images/generations", endpoint.Path)
+}
+
 func insertPricingEndpointAbility(t *testing.T, channelID int, modelName string) {
 	t.Helper()
 	require.NoError(t, DB.Create(&Ability{

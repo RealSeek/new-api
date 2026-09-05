@@ -126,6 +126,10 @@ import { getLobeIcon } from '@/lib/lobe-icon'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
+import {
+  readGatewayEndpoints,
+  writeGatewayEndpoints,
+} from '../../lib/channel-form'
 
 import {
   fetchModels,
@@ -378,6 +382,7 @@ const GATEWAY_ENDPOINT_OPTIONS = [
   { value: 'gemini', label: 'Gemini' },
   { value: 'openai-alpha-search', label: 'OpenAI Alpha Search' },
   { value: 'openai-video', label: 'OpenAI Video' },
+  { value: 'image-generation', label: 'Image Generation' },
 ] as const
 
 function formatUnixTime(timestamp: unknown): string {
@@ -739,22 +744,18 @@ export function ChannelMutateDrawer({
   const currentBaseUrl = form.watch('base_url')
   const currentKey = form.watch('key')
   const currentOther = form.watch('other')
+  const currentSettings = form.watch('settings')
   const gatewayEndpointTypes = useMemo(() => {
-    const configured = parseSettingsRecord(currentOther).supported_endpoint_types
-    return Array.isArray(configured)
-      ? configured.filter((value): value is string => typeof value === 'string')
-      : []
-  }, [currentOther])
+    return readGatewayEndpoints(currentSettings, currentOther)
+  }, [currentSettings, currentOther])
 
   const handleGatewayEndpointTypesChange = useCallback(
     (selected: string[]) => {
-      const other = parseSettingsRecord(form.getValues('other'))
-      if (selected.length > 0) {
-        other.supported_endpoint_types = selected
-      } else {
-        delete other.supported_endpoint_types
-      }
-      form.setValue('other', JSON.stringify(other), { shouldDirty: true })
+      form.setValue(
+        'settings',
+        writeGatewayEndpoints(form.getValues('settings'), selected),
+        { shouldDirty: true }
+      )
     },
     [form]
   )
@@ -766,7 +767,6 @@ export function ChannelMutateDrawer({
   const upstreamModelUpdateCheckEnabled = form.watch(
     'upstream_model_update_check_enabled'
   )
-  const currentSettings = form.watch('settings')
   const currentAdvancedCustom = form.watch('advanced_custom')
   const currentPriority = form.watch('priority')
   const currentWeight = form.watch('weight')

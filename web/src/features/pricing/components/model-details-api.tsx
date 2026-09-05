@@ -109,7 +109,7 @@ function buildChatSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${bodyJson.replace(/\n/g, '\n     ')}'`,
+      `  -d '${bodyJson.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
 
@@ -177,7 +177,7 @@ function buildAnthropicSample(lang: Lang, ctx: SampleContext): string {
       `  -H "x-api-key: $${ctx.apiKeyEnv}" \\`,
       `  -H "anthropic-version: 2023-06-01" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -249,7 +249,7 @@ function buildGeminiSample(lang: Lang, ctx: SampleContext): string {
     return [
       `curl '${url}' \\`,
       `  -H 'Content-Type: application/json' \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -299,7 +299,7 @@ function buildEmbeddingSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -353,7 +353,7 @@ function buildEmbeddingSample(lang: Lang, ctx: SampleContext): string {
 
 function buildImageSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
-  const prompt = 'A serene koi pond at sunset, ukiyo-e style.'
+  const prompt = '夕阳下的山间湖泊，水彩画风格。'
 
   if (lang === 'curl') {
     const body = JSON.stringify(
@@ -365,14 +365,17 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
     return [
+      'import base64',
+      'import os',
+      'from pathlib import Path',
       'from openai import OpenAI',
       '',
-      `client = OpenAI(base_url="${ctx.baseUrl}/v1", api_key="<YOUR_API_KEY>")`,
+      `client = OpenAI(base_url="${ctx.baseUrl}/v1", api_key=os.environ["${ctx.apiKeyEnv}"])`,
       '',
       'response = client.images.generate(',
       `    model="${ctx.modelName}",`,
@@ -381,12 +384,18 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
       `    n=1,`,
       ')',
       '',
-      'print(response.data[0].url)',
+      'image = response.data[0]',
+      'if image.b64_json:',
+      '    Path("image.png").write_bytes(base64.b64decode(image.b64_json))',
+      '    print("图片已保存到 image.png")',
+      'else:',
+      '    print(image.url)',
     ].join('\n')
   }
   if (lang === 'typescript') {
     return [
       `import OpenAI from 'openai'`,
+      `import { writeFile } from 'node:fs/promises'`,
       '',
       `const client = new OpenAI({`,
       `  baseURL: '${ctx.baseUrl}/v1',`,
@@ -400,10 +409,18 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
       `  n: 1,`,
       `})`,
       '',
-      `console.log(response.data[0].url)`,
+      `const image = response.data?.[0]`,
+      `if (image?.b64_json) {`,
+      `  await writeFile('image.png', Buffer.from(image.b64_json, 'base64'))`,
+      `  console.log('图片已保存到 image.png')`,
+      `} else {`,
+      `  console.log(image?.url)`,
+      `}`,
     ].join('\n')
   }
   return [
+    `import { writeFile } from 'node:fs/promises'`,
+    '',
     `const response = await fetch('${url}', {`,
     `  method: 'POST',`,
     `  headers: {`,
@@ -419,7 +436,14 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
     `})`,
     '',
     `const data = await response.json()`,
-    `console.log(data.data[0].url)`,
+    `if (!response.ok) throw new Error(JSON.stringify(data))`,
+    `const image = data.data?.[0]`,
+    `if (image?.b64_json) {`,
+    `  await writeFile('image.png', Buffer.from(image.b64_json, 'base64'))`,
+    `  console.log('图片已保存到 image.png')`,
+    `} else {`,
+    `  console.log(image?.url)`,
+    `}`,
   ].join('\n')
 }
 
@@ -430,8 +454,9 @@ function buildSample(
 ): string {
   if (endpointType === 'anthropic') return buildAnthropicSample(lang, ctx)
   if (endpointType === 'gemini') return buildGeminiSample(lang, ctx)
-  if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
+  if (endpointType === 'embeddings' || endpointType === 'jina-rerank') {
     return buildEmbeddingSample(lang, ctx)
+  }
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
   return buildChatSample(lang, ctx)
 }
