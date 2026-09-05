@@ -137,10 +137,15 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         ? prices
         : [['default', props.model.video_price?.default_price || 0] as const]
     priceSummary = (
-      <div className='grid gap-x-4 gap-y-0.5 sm:grid-cols-2'>
+      <div
+        role='list'
+        aria-label={t('Resolution prices')}
+        className='flex flex-col gap-y-0.5'
+      >
         {visiblePrices.map(([resolution, price]) => (
           <span
             key={resolution}
+            role='listitem'
             className='grid grid-cols-[3.5rem_auto] items-baseline gap-1 whitespace-nowrap'
           >
             {resolution !== 'default' && (
