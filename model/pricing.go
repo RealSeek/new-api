@@ -109,6 +109,23 @@ func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 }
 
 func getPricingEndpointTypesForAbility(ability AbilityWithChannel, advancedCustomConfigs map[int]*dto.AdvancedCustomConfig) []constant.EndpointType {
+	if ability.ChannelType == constant.ChannelTypeRSGateway {
+		var channel Channel
+		if err := DB.First(&channel, ability.ChannelId).Error; err == nil {
+			configured := channel.GetOtherSettings().SupportedEndpointTypes
+			if len(configured) > 0 {
+				endpoints := make([]constant.EndpointType, 0, len(configured))
+				for _, endpoint := range configured {
+					if _, ok := common.GetDefaultEndpointInfo(constant.EndpointType(endpoint)); ok {
+						endpoints = append(endpoints, constant.EndpointType(endpoint))
+					}
+				}
+				if len(endpoints) > 0 {
+					return endpoints
+				}
+			}
+		}
+	}
 	if ability.ChannelType != constant.ChannelTypeAdvancedCustom {
 		return common.GetEndpointTypesByChannelType(ability.ChannelType, ability.Model)
 	}

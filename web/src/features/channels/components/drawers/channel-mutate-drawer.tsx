@@ -370,6 +370,16 @@ function parseSettingsRecord(
   return {}
 }
 
+const GATEWAY_ENDPOINT_OPTIONS = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'openai-response', label: 'OpenAI Responses' },
+  { value: 'openai-response-compact', label: 'OpenAI Responses Compact' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'gemini', label: 'Gemini' },
+  { value: 'openai-alpha-search', label: 'OpenAI Alpha Search' },
+  { value: 'openai-video', label: 'OpenAI Video' },
+] as const
+
 function formatUnixTime(timestamp: unknown): string {
   const seconds = Number(timestamp)
   if (!Number.isFinite(seconds) || seconds <= 0) return '-'
@@ -729,6 +739,25 @@ export function ChannelMutateDrawer({
   const currentBaseUrl = form.watch('base_url')
   const currentKey = form.watch('key')
   const currentOther = form.watch('other')
+  const gatewayEndpointTypes = useMemo(() => {
+    const configured = parseSettingsRecord(currentOther).supported_endpoint_types
+    return Array.isArray(configured)
+      ? configured.filter((value): value is string => typeof value === 'string')
+      : []
+  }, [currentOther])
+
+  const handleGatewayEndpointTypesChange = useCallback(
+    (selected: string[]) => {
+      const other = parseSettingsRecord(form.getValues('other'))
+      if (selected.length > 0) {
+        other.supported_endpoint_types = selected
+      } else {
+        delete other.supported_endpoint_types
+      }
+      form.setValue('other', JSON.stringify(other), { shouldDirty: true })
+    },
+    [form]
+  )
   const currentModels = form.watch('models')
   const currentName = form.watch('name')
   const currentModelMapping = form.watch('model_mapping')
@@ -3617,6 +3646,28 @@ export function ChannelMutateDrawer({
                               )}
                             />
                           </div>
+                          {isRSGateway && (
+                            <div className='border-border/60 rounded-lg border p-4'>
+                              <div className='space-y-1'>
+                                <FormLabel>{t('Gateway endpoints')}</FormLabel>
+                                <FormDescription>
+                                  {t('Choose the endpoint types exposed by this gateway channel. Leave empty to keep all endpoints.')}
+                                </FormDescription>
+                              </div>
+                              <div className='mt-3'>
+                                <MultiSelect
+                                  options={GATEWAY_ENDPOINT_OPTIONS.map((option) => ({
+                                    value: option.value,
+                                    label: t(option.label),
+                                  }))}
+                                  selected={gatewayEndpointTypes}
+                                  onChange={handleGatewayEndpointTypesChange}
+                                  placeholder={t('Select endpoint types')}
+                                  maxVisibleChips={6}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </ChannelModelsSection>
                     </div>

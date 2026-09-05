@@ -66,6 +66,9 @@ const (
 )
 
 type ChannelOtherSettings struct {
+	// SupportedEndpointTypes limits the downstream endpoint types exposed by a gateway channel.
+	// Empty means keep the legacy all-endpoints behavior.
+	SupportedEndpointTypes                []string              `json:"supported_endpoint_types,omitempty"`
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
 	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"` // "json" or "api_key"
 	OpenRouterEnterprise                  *bool                 `json:"openrouter_enterprise,omitempty"`

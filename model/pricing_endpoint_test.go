@@ -40,10 +40,21 @@ func insertPricingEndpointChannel(t *testing.T, channelID int, channelType int, 
 		Status: common.ChannelStatusEnabled,
 		Name:   fmt.Sprintf("channel-%d", channelID),
 	}
-	if settings.AdvancedCustom != nil {
+	if settings.AdvancedCustom != nil || len(settings.SupportedEndpointTypes) > 0 {
 		channel.SetOtherSettings(settings)
 	}
 	require.NoError(t, DB.Create(channel).Error)
+}
+
+func TestPricingRSGatewayUsesConfiguredEndpointTypes(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	insertPricingEndpointChannel(t, 105, constant.ChannelTypeRSGateway, dto.ChannelOtherSettings{
+		SupportedEndpointTypes: []string{string(constant.EndpointTypeOpenAIVideo)},
+	})
+	insertPricingEndpointAbility(t, 105, "grok-imagine-video-1.5")
+
+	byModel := pricingEndpointTypesByModel(t)
+	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIVideo}, byModel["grok-imagine-video-1.5"])
 }
 
 func insertPricingEndpointAbility(t *testing.T, channelID int, modelName string) {
