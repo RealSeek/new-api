@@ -15,7 +15,9 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
@@ -79,8 +81,19 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
 	info.IsStream = rsGatewayRequestIsStream(requestBody)
+	var imageRequest *dto.ImageRequest
+	meta := &types.TokenCountMeta{}
+	if info.RelayMode == relayconstant.RelayModeImagesGenerations || info.RelayMode == relayconstant.RelayModeImagesEdits {
+		// 复用图片参数校验与价格倍率，转发仍使用原始请求体。
+		imageRequest, err = relayhelper.GetAndValidOpenAIImageRequest(c, info.RelayMode)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		info.IsStream = imageRequest.IsStream(c.Request)
+		meta = imageRequest.GetTokenCountMeta()
+	}
 	c.Set(string(constant.ContextKeyIsStream), info.IsStream)
-	priceData, err := relayhelper.ModelPriceHelper(c, info, 0, &types.TokenCountMeta{})
+	priceData, err := relayhelper.ModelPriceHelper(c, info, 0, meta)
 	if err != nil {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
@@ -127,8 +140,16 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		return newAPIError
 	}
 	usageTracker := newRSGatewayUsageTracker(info.IsStream)
+	var imageUsage *dto.Usage
 	defer func() {
-		usage := usageTracker.Usage()
+		usage := imageUsage
+		if imageRequest != nil {
+			if usage == nil {
+				return
+			}
+		} else {
+			usage = usageTracker.Usage()
+		}
 		quota := service.PostTextConsumeQuota(c, info, usage, nil)
 		if httpResponse.Request != nil && httpResponse.Request.URL != nil {
 			callbackURL := *httpResponse.Request.URL
@@ -139,6 +160,14 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		}
 		settled = true
 	}()
+	if imageRequest != nil {
+		var apiErr *types.NewAPIError
+		imageUsage, apiErr = rsGatewayImageResponse(c, info, httpResponse)
+		if apiErr != nil {
+			recordError(apiErr.MaskSensitiveErrorWithStatusCode(), apiErr.StatusCode)
+		}
+		return apiErr
+	}
 
 	connectionHeaders := make(map[string]struct{})
 	for _, name := range strings.Split(httpResponse.Header.Get("Connection"), ",") {
@@ -192,6 +221,26 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		logger.LogError(c, "网关响应转发失败: "+err.Error())
 	}
 	return nil
+}
+
+// 图片响应复用原有计数和用量解析，避免大图被通用用量捕获上限截断。
+func rsGatewayImageResponse(c *gin.Context, info *relaycommon.RelayInfo, response *http.Response) (*dto.Usage, *types.NewAPIError) {
+	var usage *dto.Usage
+	var apiErr *types.NewAPIError
+	if info.IsStream {
+		usage, apiErr = openai.OpenaiImageStreamHandler(c, info, response)
+	} else {
+		usage, apiErr = openai.OpenaiImageHandler(c, info, response)
+	}
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	// 按张计费不依赖 token；沿用普通图片通道的结算标记。
+	if info.PriceData.UsePrice && usage.TotalTokens == 0 {
+		usage.PromptTokens = 1
+		usage.TotalTokens = 1
+	}
+	return usage, nil
 }
 
 func classifyRSGatewayRequestError(requestErr, requestContextErr error) (string, int, bool) {
