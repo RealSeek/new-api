@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -922,6 +923,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
+		Seconds  json.RawMessage `json:"seconds,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -931,18 +933,31 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if len(aux.Duration) > 0 {
-		var durationInt int
-		if err := common.Unmarshal(aux.Duration, &durationInt); err == nil {
-			t.Duration = durationInt
-		} else {
-			var durationStr string
-			if err := common.Unmarshal(aux.Duration, &durationStr); err == nil && durationStr != "" {
-				if v, err := strconv.Atoi(durationStr); err == nil {
-					t.Duration = v
-				}
+	// 两种字段统一为同一时长，让不同适配器读取任一字段时得到相同结果。
+	t.Duration, t.Seconds = 0, ""
+	for _, raw := range []json.RawMessage{aux.Duration, aux.Seconds} {
+		value := strings.TrimSpace(string(raw))
+		if value == "" || value == "null" {
+			continue
+		}
+		if strings.HasPrefix(value, `"`) {
+			if err := common.Unmarshal(raw, &value); err != nil {
+				return err
+			}
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
 			}
 		}
+		duration, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(duration) || math.IsInf(duration, 0) || math.Trunc(duration) != duration || duration < float64(math.MinInt) || duration >= float64(math.MaxInt) {
+			return fmt.Errorf("duration 和 seconds 必须是整数秒数")
+		}
+		if t.Seconds != "" && t.Duration != int(duration) {
+			return fmt.Errorf("duration 和 seconds 必须一致")
+		}
+		t.Duration = int(duration)
+		t.Seconds = strconv.Itoa(t.Duration)
 	}
 
 	if len(aux.Metadata) > 0 {

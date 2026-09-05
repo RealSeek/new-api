@@ -2,9 +2,12 @@ package sora
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -41,12 +44,76 @@ func TestSoraBuildRequestBodyReturnsReplayablePassThroughBody(t *testing.T) {
 	assert.Equal(t, payload, replay)
 }
 
+func TestVideoDurationForwarding(t *testing.T) {
+	for _, channelType := range []int{constant.ChannelTypeSora, constant.ChannelTypeRSGateway} {
+		for _, form := range []bool{false, true} {
+			for _, fields := range []string{`"duration":"6"`, `"seconds":6`, `"duration":"6","seconds":6`} {
+				body := []byte(`{"model":"test-video","prompt":"test","extra":"preserved",` + fields + `}`)
+				contentType := "application/json"
+				if form {
+					var values map[string]any
+					require.NoError(t, common.Unmarshal(body, &values))
+					var buf bytes.Buffer
+					writer := multipart.NewWriter(&buf)
+					for key, value := range values {
+						require.NoError(t, writer.WriteField(key, fmt.Sprint(value)))
+					}
+					require.NoError(t, writer.Close())
+					body, contentType = buf.Bytes(), writer.FormDataContentType()
+				}
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body))
+				c.Request.Header.Set("Content-Type", contentType)
+				defer common.CleanupBodyStorage(c)
+				info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped-video"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+				adaptor := &TaskAdaptor{ChannelType: channelType}
+				require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+				sent, err := adaptor.BuildRequestBody(c, info)
+				require.NoError(t, err)
+				var result map[string]any
+				if form {
+					request := httptest.NewRequest(http.MethodPost, "/", sent)
+					request.Header.Set("Content-Type", c.GetHeader("Content-Type"))
+					require.NoError(t, request.ParseMultipartForm(1<<20))
+					result = map[string]any{}
+					for key, values := range request.MultipartForm.Value {
+						result[key] = values[0]
+					}
+				} else {
+					require.NoError(t, common.DecodeJson(sent, &result))
+				}
+				assert.Equal(t, "preserved", result["extra"])
+				assert.Equal(t, "mapped-video", result["model"])
+				if channelType == constant.ChannelTypeSora {
+					assert.Equal(t, "6", result["seconds"])
+					assert.NotContains(t, result, "duration")
+				} else {
+					if strings.Contains(fields, "seconds") {
+						assert.Equal(t, "6", result["seconds"])
+					} else {
+						assert.NotContains(t, result, "seconds")
+					}
+					if strings.Contains(fields, "duration") {
+						if form {
+							assert.Equal(t, "6", result["duration"])
+						} else {
+							assert.Equal(t, float64(6), result["duration"])
+						}
+					} else {
+						assert.NotContains(t, result, "duration")
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestRSGatewayResponseRemovesUpstreamVideoURLs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	info := &relaycommon.RelayInfo{
-		ChannelMeta:  &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway},
+		ChannelMeta:   &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
 	}
 	resp := &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(bytes.NewBufferString(

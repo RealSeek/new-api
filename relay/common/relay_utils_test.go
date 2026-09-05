@@ -1,12 +1,16 @@
 package common
 
 import (
+	"bytes"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	jsoncommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -142,6 +146,54 @@ func TestTaskDurationBounds(t *testing.T) {
 			} else {
 				require.Nil(t, taskErr)
 			}
+		})
+	}
+}
+
+func TestVideoDurationAliases(t *testing.T) {
+	for _, fields := range []string{`"duration":6`, `"duration":"6"`, `"seconds":6`, `"seconds":"6"`, `"duration":6.0,"seconds":"6.0"`, `"duration":"6","seconds":6`} {
+		for _, multipartBody := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/form=%v", fields, multipartBody), func(t *testing.T) {
+				body := []byte(`{"model":"test-video","prompt":"test",` + fields + `}`)
+				contentType := "application/json"
+				if multipartBody {
+					var values map[string]any
+					require.NoError(t, jsoncommon.Unmarshal(body, &values))
+					var buf bytes.Buffer
+					writer := multipart.NewWriter(&buf)
+					for key, value := range values {
+						require.NoError(t, writer.WriteField(key, fmt.Sprint(value)))
+					}
+					require.NoError(t, writer.Close())
+					body, contentType = buf.Bytes(), writer.FormDataContentType()
+				}
+				for _, basic := range []bool{false, true} {
+					c, _ := gin.CreateTestContext(httptest.NewRecorder())
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body))
+					c.Request.Header.Set("Content-Type", contentType)
+					defer jsoncommon.CleanupBodyStorage(c)
+					info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+					if basic {
+						require.Nil(t, ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate))
+					} else {
+						require.Nil(t, ValidateMultipartDirect(c, info))
+					}
+					req, err := GetTaskRequest(c)
+					require.NoError(t, err)
+					assert.Equal(t, 6, req.Duration)
+					assert.Equal(t, "6", req.Seconds)
+					assert.Equal(t, 6, ResolveTaskDuration(req, 4))
+				}
+			})
+		}
+	}
+	for _, fields := range []string{`"duration":6,"seconds":10`, `"seconds":1.5`, `"duration":"invalid"`, `"seconds":true`, `"seconds":"NaN"`, `"seconds":3601`, `"seconds":-1`, `"duration":3601,"seconds":"6"`} {
+		t.Run(fields, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"test-video","prompt":"test",`+fields+`}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			defer jsoncommon.CleanupBodyStorage(c)
+			require.NotNil(t, ValidateMultipartDirect(c, &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}))
 		})
 	}
 }

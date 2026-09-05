@@ -55,7 +55,7 @@ type responseTask struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
 	} `json:"error,omitempty"`
-	Metadata           map[string]any `json:"metadata,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // ============================
@@ -158,6 +158,23 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
+			var taskReq relaycommon.TaskSubmitReq
+			if err := common.Unmarshal(cachedBody, &taskReq); err != nil {
+				return nil, err
+			}
+			// 透传保留调用方选择的字段，但规范类型；Sora 原生接口使用 seconds。
+			if taskReq.Seconds != "" {
+				if _, ok := bodyMap["duration"]; ok {
+					bodyMap["duration"] = taskReq.Duration
+				}
+				if _, ok := bodyMap["seconds"]; ok {
+					bodyMap["seconds"] = taskReq.Seconds
+				}
+				if a.ChannelType == constant.ChannelTypeSora {
+					bodyMap["seconds"] = taskReq.Seconds
+					delete(bodyMap, "duration")
+				}
+			}
 			bodyMap["model"] = info.UpstreamModelName
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
@@ -171,11 +188,24 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err != nil {
 			return bytes.NewReader(cachedBody), nil
 		}
+		var taskReq relaycommon.TaskSubmitReq
+		if err := common.UnmarshalBodyReusable(c, &taskReq); err != nil {
+			return nil, err
+		}
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
+		if a.ChannelType == constant.ChannelTypeSora && taskReq.Seconds != "" {
+			writer.WriteField("seconds", taskReq.Seconds)
+		}
 		for key, values := range formData.Value {
 			if key == "model" {
+				continue
+			}
+			if (key == "duration" || key == "seconds") && taskReq.Seconds != "" {
+				if a.ChannelType != constant.ChannelTypeSora {
+					writer.WriteField(key, taskReq.Seconds)
+				}
 				continue
 			}
 			for _, v := range values {
