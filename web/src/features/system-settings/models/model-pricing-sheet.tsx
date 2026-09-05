@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertTriangle, Save } from 'lucide-react'
+import { AlertTriangle, Plus, Save, Trash2 } from 'lucide-react'
 import {
   forwardRef,
   useCallback,
@@ -78,6 +78,8 @@ import {
   type ModelPricingFormValues,
   type ModelRatioData,
   type PricingMode,
+  type PreviewRow,
+  type VideoResolutionPriceDraft,
 } from './model-pricing-core'
 import { PriceInput, PriceLane } from './model-pricing-inputs'
 import { formatPricingNumber } from './pricing-format'
@@ -155,6 +157,13 @@ export const ModelPricingEditorPanel = forwardRef<
   })
   const [billingExpr, setBillingExpr] = useState('')
   const [requestRuleExpr, setRequestRuleExpr] = useState('')
+  const [videoDefaultPrice, setVideoDefaultPrice] = useState('')
+  const [videoDefaultDuration, setVideoDefaultDuration] = useState('5')
+  const [videoBillingStep, setVideoBillingStep] = useState('1')
+  const [videoMinimumDuration, setVideoMinimumDuration] = useState('1')
+  const [videoResolutionPrices, setVideoResolutionPrices] = useState<
+    VideoResolutionPriceDraft[]
+  >([])
   const [editorReloadToken, setEditorReloadToken] = useState(0)
   const isEditMode = !!editData
 
@@ -188,15 +197,31 @@ export const ModelPricingEditorPanel = forwardRef<
         audioRatio: editData.audioRatio || '',
         audioCompletionRatio: editData.audioCompletionRatio || '',
       })
-      setPricingMode(
-        editData.billingMode === 'tiered_expr'
-          ? 'tiered_expr'
-          : editData.price
-            ? 'per-request'
-            : 'per-token'
-      )
+      let nextPricingMode: PricingMode = 'per-token'
+      if (editData.billingMode === 'tiered_expr') {
+        nextPricingMode = 'tiered_expr'
+      } else if (editData.billingMode === 'per-second') {
+        nextPricingMode = 'per-second'
+      } else if (editData.price) {
+        nextPricingMode = 'per-request'
+      }
+      setPricingMode(nextPricingMode)
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
+      const videoPrice = editData.videoPrice
+      setVideoDefaultPrice(videoPrice?.default_price?.toString() || '')
+      setVideoDefaultDuration(videoPrice?.default_duration?.toString() || '5')
+      setVideoBillingStep(videoPrice?.billing_step?.toString() || '1')
+      setVideoMinimumDuration(videoPrice?.minimum_duration?.toString() || '1')
+      setVideoResolutionPrices(
+        Object.entries(videoPrice?.resolution_prices || {}).map(
+          ([resolution, price], index) => ({
+            id: `${resolution}-${index}`,
+            resolution,
+            price: price.toString(),
+          })
+        )
+      )
     } else {
       form.reset({
         name: '',
@@ -212,6 +237,11 @@ export const ModelPricingEditorPanel = forwardRef<
       setPricingMode('per-token')
       setBillingExpr('')
       setRequestRuleExpr('')
+      setVideoDefaultPrice('')
+      setVideoDefaultDuration('5')
+      setVideoBillingStep('1')
+      setVideoMinimumDuration('1')
+      setVideoResolutionPrices([])
     }
 
     setPromptPrice(nextLaneState.promptPrice)
@@ -335,35 +365,56 @@ export const ModelPricingEditorPanel = forwardRef<
   const handleModeChange = (value: string) => {
     const nextMode = value as PricingMode
     setPricingMode(nextMode)
+    form.clearErrors('price')
     if (nextMode === 'tiered_expr' && !billingExpr) {
       setBillingExpr('tier("base", p * 0 + c * 0)')
     }
   }
 
   const watchedValues = form.watch()
-  const previewRows = useMemo(
-    () =>
-      buildPreviewRows(
-        watchedValues,
-        pricingMode,
-        billingExpr,
-        requestRuleExpr,
-        promptPrice,
-        lanePrices,
-        laneEnabled,
-        t
-      ),
-    [
-      billingExpr,
-      laneEnabled,
-      lanePrices,
-      pricingMode,
-      promptPrice,
-      requestRuleExpr,
-      t,
+  const previewRows = useMemo<PreviewRow[]>(() => {
+    if (pricingMode === 'per-second') {
+      const rows = videoResolutionPrices
+        .filter((row) => row.resolution.trim() && row.price)
+        .map((row) => ({
+          key: row.id,
+          label: row.resolution.trim().toUpperCase(),
+          value: `$${row.price} / ${t('second')}`,
+        }))
+      return rows.length > 0
+        ? rows
+        : [
+            {
+              key: 'default',
+              label: t('Default price'),
+              value: videoDefaultPrice
+                ? `$${videoDefaultPrice} / ${t('second')}`
+                : t('Empty'),
+            },
+          ]
+    }
+    return buildPreviewRows(
       watchedValues,
-    ]
-  )
+      pricingMode,
+      billingExpr,
+      requestRuleExpr,
+      promptPrice,
+      lanePrices,
+      laneEnabled,
+      t
+    )
+  }, [
+    billingExpr,
+    laneEnabled,
+    lanePrices,
+    pricingMode,
+    promptPrice,
+    requestRuleExpr,
+    t,
+    watchedValues,
+    videoDefaultPrice,
+    videoResolutionPrices,
+  ])
 
   const warnings = useMemo(() => {
     const nextWarnings: string[] = []
@@ -411,6 +462,52 @@ export const ModelPricingEditorPanel = forwardRef<
   }, [editData, laneEnabled, lanePrices, pricingMode, promptPrice, t])
 
   const validatePricingValues = useCallback(() => {
+    form.clearErrors('price')
+    if (pricingMode === 'per-second') {
+      const price = Number(videoDefaultPrice)
+      if (!Number.isFinite(price) || price <= 0) {
+        form.setError('price', {
+          message: t('Video price per second is required.'),
+        })
+        return false
+      }
+      const durations = [
+        videoDefaultDuration,
+        videoBillingStep,
+        videoMinimumDuration,
+      ].map(Number)
+      if (
+        durations.some(
+          (duration) => !Number.isInteger(duration) || duration < 1
+        )
+      ) {
+        form.setError('price', {
+          message: t('Enter a positive integer'),
+        })
+        return false
+      }
+      if (durations.some((duration) => duration > 3600)) {
+        form.setError('price', {
+          message: t('Count must be between {{min}} and {{max}}', {
+            min: 1,
+            max: 3600,
+          }),
+        })
+        return false
+      }
+      if (
+        videoResolutionPrices.some(
+          (row) =>
+            row.resolution.trim() &&
+            (!Number.isFinite(Number(row.price)) || Number(row.price) <= 0)
+        )
+      ) {
+        form.setError('price', {
+          message: t('Resolution prices must be positive numbers.'),
+        })
+        return false
+      }
+    }
     if (
       pricingMode === 'per-token' &&
       toNumberOrNull(promptPrice) === null &&
@@ -436,7 +533,19 @@ export const ModelPricingEditorPanel = forwardRef<
     }
 
     return true
-  }, [form, laneEnabled, lanePrices, pricingMode, promptPrice, t])
+  }, [
+    form,
+    laneEnabled,
+    lanePrices,
+    pricingMode,
+    promptPrice,
+    t,
+    videoBillingStep,
+    videoDefaultDuration,
+    videoDefaultPrice,
+    videoMinimumDuration,
+    videoResolutionPrices,
+  ])
 
   const buildSubmitData = useCallback(
     (values: ModelPricingFormValues) => {
@@ -453,6 +562,23 @@ export const ModelPricingEditorPanel = forwardRef<
         audioCompletionRatio: values.audioCompletionRatio || '',
       }
 
+      if (pricingMode === 'per-second') {
+        data.videoPrice = {
+          default_price: Number(videoDefaultPrice),
+          default_duration: Math.max(1, Number(videoDefaultDuration) || 5),
+          billing_step: Math.max(1, Number(videoBillingStep) || 1),
+          minimum_duration: Math.max(1, Number(videoMinimumDuration) || 1),
+          resolution_prices: Object.fromEntries(
+            videoResolutionPrices
+              .filter((row) => row.resolution.trim() && row.price)
+              .map((row) => [
+                row.resolution.trim().toLowerCase(),
+                Number(row.price),
+              ])
+          ),
+        }
+      }
+
       if (pricingMode === 'tiered_expr') {
         data.billingExpr = billingExpr
         data.requestRuleExpr = requestRuleExpr
@@ -460,7 +586,16 @@ export const ModelPricingEditorPanel = forwardRef<
 
       return data
     },
-    [billingExpr, pricingMode, requestRuleExpr]
+    [
+      billingExpr,
+      pricingMode,
+      requestRuleExpr,
+      videoBillingStep,
+      videoDefaultDuration,
+      videoDefaultPrice,
+      videoMinimumDuration,
+      videoResolutionPrices,
+    ]
   )
 
   useImperativeHandle(
@@ -544,12 +679,15 @@ export const ModelPricingEditorPanel = forwardRef<
                   onValueChange={handleModeChange}
                   className='gap-4'
                 >
-                  <TabsList className='grid w-full grid-cols-3'>
+                  <TabsList className='grid h-auto w-full grid-cols-2 sm:grid-cols-4'>
                     <TabsTrigger value='per-token'>
                       {t('Per-token')}
                     </TabsTrigger>
                     <TabsTrigger value='per-request'>
                       {t('Per-request')}
+                    </TabsTrigger>
+                    <TabsTrigger value='per-second'>
+                      {t('Per-second')}
                     </TabsTrigger>
                     <TabsTrigger value='tiered_expr'>
                       {t('Expression')}
@@ -636,6 +774,146 @@ export const ModelPricingEditorPanel = forwardRef<
                           </FormItem>
                         )}
                       />
+                    </FieldGroup>
+                  </TabsContent>
+
+                  <TabsContent value='per-second' className='pt-0'>
+                    <FieldGroup className='gap-5'>
+                      <div className='grid gap-3 sm:grid-cols-2'>
+                        {[
+                          [
+                            'videoDefaultPrice',
+                            t('Price per second'),
+                            videoDefaultPrice,
+                            setVideoDefaultPrice,
+                          ],
+                          [
+                            'videoDefaultDuration',
+                            t('Default duration'),
+                            videoDefaultDuration,
+                            setVideoDefaultDuration,
+                          ],
+                          [
+                            'videoBillingStep',
+                            t('Billing step'),
+                            videoBillingStep,
+                            setVideoBillingStep,
+                          ],
+                          [
+                            'videoMinimumDuration',
+                            t('Minimum duration'),
+                            videoMinimumDuration,
+                            setVideoMinimumDuration,
+                          ],
+                        ].map(([key, label, value, setter]) => (
+                          <Field key={key as string}>
+                            <FieldLabel>{label as string}</FieldLabel>
+                            <InputGroup>
+                              <InputGroupAddon>
+                                {key === 'videoDefaultPrice' ? '$' : ''}
+                              </InputGroupAddon>
+                              <InputGroupInput
+                                inputMode='decimal'
+                                value={value as string}
+                                onChange={(event) =>
+                                  (setter as (value: string) => void)(
+                                    event.target.value
+                                  )
+                                }
+                              />
+                              <InputGroupAddon align='inline-end'>
+                                {key === 'videoDefaultPrice'
+                                  ? t('per second')
+                                  : t('seconds')}
+                              </InputGroupAddon>
+                            </InputGroup>
+                          </Field>
+                        ))}
+                      </div>
+                      <div className='space-y-3'>
+                        <div className='flex items-center justify-between'>
+                          <FieldLabel>{t('Resolution prices')}</FieldLabel>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              setVideoResolutionPrices((rows) => [
+                                ...rows,
+                                {
+                                  id: crypto.randomUUID(),
+                                  resolution: '',
+                                  price: '',
+                                },
+                              ])
+                            }
+                          >
+                            <Plus data-icon='inline-start' />
+                            {t('Add resolution')}
+                          </Button>
+                        </div>
+                        {videoResolutionPrices.map((row) => (
+                          <div
+                            key={row.id}
+                            className='grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2'
+                          >
+                            <Input
+                              placeholder='720p'
+                              value={row.resolution}
+                              onChange={(event) =>
+                                setVideoResolutionPrices((rows) =>
+                                  rows.map((item) =>
+                                    item.id === row.id
+                                      ? {
+                                          ...item,
+                                          resolution: event.target.value,
+                                        }
+                                      : item
+                                  )
+                                )
+                              }
+                            />
+                            <InputGroup>
+                              <InputGroupAddon>$</InputGroupAddon>
+                              <InputGroupInput
+                                inputMode='decimal'
+                                placeholder='0.38'
+                                value={row.price}
+                                onChange={(event) =>
+                                  setVideoResolutionPrices((rows) =>
+                                    rows.map((item) =>
+                                      item.id === row.id
+                                        ? { ...item, price: event.target.value }
+                                        : item
+                                    )
+                                  )
+                                }
+                              />
+                              <InputGroupAddon align='inline-end'>
+                                {t('per second')}
+                              </InputGroupAddon>
+                            </InputGroup>
+                            <Button
+                              type='button'
+                              variant='ghost'
+                              size='icon'
+                              aria-label={t('Delete')}
+                              onClick={() =>
+                                setVideoResolutionPrices((rows) =>
+                                  rows.filter((item) => item.id !== row.id)
+                                )
+                              }
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                      {form.formState.errors.price?.message && (
+                        <p className='text-destructive text-sm' role='alert'>
+                          {form.formState.errors.price.message}
+                        </p>
+                      )}
                     </FieldGroup>
                   </TabsContent>
 

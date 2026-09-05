@@ -112,6 +112,11 @@ func TestTaskDurationBounds(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "metadata duration is bounded",
+			body:    `{"model":"veo-3","prompt":"a cat","metadata":{"durationSeconds":999999}}`,
+			wantErr: true,
+		},
+		{
 			name: "normal duration is accepted",
 			body: `{"model":"sora-2","prompt":"a cat","seconds":"8"}`,
 		},
@@ -138,5 +143,19 @@ func TestTaskDurationBounds(t *testing.T) {
 				require.Nil(t, taskErr)
 			}
 		})
+	}
+}
+
+func TestNormalizeVideoResolution(t *testing.T) {
+	tests := map[string]string{
+		"1280x720":  "720p",
+		"720x1280":  "720p",
+		"1920*1080": "1080p",
+		"3840x2160": "4k",
+		"480P":      "480p",
+		"custom":    "custom",
+	}
+	for input, expected := range tests {
+		assert.Equal(t, expected, NormalizeVideoResolution(input))
 	}
 }

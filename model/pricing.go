@@ -16,26 +16,27 @@ import (
 )
 
 type Pricing struct {
-	ModelName              string                  `json:"model_name"`
-	Description            string                  `json:"description,omitempty"`
-	Icon                   string                  `json:"icon,omitempty"`
-	Tags                   string                  `json:"tags,omitempty"`
-	VendorID               int                     `json:"vendor_id,omitempty"`
-	QuotaType              int                     `json:"quota_type"`
-	ModelRatio             float64                 `json:"model_ratio"`
-	ModelPrice             float64                 `json:"model_price"`
-	OwnerBy                string                  `json:"owner_by"`
-	CompletionRatio        float64                 `json:"completion_ratio"`
-	CacheRatio             *float64                `json:"cache_ratio,omitempty"`
-	CreateCacheRatio       *float64                `json:"create_cache_ratio,omitempty"`
-	ImageRatio             *float64                `json:"image_ratio,omitempty"`
-	AudioRatio             *float64                `json:"audio_ratio,omitempty"`
-	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"`
-	EnableGroup            []string                `json:"enable_groups"`
-	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
-	BillingMode            string                  `json:"billing_mode,omitempty"`
-	BillingExpr            string                  `json:"billing_expr,omitempty"`
-	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	ModelName              string                          `json:"model_name"`
+	Description            string                          `json:"description,omitempty"`
+	Icon                   string                          `json:"icon,omitempty"`
+	Tags                   string                          `json:"tags,omitempty"`
+	VendorID               int                             `json:"vendor_id,omitempty"`
+	QuotaType              int                             `json:"quota_type"`
+	ModelRatio             float64                         `json:"model_ratio"`
+	ModelPrice             float64                         `json:"model_price"`
+	OwnerBy                string                          `json:"owner_by"`
+	CompletionRatio        float64                         `json:"completion_ratio"`
+	CacheRatio             *float64                        `json:"cache_ratio,omitempty"`
+	CreateCacheRatio       *float64                        `json:"create_cache_ratio,omitempty"`
+	ImageRatio             *float64                        `json:"image_ratio,omitempty"`
+	AudioRatio             *float64                        `json:"audio_ratio,omitempty"`
+	AudioCompletionRatio   *float64                        `json:"audio_completion_ratio,omitempty"`
+	EnableGroup            []string                        `json:"enable_groups"`
+	SupportedEndpointTypes []constant.EndpointType         `json:"supported_endpoint_types"`
+	BillingMode            string                          `json:"billing_mode,omitempty"`
+	BillingExpr            string                          `json:"billing_expr,omitempty"`
+	VideoPrice             *ratio_setting.VideoPriceConfig `json:"video_price,omitempty"`
+	PricingVersion         string                          `json:"pricing_version,omitempty"`
 }
 
 type PricingVendor struct {
@@ -406,12 +407,20 @@ func updatePricing() {
 				pricing.BillingExpr = expr
 			}
 		}
+		if billing_setting.GetBillingMode(model) == billing_setting.BillingModePerSecond {
+			pricing.BillingMode = billing_setting.BillingModePerSecond
+			pricing.QuotaType = 2
+			if videoPrice, ok := ratio_setting.GetVideoPriceConfig(model); ok {
+				pricing.VideoPrice = &videoPrice
+				pricing.ModelPrice = videoPrice.DefaultPrice
+			}
+		}
 		pricingMap = append(pricingMap, pricing)
 	}
 
 	// 防止大更新后数据不通用
 	if len(pricingMap) > 0 {
-		pricingMap[0].PricingVersion = "5a90f2b86c08bd983a9a2e6d66c255f4eaef9c4bc934386d2b6ae84ef0ff1f1f"
+		pricingMap[0].PricingVersion = "818f58180f058c012f3c88b96e86afb5801a3251ba8f5e29bf3b3bf4b72c2435"
 	}
 
 	// 刷新缓存映射，供高并发快速查询

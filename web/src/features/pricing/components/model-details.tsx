@@ -67,8 +67,16 @@ import {
   isDynamicPricingModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
-import { formatFixedPrice, formatGroupPrice } from '../lib/price'
+import {
+  getAvailableGroups,
+  isPerSecondModel,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
+import {
+  formatFixedPrice,
+  formatGroupPrice,
+  formatUnitPriceForGroup,
+} from '../lib/price'
 import type {
   ModelCapability,
   PriceType,
@@ -575,6 +583,7 @@ function PriceSection(props: {
 }) {
   const { t } = useTranslation()
   const isTokenBased = isTokenBasedModel(props.model)
+  const isPerSecond = isPerSecondModel(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
   const baseGroupKey = '_base'
   const baseGroupRatioMap = { [baseGroupKey]: 1 }
@@ -698,6 +707,43 @@ function PriceSection(props: {
             </div>
           </div>
         )}
+      </section>
+    )
+  }
+
+  if (isPerSecond) {
+    const prices = Object.entries(
+      props.model.video_price?.resolution_prices || {}
+    )
+    const visiblePrices =
+      prices.length > 0
+        ? prices
+        : [['default', props.model.video_price?.default_price || 0] as const]
+    return (
+      <section>
+        <SectionTitle>{t('Video pricing')}</SectionTitle>
+        <div className='grid grid-cols-2 gap-2'>
+          {visiblePrices.map(([resolution, price]) => (
+            <div key={resolution} className='bg-muted/20 rounded-lg border p-3'>
+              <div className='text-muted-foreground text-xs'>
+                {resolution.toUpperCase()}
+              </div>
+              <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
+                {formatUnitPriceForGroup(
+                  price,
+                  baseGroupKey,
+                  props.showRechargePrice,
+                  props.priceRate,
+                  props.usdExchangeRate,
+                  baseGroupRatioMap
+                )}
+                <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
+                  / {t('second')}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
     )
   }
@@ -868,6 +914,7 @@ function GroupPricingSection(props: {
   )
 
   const isTokenBased = isTokenBasedModel(props.model)
+  const isPerSecond = isPerSecondModel(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
 
   const extraPriceTypes = useMemo(() => {
@@ -1041,6 +1088,21 @@ function GroupPricingSection(props: {
       props.usdExchangeRate,
       props.groupRatio
     )
+  const renderPerSecondGroupPrice = (group: string) => (
+    <>
+      {formatUnitPriceForGroup(
+        props.model.video_price?.default_price || 0,
+        group,
+        showRechargePrice,
+        props.priceRate,
+        props.usdExchangeRate,
+        props.groupRatio
+      )}
+      <span className='text-muted-foreground/50 ml-1 text-[10px]'>
+        / {t('second')}
+      </span>
+    </>
+  )
 
   return (
     <section>
@@ -1097,7 +1159,9 @@ function GroupPricingSection(props: {
                   header: t('Price'),
                   className: `${thClass} text-right`,
                   cellClassName: 'py-2.5 text-right font-mono',
-                  cell: renderFixedGroupPrice,
+                  cell: isPerSecond
+                    ? renderPerSecondGroupPrice
+                    : renderFixedGroupPrice,
                 },
               ]),
         ]}

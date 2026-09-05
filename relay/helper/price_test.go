@@ -64,6 +64,33 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
 }
 
+func TestHasModelBillingConfigAcceptsPerSecondPrice(t *testing.T) {
+	savedConfig := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		savedConfig[key] = value
+		return nil
+	}))
+	originalVideoPrice := ratio_setting.VideoPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(savedConfig))
+		require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(originalVideoPrice))
+	})
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"video-test":"per_second"}`,
+	}))
+	require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(`{
+		"video-test": {
+			"default_price": 0.2,
+			"default_duration": 5,
+			"billing_step": 1,
+			"minimum_duration": 1
+		}
+	}`))
+
+	require.True(t, HasModelBillingConfig("video-test"))
+}
+
 func TestModelPriceHelperTieredPreConsumeMaxTokensFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

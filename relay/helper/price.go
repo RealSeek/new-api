@@ -187,7 +187,16 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hosttypes.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
-	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
+	var modelPrice float64
+	var success bool
+	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModePerSecond {
+		modelPrice, success = ratio_setting.GetVideoPrice(info.OriginModelName, "default")
+		if !success {
+			return hosttypes.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
+		}
+	} else {
+		modelPrice, success = ratio_setting.GetModelPrice(info.OriginModelName, true)
+	}
 	usePrice := success
 	var modelRatio float64
 
@@ -253,6 +262,10 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 }
 
 func HasModelBillingConfig(modelName string) bool {
+	if billing_setting.GetBillingMode(modelName) == billing_setting.BillingModePerSecond {
+		_, ok := ratio_setting.GetVideoPriceConfig(modelName)
+		return ok
+	}
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}

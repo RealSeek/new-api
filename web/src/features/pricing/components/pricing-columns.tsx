@@ -34,10 +34,11 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
 import {
   formatPrice,
   formatRequestPrice,
+  formatUnitPrice,
   stripTrailingZeros,
 } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
@@ -175,6 +176,34 @@ export function usePricingColumns(
         }
 
         const isTokenBased = isTokenBasedModel(model)
+
+        if (isPerSecondModel(model)) {
+          const prices = Object.entries(
+            model.video_price?.resolution_prices || {}
+          )
+          const [resolution, unitPrice] = prices[0] || [
+            'default',
+            model.video_price?.default_price || 0,
+          ]
+          return (
+            <div className='max-w-full min-w-0'>
+              <span className='font-mono text-sm tabular-nums'>
+                {resolution.toUpperCase()}{' '}
+                {formatUnitPrice(
+                  model,
+                  unitPrice,
+                  showRechargePrice,
+                  priceRate,
+                  usdExchangeRate,
+                  selectedGroup
+                )}
+              </span>
+              <div className='text-muted-foreground/50 text-[10px]'>
+                / {t('second')}
+              </div>
+            </div>
+          )
+        }
 
         if (isTokenBased) {
           const inputPrice = stripTrailingZeros(

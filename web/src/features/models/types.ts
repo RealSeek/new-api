@@ -285,7 +285,7 @@ export type ModelStatus = 0 | 1 // disabled, enabled
 /**
  * Quota type
  */
-export type QuotaType = 0 | 1 // usage-based, per-call
+export type QuotaType = 0 | 1 | 2 // 按量、按次、按秒
 
 /**
  * Sync locale

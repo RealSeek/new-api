@@ -54,6 +54,13 @@ export type PricingModel = {
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
+  video_price?: {
+    default_price: number
+    default_duration: number
+    billing_step: number
+    minimum_duration: number
+    resolution_prices?: Record<string, number>
+  }
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**
@@ -108,4 +115,4 @@ export type PriceType =
   | 'image'
   | 'audio_input'
   | 'audio_output'
-export type QuotaType = 0 | 1 // 0: token-based, 1: per-request
+export type QuotaType = 0 | 1 | 2 // 按 Token、按次、按秒

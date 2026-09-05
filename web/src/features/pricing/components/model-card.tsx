@@ -30,8 +30,8 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
-import { formatPrice, formatRequestPrice } from '../lib/price'
+import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
+import { formatPrice, formatRequestPrice, formatUnitPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -55,6 +55,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const usdExchangeRate = props.usdExchangeRate ?? 1
   const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
+  const isPerSecond = isPerSecondModel(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
@@ -127,6 +128,41 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         </span>
       )
     }
+  } else if (isPerSecond) {
+    const prices = Object.entries(
+      props.model.video_price?.resolution_prices || {}
+    )
+    const visiblePrices =
+      prices.length > 0
+        ? prices
+        : [['default', props.model.video_price?.default_price || 0] as const]
+    priceSummary = (
+      <div className='grid gap-x-4 gap-y-0.5 sm:grid-cols-2'>
+        {visiblePrices.map(([resolution, price]) => (
+          <span
+            key={resolution}
+            className='grid grid-cols-[3.5rem_auto] items-baseline gap-1 whitespace-nowrap'
+          >
+            <span className='text-foreground font-mono text-xs font-semibold'>
+              {resolution.toUpperCase()}
+            </span>
+            <span className='text-foreground font-mono font-semibold'>
+              {formatUnitPrice(
+                props.model,
+                price,
+                showRechargePrice,
+                priceRate,
+                usdExchangeRate,
+                props.selectedGroup
+              )}
+              <span className='text-muted-foreground ml-1 font-sans font-normal'>
+                / {t('second')}
+              </span>
+            </span>
+          </span>
+        ))}
+      </div>
+    )
   } else if (isTokenBased) {
     priceSummary = (
       <>
@@ -263,9 +299,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               {item}
             </span>
           ))}
-          <span className='text-muted-foreground/50 text-xs'>
-            {tokenUnitLabel}
-          </span>
+          {!isPerSecond && (
+            <span className='text-muted-foreground/50 text-xs'>
+              {tokenUnitLabel}
+            </span>
+          )}
           {hiddenCount > 0 && (
             <span className='text-muted-foreground/40 text-xs'>
               +{hiddenCount}

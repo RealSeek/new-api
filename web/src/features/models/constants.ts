@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type TFunction } from 'i18next'
+import type { TFunction } from 'i18next'
 
 import type { NameRule, ModelStatus, SyncSource } from './types'
 
@@ -149,6 +149,7 @@ export function getQuotaTypeConfig(
   return {
     0: { label: t('Usage-based'), color: 'violet' },
     1: { label: t('Per-call'), color: 'teal' },
+    2: { label: t('Per-second'), color: 'green' },
   }
 }
 

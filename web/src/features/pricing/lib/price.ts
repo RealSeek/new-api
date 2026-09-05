@@ -270,3 +270,47 @@ export function formatRequestPrice(
     abbreviate: false,
   })
 }
+
+export function formatUnitPrice(
+  model: PricingModel,
+  price: number,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  selectedGroup?: string
+): string {
+  const displayGroupRatio = getDisplayGroupRatio(model, selectedGroup)
+  const priceInUSD = applyRechargeRate(
+    price * displayGroupRatio,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+  return formatCurrencyFromUSD(priceInUSD, {
+    digitsLarge: 4,
+    digitsSmall: 4,
+    abbreviate: false,
+  })
+}
+
+export function formatUnitPriceForGroup(
+  price: number,
+  group: string,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  groupRatio: Record<string, number>
+): string {
+  const ratio = getConfiguredGroupRatio(groupRatio, group)
+  const priceInUSD = applyRechargeRate(
+    price * ratio,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+  return formatCurrencyFromUSD(priceInUSD, {
+    digitsLarge: 4,
+    digitsSmall: 4,
+    abbreviate: false,
+  })
+}

@@ -419,7 +419,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				}
 				if item.QuotaType == 1 {
 					modelPriceMap[item.ModelName] = item.ModelPrice
-				} else {
+				} else if item.QuotaType == 0 {
 					modelRatioMap[item.ModelName] = item.ModelRatio
 					// completionRatio 可能为 0，此时也直接赋值，保持与上游一致
 					completionRatioMap[item.ModelName] = item.CompletionRatio
