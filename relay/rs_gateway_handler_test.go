@@ -281,6 +281,36 @@ func TestRSGatewayUsageTrackerReadsResponsesSSE(t *testing.T) {
 	assert.Equal(t, 39424, usage.PromptTokensDetails.CachedTokens)
 }
 
+func TestRSGatewayUsageTrackerDetectsProtocolErrors(t *testing.T) {
+	for _, payload := range []string{
+		`{"type":"response.error","error":{"code":"upstream_stream_error"}}`,
+		`{"type":"response.failed","response":{"error":{"code":"server_error"}}}`,
+		`{"type":"error","error":{"type":"upstream_stream_error"}}`,
+		`{"error":{"code":"upstream_stream_error"}}`,
+	} {
+		tracker := newRSGatewayUsageTracker(true)
+		_, err := tracker.Write([]byte("data: " + payload + "\n\n"))
+		require.NoError(t, err)
+		assert.Nil(t, tracker.Usage())
+		assert.True(t, tracker.failed, payload)
+	}
+}
+
+func TestRSGatewayUsageTrackerDoesNotTreatInProgressAsFailure(t *testing.T) {
+	tracker := newRSGatewayUsageTracker(true)
+	_, err := tracker.Write([]byte(`data: {"type":"response.in_progress","response":{"status":"in_progress","error":null}}` + "\n\n"))
+	require.NoError(t, err)
+	assert.Nil(t, tracker.Usage())
+	assert.False(t, tracker.failed)
+}
+
+func TestShouldRefundRSGatewayPreConsumed(t *testing.T) {
+	assert.True(t, shouldRefundRSGatewayPreConsumed(nil, true, false))
+	assert.True(t, shouldRefundRSGatewayPreConsumed(nil, false, true))
+	assert.False(t, shouldRefundRSGatewayPreConsumed(nil, false, false))
+	assert.False(t, shouldRefundRSGatewayPreConsumed(&dto.Usage{TotalTokens: 1}, true, true))
+}
+
 func TestRSGatewayUsageTrackerMergesClaudeStreamUsage(t *testing.T) {
 	tracker := newRSGatewayUsageTracker(true)
 	_, _ = tracker.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7948,\"cache_read_input_tokens\":0,\"output_tokens\":0}}}\n\n"))

@@ -141,6 +141,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 	}
 	usageTracker := newRSGatewayUsageTracker(info.IsStream)
 	var imageUsage *dto.Usage
+	streamInterrupted := false
 	defer func() {
 		usage := imageUsage
 		if imageRequest != nil {
@@ -149,6 +150,10 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			}
 		} else {
 			usage = usageTracker.Usage()
+			if shouldRefundRSGatewayPreConsumed(usage, streamInterrupted, usageTracker.failed) {
+				logger.LogInfo(c, "网关流未完成且没有计费用量，退还预扣额度")
+				return
+			}
 		}
 		quota := service.PostTextConsumeQuota(c, info, usage, nil)
 		if httpResponse.Request != nil && httpResponse.Request.URL != nil {
@@ -203,6 +208,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 					info.SetFirstResponseTime()
 					_, _ = usageTracker.Write(buffer[:read])
 					if _, writeErr := c.Writer.Write(buffer[:read]); writeErr != nil {
+						streamInterrupted = true
 						logger.LogError(c, "网关响应写入失败: "+writeErr.Error())
 						return nil
 					}
@@ -210,6 +216,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 				}
 				if readErr != nil {
 					if !errors.Is(readErr, io.EOF) {
+						streamInterrupted = true
 						logger.LogError(c, "网关响应读取失败: "+readErr.Error())
 					}
 					return nil
@@ -218,9 +225,14 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		}
 	}
 	if _, err = io.Copy(io.MultiWriter(c.Writer, usageTracker), httpResponse.Body); err != nil {
+		streamInterrupted = true
 		logger.LogError(c, "网关响应转发失败: "+err.Error())
 	}
 	return nil
+}
+
+func shouldRefundRSGatewayPreConsumed(usage *dto.Usage, interrupted, failed bool) bool {
+	return usage == nil && (interrupted || failed)
 }
 
 // 图片响应复用原有计数和用量解析，避免大图被通用用量捕获上限截断。
@@ -309,6 +321,7 @@ type rsGatewayUsageTracker struct {
 	body    []byte
 	usage   dto.Usage
 	found   bool
+	failed  bool
 }
 
 func newRSGatewayUsageTracker(stream bool) *rsGatewayUsageTracker {
@@ -355,11 +368,26 @@ func (t *rsGatewayUsageTracker) mergeJSON(data []byte) {
 	if json.Unmarshal(data, &value) != nil {
 		return
 	}
+	t.failed = t.failed || rsGatewayPayloadFailed(value)
 	walkRSGatewayUsage(value, func(usage dto.Usage) {
 		normalizeRSGatewayUsage(&usage)
 		mergeRSGatewayUsage(&t.usage, &usage)
 		t.found = t.usage.TotalTokens > 0
 	})
+}
+
+func rsGatewayPayloadFailed(value interface{}) bool {
+	payload, ok := value.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	eventType, _ := payload["type"].(string)
+	switch eventType {
+	case "error", "response.error", "response.failed":
+		return true
+	}
+	errorValue, exists := payload["error"]
+	return exists && errorValue != nil
 }
 
 func (t *rsGatewayUsageTracker) Usage() *dto.Usage {
