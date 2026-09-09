@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -45,6 +46,21 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	if s.settled {
 		return nil
 	}
+	if s.relayInfo.ChannelMeta != nil && s.relayInfo.ChannelType == constant.ChannelTypeRSGateway {
+		err := model.CompleteRSGatewaySettlement(s.relayInfo.RequestId, model.RSGatewayCompletion{
+			Quota: actualQuota, PreConsumed: s.preConsumedQuota, TokenConsumed: s.tokenConsumed,
+			TokenKey: s.relayInfo.TokenKey, Funding: s.funding.Source(), SubscriptionId: s.relayInfo.SubscriptionId,
+		})
+		if err != nil {
+			return err
+		}
+		s.fundingSettled = true
+		s.settled = true
+		if s.funding.Source() == BillingSourceSubscription {
+			s.relayInfo.SubscriptionPostDelta += int64(actualQuota - s.preConsumedQuota)
+		}
+		return nil
+	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
 		s.settled = true
@@ -79,9 +95,25 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	return tokenErr
 }
 
-// Refund 退还所有预扣费，幂等安全，异步执行。
+// Refund 退还所有预扣费；网关渠道同步提交退款账本，其余渠道沿用异步退款。
 func (s *BillingSession) Refund(c *gin.Context) {
 	s.mu.Lock()
+	if s.relayInfo.ChannelMeta != nil && s.relayInfo.ChannelType == constant.ChannelTypeRSGateway {
+		defer s.mu.Unlock()
+		if s.settled || s.refunded {
+			return
+		}
+		if err := model.CompleteRSGatewaySettlement(s.relayInfo.RequestId, model.RSGatewayCompletion{
+			PreConsumed: s.preConsumedQuota, TokenConsumed: s.tokenConsumed,
+			TokenKey: s.relayInfo.TokenKey, Funding: s.funding.Source(), SubscriptionId: s.relayInfo.SubscriptionId,
+			Refunded: true,
+		}); err != nil {
+			logger.LogError(c, fmt.Sprintf("gateway refund pending, request_id=%s: %v", s.relayInfo.RequestId, err))
+			return
+		}
+		s.refunded = true
+		return
+	}
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
 		return
@@ -383,7 +415,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 		session := &BillingSession{
 			relayInfo: relayInfo,
-			funding:   &WalletFunding{userId: relayInfo.UserId},
+			funding:   &WalletFunding{userId: relayInfo.UserId, immediate: relayInfo.ChannelMeta != nil && relayInfo.ChannelType == constant.ChannelTypeRSGateway},
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr

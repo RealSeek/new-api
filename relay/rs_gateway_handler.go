@@ -23,7 +23,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -97,17 +96,33 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 	if err != nil {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
+	tokenId := info.TokenId
+	if info.IsPlayground {
+		tokenId = 0
+	}
+	if err := model.BeginRSGatewaySettlement(info.RequestId, info.UserId, tokenId, info.ChannelId); err != nil {
+		logger.LogError(c, fmt.Sprintf("gateway ledger unavailable, request_id=%s: %v", info.RequestId, err))
+		return types.NewErrorWithStatusCode(errors.New("gateway settlement unavailable"), types.ErrorCodeUpdateDataError,
+			http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+	}
+	settled := false
+	defer func() {
+		if settled {
+			return
+		}
+		if info.Billing != nil {
+			info.Billing.Refund(c)
+			return
+		}
+		if err := model.CompleteRSGatewaySettlement(info.RequestId, model.RSGatewayCompletion{Refunded: true}); err != nil {
+			logger.LogError(c, fmt.Sprintf("gateway refund pending, request_id=%s: %v", info.RequestId, err))
+		}
+	}()
 	if !priceData.FreeModel {
 		if apiErr := service.PreConsumeBilling(c, priceData.QuotaToPreConsume, info); apiErr != nil {
 			return apiErr
 		}
 	}
-	settled := false
-	defer func() {
-		if !settled && info.Billing != nil {
-			info.Billing.Refund(c)
-		}
-	}()
 	response, err := adaptor.DoRequest(c, info, common.NewReplayableBodyReader(storage))
 	if err != nil {
 		message, statusCode, clientCanceled := classifyRSGatewayRequestError(err, c.Request.Context().Err())
@@ -156,12 +171,8 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			}
 		}
 		quota := service.PostTextConsumeQuota(c, info, usage, nil)
-		if httpResponse.Request != nil && httpResponse.Request.URL != nil {
-			callbackURL := *httpResponse.Request.URL
-			callbackURL.Path = "/api/new-api-usage"
-			callbackURL.RawPath = ""
-			callbackURL.RawQuery = ""
-			reportRSGatewayUsage(callbackURL.String(), info.ApiKey, info.RequestId, quota)
+		if quota < 0 {
+			return
 		}
 		settled = true
 	}()
@@ -264,53 +275,6 @@ func classifyRSGatewayRequestError(requestErr, requestContextErr error) (string,
 		return "网关请求超时", http.StatusGatewayTimeout, false
 	}
 	return "网关连接失败", http.StatusBadGateway, false
-}
-
-func reportRSGatewayUsage(callbackURL, apiKey, requestID string, quota int) {
-	if callbackURL == "" || apiKey == "" || requestID == "" || quota < 0 {
-		return
-	}
-	payload, err := json.Marshal(map[string]interface{}{
-		"request_id": requestID,
-		"quota":      quota,
-	})
-	if err != nil {
-		return
-	}
-	client := service.GetHttpClient()
-	if client == nil {
-		client = http.DefaultClient
-	}
-	gopool.Go(func() {
-		var lastErr error
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				time.Sleep(time.Duration(attempt*attempt) * 250 * time.Millisecond)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(payload))
-			if reqErr != nil {
-				cancel()
-				lastErr = reqErr
-				break
-			}
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-			req.Header.Set("Content-Type", "application/json")
-			resp, requestErr := client.Do(req)
-			if requestErr == nil {
-				_ = resp.Body.Close()
-				if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-					cancel()
-					return
-				}
-				lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
-			} else {
-				lastErr = requestErr
-			}
-			cancel()
-		}
-		logger.LogError(context.Background(), fmt.Sprintf("网关结算回写失败: %v", lastErr))
-	})
 }
 
 const rsGatewayUsageCaptureLimit = 8 << 20

@@ -413,6 +413,7 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
+// PostTextConsumeQuota 返回记录的额度；网关资金事务失败时返回 -1，调用方保留退款路径。
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) int {
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
@@ -480,14 +481,19 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			extraContent = append(extraContent, "上游未返回计费信息且本地无法估算输入 Token，按预扣额度结算")
 			logger.LogWarn(ctx, fmt.Sprintf("missing usage without local token estimate, settling pre-consumed quota, userId %d, channelId %d, tokenId %d, model %s, pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, summary.Quota))
 		}
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
-		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
 	}
 
 	if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
+		if relayInfo.ChannelMeta != nil && relayInfo.ChannelType == constant.ChannelTypeRSGateway {
+			return -1
+		}
 	}
 
+	if summary.hasBillableUsage() {
+		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
+		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
+	}
 	logModel := summary.ModelName
 	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
 		logModel = "gpt-4-gizmo-*"

@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -90,7 +89,7 @@ func TestRSGatewayImageResponse(t *testing.T) {
 func TestRSGatewayImageSettlementWithoutUsage(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.RSGatewaySettlement{}))
 	previousDB := model.DB
 	previousBatch, previousLog, previousRedis := common.BatchUpdateEnabled, common.LogConsumeEnabled, common.RedisEnabled
 	model.DB = db
@@ -114,6 +113,10 @@ func TestRSGatewayImageSettlementWithoutUsage(t *testing.T) {
 		UsePrice: true, ModelPrice: 0.08,
 		GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1},
 	}
+	info.RequestId = "gateway-image-settlement"
+	info.UserSetting.BillingPreference = "wallet_only"
+	require.NoError(t, model.BeginRSGatewaySettlement(info.RequestId, info.UserId, info.TokenId, info.ChannelId))
+	require.Nil(t, service.PreConsumeBilling(c, 0, info))
 	// 复现信任用户实际预扣为零、上游也不返回 usage 的情况。
 	response := &http.Response{
 		StatusCode: http.StatusOK,
@@ -135,6 +138,10 @@ func TestRSGatewayImageSettlementWithoutUsage(t *testing.T) {
 	assert.Equal(t, wantQuota, user.UsedQuota)
 	assert.Equal(t, initialQuota-wantQuota, token.RemainQuota)
 	assert.Equal(t, int64(wantQuota), channel.UsedQuota)
+	var ledger model.RSGatewaySettlement
+	require.NoError(t, db.First(&ledger, "request_id = ?", info.RequestId).Error)
+	assert.Equal(t, "settled", ledger.State)
+	assert.Equal(t, int64(wantQuota), ledger.Quota)
 }
 
 func TestRSGatewayImagePricingMetadata(t *testing.T) {
@@ -216,27 +223,6 @@ func TestClassifyRSGatewayRequestError(t *testing.T) {
 			assert.Equal(t, test.wantStatus, statusCode)
 			assert.Equal(t, test.wantCanceled, clientCanceled)
 		})
-	}
-}
-
-func TestReportRSGatewayUsage(t *testing.T) {
-	received := make(chan map[string]interface{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "Bearer gateway-key", r.Header.Get("Authorization"))
-		var payload map[string]interface{}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-		received <- payload
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	reportRSGatewayUsage(server.URL+"/api/new-api-usage", "gateway-key", "request-42", 1250)
-	select {
-	case payload := <-received:
-		assert.Equal(t, "request-42", payload["request_id"])
-		assert.Equal(t, float64(1250), payload["quota"])
-	case <-time.After(2 * time.Second):
-		t.Fatal("等待网关结算回写超时")
 	}
 }
 
