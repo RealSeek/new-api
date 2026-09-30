@@ -109,10 +109,13 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 
 	// 提取 remix 参数（时长、分辨率 → OtherRatios）
 	if info.Action == constant.TaskActionRemix {
-		if originTask.PrivateData.BillingContext != nil {
-			// 新的 remix 逻辑：直接从原始任务的 BillingContext 中提取 OtherRatios（如果存在）
-			for s, f := range originTask.PrivateData.BillingContext.OtherRatios {
-				info.PriceData.AddOtherRatio(s, f)
+		if bc := originTask.PrivateData.BillingContext; bc != nil {
+			// 新的 remix 逻辑：直接从原始任务的 BillingContext 中提取 OtherRatios（如果存在）。
+			// 按次计费的任务不复制乘数：重新提交同样只收一次固定价格。
+			if !bc.PerCallBilling {
+				for s, f := range bc.OtherRatios {
+					info.PriceData.AddOtherRatio(s, f)
+				}
 			}
 		} else {
 			// 旧的 remix 逻辑：直接从 task data 解析 seconds 和 size（如果存在）
@@ -187,21 +190,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	info.PriceData = priceData
 
-	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
+	// 5. 计费估算：汇总计费乘数（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
 	isPerSecond := billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModePerSecond
-	if !isPerSecond {
-		if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
-			for k, v := range estimatedRatios {
-				info.PriceData.AddOtherRatio(k, v)
-			}
-		}
-	} else {
-		if req, reqErr := relaycommon.GetTaskRequest(c); reqErr == nil {
-			applyPerSecondBilling(info, req)
-		}
-	}
+	applyTaskOtherRatios(c, adaptor, info, isPerSecond)
 
 	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）
 	if isPerSecond || !common.StringsContains(constant.TaskPricePatches, modelName) {
@@ -282,9 +275,31 @@ func applyPerSecondBilling(info *relaycommon.RelayInfo, req relaycommon.TaskSubm
 	if raw, ok := req.Metadata["resolution"].(string); ok && raw != "" {
 		resolution = relaycommon.NormalizeVideoResolution(raw)
 	}
+	// 基准价与 ModelPriceHelperPerCall 的取法一致（"default" 分辨率价），
+	// 这样 resolution_price 比例 × 基准价 恰好等于该分辨率的实际单价；
+	// default_price=0（只配分辨率价）时也不会丢失分辨率加价。
+	basePrice, _ := ratio_setting.GetVideoPrice(info.OriginModelName, "default")
 	resolutionPrice, hasResolutionPrice := ratio_setting.GetVideoPrice(info.OriginModelName, resolution)
-	if hasResolutionPrice && config.DefaultPrice > 0 {
-		info.PriceData.AddOtherRatio("resolution_price", resolutionPrice/config.DefaultPrice)
+	if hasResolutionPrice && basePrice > 0 {
+		info.PriceData.AddOtherRatio("resolution_price", resolutionPrice/basePrice)
+	}
+}
+
+// applyTaskOtherRatios 计算任务提交时的计费乘数。
+// 按秒计费模型使用 VideoPrice 配置；按次计费（固定价格）模型一次调用只收一次
+// 固定价格，不叠加适配器估算的时长/分辨率乘数；其余模型沿用适配器估算。
+func applyTaskOtherRatios(c *gin.Context, adaptor channel.TaskAdaptor, info *relaycommon.RelayInfo, isPerSecond bool) {
+	if isPerSecond {
+		if req, reqErr := relaycommon.GetTaskRequest(c); reqErr == nil {
+			applyPerSecondBilling(info, req)
+		}
+		return
+	}
+	if info.PriceData.UsePrice {
+		return
+	}
+	for k, v := range adaptor.EstimateBilling(c, info) {
+		info.PriceData.AddOtherRatio(k, v)
 	}
 }
 
