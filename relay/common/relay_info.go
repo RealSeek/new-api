@@ -93,6 +93,9 @@ type RelayInfo struct {
 	StartTime         time.Time
 	FirstResponseTime time.Time
 	isFirstResponse   bool
+	// UpstreamFirstByteMs 是网关直通通道上报的上游首字节耗时（毫秒，来自网关响应头），
+	// 0 表示未上报。日志里的“首字”优先采用该值，端到端实测值仅管理员可见。
+	UpstreamFirstByteMs int64
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool

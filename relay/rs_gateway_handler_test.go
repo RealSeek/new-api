@@ -247,6 +247,46 @@ func TestRSGatewayFirstResponseTimeOnlyRecordsOnce(t *testing.T) {
 	assert.Equal(t, first, info.FirstResponseTime)
 }
 
+func TestParseUpstreamFirstByteMs(t *testing.T) {
+	tests := []struct {
+		name   string
+		value  string
+		wantMs int64
+	}{
+		{name: "正常值", value: "29528", wantMs: 29528},
+		{name: "带空格", value: " 1200 ", wantMs: 1200},
+		{name: "缺失", value: "", wantMs: 0},
+		{name: "非数字", value: "abc", wantMs: 0},
+		{name: "零值", value: "0", wantMs: 0},
+		{name: "负值", value: "-1", wantMs: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header := http.Header{}
+			if test.value != "" {
+				header.Set(rsGatewayUpstreamFirstByteHeader, test.value)
+			}
+			assert.Equal(t, test.wantMs, parseUpstreamFirstByteMs(header))
+		})
+	}
+}
+
+// 网关上报的上游计时头仅用于平台内部展示，不能透传给客户端。
+func TestCopyRSGatewayResponseHeadersHidesInternalTimingHeader(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	header := http.Header{
+		"Content-Type":                  {"text/event-stream"},
+		"X-Request-Id":                  {"gw-123"},
+		rsGatewayUpstreamFirstByteHeader: {"29528"},
+	}
+
+	copyRSGatewayResponseHeaders(c, header)
+
+	assert.Equal(t, "text/event-stream", c.Writer.Header().Get("Content-Type"))
+	assert.Equal(t, "gw-123", c.Writer.Header().Get("X-Request-Id"))
+	assert.Empty(t, c.Writer.Header().Get(rsGatewayUpstreamFirstByteHeader))
+}
+
 func TestRSGatewayUsageTrackerReadsResponsesSSE(t *testing.T) {
 	tracker := newRSGatewayUsageTracker(true)
 	chunks := []string{

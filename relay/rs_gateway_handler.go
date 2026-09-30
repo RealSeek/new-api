@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,51 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
+
+// rsGatewayUpstreamFirstByteHeader 是网关随响应头上报的上游首字节耗时（毫秒），
+// 仅用于平台内部计时，不向客户端转发。
+const rsGatewayUpstreamFirstByteHeader = "x-upstream-first-byte-ms"
+
+// parseUpstreamFirstByteMs 解析网关上报的上游首字节耗时；缺失、非法或非正值返回 0。
+func parseUpstreamFirstByteMs(header http.Header) int64 {
+	raw := strings.TrimSpace(header.Get(rsGatewayUpstreamFirstByteHeader))
+	if raw == "" {
+		return 0
+	}
+	ms, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || ms <= 0 {
+		return 0
+	}
+	return ms
+}
+
+// copyRSGatewayResponseHeaders 将网关响应头透传给客户端，
+// 跳过连接类头与仅供平台内部使用的计时头，避免暴露上游信息。
+func copyRSGatewayResponseHeaders(c *gin.Context, header http.Header) {
+	connectionHeaders := make(map[string]struct{})
+	for _, name := range strings.Split(header.Get("Connection"), ",") {
+		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+			connectionHeaders[name] = struct{}{}
+		}
+	}
+	for name, values := range header {
+		lowerName := strings.ToLower(name)
+		if _, skip := connectionHeaders[lowerName]; skip {
+			continue
+		}
+		switch lowerName {
+		case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+			"te", "trailer", "transfer-encoding", "upgrade":
+			continue
+		case rsGatewayUpstreamFirstByteHeader:
+			continue
+		}
+		c.Writer.Header().Del(name)
+		for _, value := range values {
+			c.Writer.Header().Add(name, value)
+		}
+	}
+}
 
 // RSGatewayHelper 将已完成鉴权和渠道选择的请求原样交给网关。
 func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
@@ -154,6 +200,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		recordError(newAPIError.MaskSensitiveErrorWithStatusCode(), newAPIError.StatusCode)
 		return newAPIError
 	}
+	info.UpstreamFirstByteMs = parseUpstreamFirstByteMs(httpResponse.Header)
 	usageTracker := newRSGatewayUsageTracker(info.IsStream)
 	var imageUsage *dto.Usage
 	streamInterrupted := false
@@ -185,27 +232,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		return apiErr
 	}
 
-	connectionHeaders := make(map[string]struct{})
-	for _, name := range strings.Split(httpResponse.Header.Get("Connection"), ",") {
-		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
-			connectionHeaders[name] = struct{}{}
-		}
-	}
-	for name, values := range httpResponse.Header {
-		lowerName := strings.ToLower(name)
-		if _, skip := connectionHeaders[lowerName]; skip {
-			continue
-		}
-		switch lowerName {
-		case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-			"te", "trailer", "transfer-encoding", "upgrade":
-			continue
-		}
-		c.Writer.Header().Del(name)
-		for _, value := range values {
-			c.Writer.Header().Add(name, value)
-		}
-	}
+	copyRSGatewayResponseHeaders(c, httpResponse.Header)
 	c.Writer.WriteHeader(httpResponse.StatusCode)
 
 	if strings.HasPrefix(strings.ToLower(httpResponse.Header.Get("Content-Type")), "text/event-stream") {

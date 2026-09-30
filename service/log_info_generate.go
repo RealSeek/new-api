@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -79,7 +80,8 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
-	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
+	clientFrtMs := float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
+	other["frt"] = clientFrtMs
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
 	}
@@ -95,6 +97,14 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	adminInfo := make(map[string]interface{})
 	adminInfo["use_channel"] = ctx.GetStringSlice("use_channel")
+	// 网关直通通道会随响应头上报上游首字节耗时：对外统一展示上游数值，
+	// 端到端实测值与网关缓冲耗时只放在 admin_info（普通用户不可见）。
+	if relayInfo.UpstreamFirstByteMs > 0 {
+		other["frt"] = float64(relayInfo.UpstreamFirstByteMs)
+		adminInfo["frt_client_ms"] = clientFrtMs
+		adminInfo["frt_gateway_buffer_ms"] = clientFrtMs - float64(relayInfo.UpstreamFirstByteMs)
+	}
+	adminInfo["duration_ms"] = time.Since(relayInfo.StartTime).Milliseconds()
 	isMultiKey := common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey)
 	if isMultiKey {
 		adminInfo["is_multi_key"] = true

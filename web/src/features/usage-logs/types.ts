@@ -142,6 +142,11 @@ export interface LogOtherData {
       original: number
       clamped: number
     }
+    // 网关直通通道的耗时拆分（admin only）：frt 对外展示的是上游首字节，
+    // frt_client_ms 为端到端实测首字节，frt_gateway_buffer_ms 为网关预缓冲差额。
+    frt_client_ms?: number
+    frt_gateway_buffer_ms?: number
+    duration_ms?: number
   }
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.

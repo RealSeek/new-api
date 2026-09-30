@@ -610,6 +610,17 @@ export function DetailsDialog(props: DetailsDialogProps) {
     other?.request_path,
     conversionChain
   )
+  // 网关直通请求的耗时拆分仅管理员可见：对外首字已换成上游数值，
+  // 这里保留端到端实测值与网关预缓冲差额，供排查上游性能。
+  const latencyBreakdown =
+    props.isAdmin && other?.admin_info?.frt_client_ms != null
+      ? {
+          upstreamMs: other.frt ?? other.admin_info.frt_client_ms,
+          clientMs: other.admin_info.frt_client_ms,
+          bufferMs: other.admin_info.frt_gateway_buffer_ms,
+          durationMs: other.admin_info.duration_ms,
+        }
+      : null
 
   const useChannel = other?.admin_info?.use_channel
   const channelChain =
@@ -784,6 +795,36 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 </div>
               </div>
             </div>
+          </DetailSection>
+        )}
+
+        {/* Latency breakdown (admin only, gateway passthrough timings) */}
+        {latencyBreakdown && (
+          <DetailSection label={t('Latency breakdown')}>
+            <DetailRow
+              label={t('Upstream first token')}
+              value={formatUseTime(latencyBreakdown.upstreamMs / 1000)}
+              mono
+            />
+            <DetailRow
+              label={t('End-to-end first token')}
+              value={formatUseTime(latencyBreakdown.clientMs / 1000)}
+              mono
+            />
+            {latencyBreakdown.bufferMs != null && (
+              <DetailRow
+                label={t('Gateway buffering')}
+                value={formatUseTime(latencyBreakdown.bufferMs / 1000)}
+                mono
+              />
+            )}
+            {latencyBreakdown.durationMs != null && (
+              <DetailRow
+                label={t('Exact duration')}
+                value={`${(latencyBreakdown.durationMs / 1000).toFixed(3)}s`}
+                mono
+              />
+            )}
           </DetailSection>
         )}
 
