@@ -211,3 +211,22 @@ func TestNormalizeVideoResolution(t *testing.T) {
 		assert.Equal(t, expected, NormalizeVideoResolution(input))
 	}
 }
+
+func TestNormalizeImageResolution(t *testing.T) {
+	tests := map[string]string{
+		"1k":        "1k",
+		"2K":        "2k",
+		"4k":        "4k",
+		"512x512":   "1k",
+		"1024x1024": "1k",
+		"1536x1024": "2k",
+		"1024x1536": "2k",
+		"2048x2048": "4k",
+		"4096x4096": "4k",
+		"custom":    "",
+		"":          "",
+	}
+	for input, expected := range tests {
+		assert.Equal(t, expected, NormalizeImageResolution(input), "input: %s", input)
+	}
+}

@@ -51,7 +51,7 @@ import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { useMediaQuery } from '@/hooks'
 
 import { safeJsonParse } from '../utils/json-parser'
-import type { PricingMode } from './model-pricing-core'
+import type { ImagePriceConfig, PricingMode } from './model-pricing-core'
 import {
   ModelPricingEditorPanel,
   type ModelPricingEditorPanelHandle,
@@ -69,6 +69,7 @@ import { buildModelRatioColumns } from './model-ratio-table-columns'
 type ModelRatioVisualEditorProps = {
   savedModelPrice: string
   savedVideoPrice: string
+  savedImagePrice: string
   savedModelRatio: string
   savedCacheRatio: string
   savedCreateCacheRatio: string
@@ -80,6 +81,7 @@ type ModelRatioVisualEditorProps = {
   savedBillingExpr: string
   modelPrice: string
   videoPrice: string
+  imagePrice: string
   modelRatio: string
   cacheRatio: string
   createCacheRatio: string
@@ -110,6 +112,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
   {
     savedModelPrice,
     savedVideoPrice,
+    savedImagePrice,
     savedModelRatio,
     savedCacheRatio,
     savedCreateCacheRatio,
@@ -121,6 +124,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedBillingExpr,
     modelPrice,
     videoPrice,
+    imagePrice,
     modelRatio,
     cacheRatio,
     createCacheRatio,
@@ -196,6 +200,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     const savedRows = buildModelSnapshots({
       modelPrice: savedModelPrice,
       videoPrice: savedVideoPrice,
+      imagePrice: savedImagePrice,
       modelRatio: savedModelRatio,
       cacheRatio: savedCacheRatio,
       createCacheRatio: savedCreateCacheRatio,
@@ -209,6 +214,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     const draftRows = buildModelSnapshots({
       modelPrice,
       videoPrice,
+      imagePrice,
       modelRatio,
       cacheRatio,
       createCacheRatio,
@@ -253,6 +259,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     filterMode,
     savedModelPrice,
     savedVideoPrice,
+    savedImagePrice,
     savedModelRatio,
     savedCacheRatio,
     savedCreateCacheRatio,
@@ -264,6 +271,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedBillingExpr,
     modelPrice,
     videoPrice,
+    imagePrice,
     modelRatio,
     cacheRatio,
     createCacheRatio,
@@ -326,6 +334,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         billingExpr: editableModel.billingExpr,
         requestRuleExpr: editableModel.requestRuleExpr,
         videoPrice: editableModel.videoPrice,
+        imagePrice: editableModel.imagePrice,
       })
       setEditorOpen(true)
       if (isMobile) setSheetOpen(true)
@@ -400,6 +409,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         fallback: {},
         silent: true,
       })
+      const imagePriceMap = safeJsonParse<Record<string, ImagePriceConfig>>(
+        imagePrice,
+        { fallback: {}, silent: true }
+      )
 
       delete priceMap[name]
       delete ratioMap[name]
@@ -412,6 +425,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       delete billingModeMap[name]
       delete billingExprMap[name]
       delete videoPriceMap[name]
+      delete imagePriceMap[name]
 
       onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
       onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
@@ -433,6 +447,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         JSON.stringify(billingExprMap, null, 2)
       )
       onChange('VideoPrice', JSON.stringify(videoPriceMap, null, 2))
+      onChange('ImagePrice', JSON.stringify(imagePriceMap, null, 2))
 
       if (editData?.name === name) {
         setEditData(null)
@@ -452,6 +467,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       videoPrice,
+      imagePrice,
       onChange,
       editData,
     ]
@@ -547,6 +563,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         fallback: {},
         silent: true,
       })
+      const imagePriceMap = safeJsonParse<Record<string, ImagePriceConfig>>(
+        imagePrice,
+        { fallback: {}, silent: true }
+      )
 
       const setIfPresent = (
         target: Record<string, number>,
@@ -570,6 +590,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         delete billingModeMap[name]
         delete billingExprMap[name]
         delete videoPriceMap[name]
+        delete imagePriceMap[name]
 
         if (data.billingMode === 'per-second' && data.videoPrice) {
           videoPriceMap[name] = data.videoPrice
@@ -597,6 +618,9 @@ const ModelRatioVisualEditorComponent = forwardRef<
           setIfPresent(audioCompletionMap, name, data.audioCompletionRatio)
         } else if (data.price && data.price !== '') {
           setIfPresent(priceMap, name, data.price)
+          if (data.imagePrice && Object.keys(data.imagePrice).length > 0) {
+            imagePriceMap[name] = data.imagePrice
+          }
         } else {
           setIfPresent(ratioMap, name, data.ratio)
           setIfPresent(cacheMap, name, data.cacheRatio)
@@ -628,6 +652,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         JSON.stringify(billingExprMap, null, 2)
       )
       onChange('VideoPrice', JSON.stringify(videoPriceMap, null, 2))
+      onChange('ImagePrice', JSON.stringify(imagePriceMap, null, 2))
     },
     [
       modelPrice,
@@ -641,6 +666,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       videoPrice,
+      imagePrice,
       onChange,
     ]
   )
@@ -871,6 +897,7 @@ export const ModelRatioVisualEditor = memo(
     return (
       prevProps.savedModelPrice === nextProps.savedModelPrice &&
       prevProps.savedVideoPrice === nextProps.savedVideoPrice &&
+      prevProps.savedImagePrice === nextProps.savedImagePrice &&
       prevProps.savedModelRatio === nextProps.savedModelRatio &&
       prevProps.savedCacheRatio === nextProps.savedCacheRatio &&
       prevProps.savedCreateCacheRatio === nextProps.savedCreateCacheRatio &&
@@ -883,6 +910,7 @@ export const ModelRatioVisualEditor = memo(
       prevProps.savedBillingExpr === nextProps.savedBillingExpr &&
       prevProps.modelPrice === nextProps.modelPrice &&
       prevProps.videoPrice === nextProps.videoPrice &&
+      prevProps.imagePrice === nextProps.imagePrice &&
       prevProps.modelRatio === nextProps.modelRatio &&
       prevProps.cacheRatio === nextProps.cacheRatio &&
       prevProps.createCacheRatio === nextProps.createCacheRatio &&

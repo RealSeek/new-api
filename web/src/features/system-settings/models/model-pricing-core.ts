@@ -59,6 +59,22 @@ export type VideoResolutionPriceDraft = {
   price: string
 }
 
+export const IMAGE_PRICE_TIERS = ['1k', '2k', '4k'] as const
+
+export type ImagePriceTier = (typeof IMAGE_PRICE_TIERS)[number]
+
+/** 按次图片模型的分辨率档位价格（USD / 张）。 */
+export type ImagePriceConfig = Partial<Record<ImagePriceTier, number>>
+
+export const EMPTY_IMAGE_TIER_PRICES: Record<ImagePriceTier, string> = {
+  '1k': '',
+  '2k': '',
+  '4k': '',
+}
+
+export const hasImagePrice = (config?: ImagePriceConfig) =>
+  !!config && Object.keys(config).length > 0
+
 export type LaneKey =
   | 'completion'
   | 'cache'
@@ -81,6 +97,7 @@ export type ModelRatioData = {
   billingExpr?: string
   requestRuleExpr?: string
   videoPrice?: VideoPriceConfig
+  imagePrice?: ImagePriceConfig
 }
 
 export type PreviewRow = {

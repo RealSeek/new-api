@@ -33,6 +33,7 @@ const emptyRatios = {
   audioRatio: '{}',
   audioCompletionRatio: '{}',
   billingExpr: '{}',
+  imagePrice: '{}',
 }
 
 describe('按秒模型定价快照', () => {
@@ -62,6 +63,27 @@ describe('按秒模型定价快照', () => {
     })
     expect(getPriceSummary(snapshots[0], (key) => key)).toBe(
       '480P $0.38/second · 720P $0.41/second'
+    )
+  })
+})
+
+describe('按次图片模型定价快照', () => {
+  test('恢复 1K/2K/4K 图片价格并展示摘要', () => {
+    const snapshots = buildModelSnapshots({
+      ...emptyRatios,
+      billingMode: '{}',
+      imagePrice: JSON.stringify({
+        'gpt-image-2': { '1k': 0.05, '2k': 0.1, '4k': 0.2 },
+      }),
+    })
+
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]).toMatchObject({
+      name: 'gpt-image-2',
+      imagePrice: { '1k': 0.05, '2k': 0.1, '4k': 0.2 },
+    })
+    expect(getPriceSummary(snapshots[0], (key) => key)).toBe(
+      '1K $0.05/image · 2K $0.1/image · 4K $0.2/image'
     )
   })
 })

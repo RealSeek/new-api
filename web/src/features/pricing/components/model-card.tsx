@@ -30,7 +30,11 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  hasImagePrices,
+  isPerSecondModel,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice, formatUnitPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
@@ -56,6 +60,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
   const isPerSecond = isPerSecondModel(props.model)
+  const isImagePriceModel = hasImagePrices(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
@@ -164,6 +169,40 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               )}
               <span className='text-muted-foreground ml-1 font-sans font-normal'>
                 / {t('second')}
+              </span>
+            </span>
+          </span>
+        ))}
+      </div>
+    )
+  } else if (isImagePriceModel) {
+    const prices = Object.entries(props.model.image_price || {})
+    priceSummary = (
+      <div
+        role='list'
+        aria-label={t('Resolution prices')}
+        className='flex flex-col gap-y-0.5'
+      >
+        {prices.map(([resolution, price]) => (
+          <span
+            key={resolution}
+            role='listitem'
+            className='grid grid-cols-[3.5rem_auto] items-baseline gap-1 whitespace-nowrap'
+          >
+            <span className='text-foreground font-mono text-xs font-semibold'>
+              {resolution.toUpperCase()}
+            </span>
+            <span className='text-foreground font-mono font-semibold'>
+              {formatUnitPrice(
+                props.model,
+                price,
+                showRechargePrice,
+                priceRate,
+                usdExchangeRate,
+                props.selectedGroup
+              )}
+              <span className='text-muted-foreground ml-1 font-sans font-normal'>
+                / {t('image')}
               </span>
             </span>
           </span>

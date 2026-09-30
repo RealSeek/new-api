@@ -32,6 +32,7 @@ import { useTranslation } from 'react-i18next'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Field,
   FieldDescription,
@@ -64,16 +65,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 
 import {
+  EMPTY_IMAGE_TIER_PRICES,
   EMPTY_LANE_ENABLED,
   EMPTY_LANE_PRICES,
+  IMAGE_PRICE_TIERS,
   buildPreviewRows,
   createInitialLaneState,
   createModelPricingSchema,
+  hasImagePrice,
   hasValue,
   laneConfigs,
   numericDraftRegex,
   ratioFieldByLane,
   toNumberOrNull,
+  type ImagePriceConfig,
+  type ImagePriceTier,
   type LaneKey,
   type ModelPricingFormValues,
   type ModelRatioData,
@@ -164,6 +170,10 @@ export const ModelPricingEditorPanel = forwardRef<
   const [videoResolutionPrices, setVideoResolutionPrices] = useState<
     VideoResolutionPriceDraft[]
   >([])
+  const [imageModelEnabled, setImageModelEnabled] = useState(false)
+  const [imageTierPrices, setImageTierPrices] = useState<
+    Record<ImagePriceTier, string>
+  >({ ...EMPTY_IMAGE_TIER_PRICES })
   const [editorReloadToken, setEditorReloadToken] = useState(0)
   const isEditMode = !!editData
 
@@ -222,6 +232,13 @@ export const ModelPricingEditorPanel = forwardRef<
           })
         )
       )
+      const imagePrice = editData.imagePrice
+      setImageModelEnabled(hasImagePrice(imagePrice))
+      setImageTierPrices({
+        '1k': imagePrice?.['1k']?.toString() || '',
+        '2k': imagePrice?.['2k']?.toString() || '',
+        '4k': imagePrice?.['4k']?.toString() || '',
+      })
     } else {
       form.reset({
         name: '',
@@ -242,6 +259,8 @@ export const ModelPricingEditorPanel = forwardRef<
       setVideoBillingStep('1')
       setVideoMinimumDuration('1')
       setVideoResolutionPrices([])
+      setImageModelEnabled(false)
+      setImageTierPrices({ ...EMPTY_IMAGE_TIER_PRICES })
     }
 
     setPromptPrice(nextLaneState.promptPrice)
@@ -373,6 +392,16 @@ export const ModelPricingEditorPanel = forwardRef<
 
   const watchedValues = form.watch()
   const previewRows = useMemo<PreviewRow[]>(() => {
+    if (pricingMode === 'per-request' && imageModelEnabled) {
+      const rows = IMAGE_PRICE_TIERS.filter(
+        (tier) => imageTierPrices[tier].trim() !== ''
+      ).map((tier) => ({
+        key: tier,
+        label: tier.toUpperCase(),
+        value: `$${imageTierPrices[tier]} / ${t('image')}`,
+      }))
+      if (rows.length > 0) return rows
+    }
     if (pricingMode === 'per-second') {
       const rows = videoResolutionPrices
         .filter((row) => row.resolution.trim() && row.price)
@@ -405,6 +434,8 @@ export const ModelPricingEditorPanel = forwardRef<
     )
   }, [
     billingExpr,
+    imageModelEnabled,
+    imageTierPrices,
     laneEnabled,
     lanePrices,
     pricingMode,
@@ -463,6 +494,26 @@ export const ModelPricingEditorPanel = forwardRef<
 
   const validatePricingValues = useCallback(() => {
     form.clearErrors('price')
+    if (pricingMode === 'per-request' && imageModelEnabled) {
+      const fixedPrice = Number(form.getValues().price)
+      if (!Number.isFinite(fixedPrice) || fixedPrice <= 0) {
+        form.setError('price', {
+          message: t(
+            'A fixed price is required as the fallback for image resolution pricing.'
+          ),
+        })
+        return false
+      }
+      const hasTierPrice = IMAGE_PRICE_TIERS.some(
+        (tier) => Number(imageTierPrices[tier]) > 0
+      )
+      if (!hasTierPrice) {
+        form.setError('price', {
+          message: t('Enter at least one image resolution price.'),
+        })
+        return false
+      }
+    }
     if (pricingMode === 'per-second') {
       const hasResolutionPrices = videoResolutionPrices.some(
         (row) => row.resolution.trim() && row.price.trim()
@@ -538,6 +589,8 @@ export const ModelPricingEditorPanel = forwardRef<
     return true
   }, [
     form,
+    imageModelEnabled,
+    imageTierPrices,
     laneEnabled,
     lanePrices,
     pricingMode,
@@ -582,6 +635,23 @@ export const ModelPricingEditorPanel = forwardRef<
         }
       }
 
+      if (pricingMode === 'per-request' && imageModelEnabled) {
+        const tiers: ImagePriceConfig = {}
+        for (const tier of IMAGE_PRICE_TIERS) {
+          const parsed = Number(imageTierPrices[tier])
+          if (
+            imageTierPrices[tier].trim() !== '' &&
+            Number.isFinite(parsed) &&
+            parsed > 0
+          ) {
+            tiers[tier] = parsed
+          }
+        }
+        if (Object.keys(tiers).length > 0) {
+          data.imagePrice = tiers
+        }
+      }
+
       if (pricingMode === 'tiered_expr') {
         data.billingExpr = billingExpr
         data.requestRuleExpr = requestRuleExpr
@@ -591,6 +661,8 @@ export const ModelPricingEditorPanel = forwardRef<
     },
     [
       billingExpr,
+      imageModelEnabled,
+      imageTierPrices,
       pricingMode,
       requestRuleExpr,
       videoBillingStep,
@@ -777,6 +849,62 @@ export const ModelPricingEditorPanel = forwardRef<
                           </FormItem>
                         )}
                       />
+                      <div className='space-y-3'>
+                        <div className='flex items-center gap-2'>
+                          <Checkbox
+                            id='image-model-toggle'
+                            checked={imageModelEnabled}
+                            onCheckedChange={(checked) =>
+                              setImageModelEnabled(checked === true)
+                            }
+                          />
+                          <label
+                            htmlFor='image-model-toggle'
+                            className='text-sm font-medium'
+                          >
+                            {t('Image model (price by resolution)')}
+                          </label>
+                        </div>
+                        {imageModelEnabled && (
+                          <div className='space-y-3'>
+                            {IMAGE_PRICE_TIERS.map((tier) => (
+                              <Field key={tier}>
+                                <FieldLabel>{tier.toUpperCase()}</FieldLabel>
+                                <InputGroup>
+                                  <InputGroupAddon>$</InputGroupAddon>
+                                  <InputGroupInput
+                                    inputMode='decimal'
+                                    placeholder='0.05'
+                                    value={imageTierPrices[tier]}
+                                    onChange={(event) => {
+                                      const value = event.target.value
+                                      if (numericDraftRegex.test(value)) {
+                                        setImageTierPrices((prices) => ({
+                                          ...prices,
+                                          [tier]: value,
+                                        }))
+                                      }
+                                    }}
+                                  />
+                                  <InputGroupAddon align='inline-end'>
+                                    {t('per image')}
+                                  </InputGroupAddon>
+                                </InputGroup>
+                              </Field>
+                            ))}
+                            <FieldDescription>
+                              {t(
+                                'Unconfigured resolutions use the fixed price above.'
+                              )}
+                            </FieldDescription>
+                          </div>
+                        )}
+                      </div>
+                      {form.formState.errors.price?.message && (
+                        <p className='text-destructive text-sm' role='alert'>
+                          {form.formState.errors.price.message}
+                        </p>
+                      )}
                     </FieldGroup>
                   </TabsContent>
 

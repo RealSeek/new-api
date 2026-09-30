@@ -124,7 +124,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}
 		preConsumedQuota = quota
 	} else {
-		if meta.ImagePriceRatio != 0 {
+		// 图片模型按分辨率档位（1k/2k/4k）计价时，直接用对应档位的单张价格。
+		if tierPrice, ok := ratio_setting.GetImagePrice(info.OriginModelName, relaycommon.NormalizeImageResolution(meta.ImageSize)); ok {
+			modelPrice = tierPrice
+		} else if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
 		}
 	}

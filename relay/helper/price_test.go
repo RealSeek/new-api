@@ -299,3 +299,62 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 	require.Nil(t, info.Billing)
 }
+
+func TestModelPriceHelperUsesImageResolutionPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedImagePrices := ratio_setting.ImagePrice2JSONString()
+	savedModelPrices := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateImagePriceByJSONString(savedImagePrices))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
+	})
+
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"image-tiered":0.05}`))
+	require.NoError(t, ratio_setting.UpdateImagePriceByJSONString(`{"image-tiered":{"1k":0.05,"2k":0.1,"4k":0.2}}`))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "image-tiered",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 0, &types.TokenCountMeta{
+		ImageSize:     "2048x2048",
+		BillingRatios: map[string]float64{"n": 2},
+	})
+
+	require.NoError(t, err)
+	// 2048x2048 命中 4k 档位，单价 0.2 USD，按 2 张预扣
+	require.Equal(t, 0.2, priceData.ModelPrice)
+	require.Equal(t, common.QuotaPerUnit/5*2, priceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperFallsBackToFixedPriceForUnconfiguredImageResolution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedImagePrices := ratio_setting.ImagePrice2JSONString()
+	savedModelPrices := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateImagePriceByJSONString(savedImagePrices))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
+	})
+
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"image-tiered-fallback":0.05}`))
+	require.NoError(t, ratio_setting.UpdateImagePriceByJSONString(`{"image-tiered-fallback":{"4k":0.2}}`))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "image-tiered-fallback",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 0, &types.TokenCountMeta{ImageSize: "1024x1024"})
+
+	require.NoError(t, err)
+	// 1k 档位未配置价格，回退到固定价 0.05 USD
+	require.Equal(t, 0.05, priceData.ModelPrice)
+	require.Equal(t, common.QuotaPerUnit/20, priceData.QuotaToPreConsume)
+}

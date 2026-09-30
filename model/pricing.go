@@ -36,6 +36,7 @@ type Pricing struct {
 	BillingMode            string                          `json:"billing_mode,omitempty"`
 	BillingExpr            string                          `json:"billing_expr,omitempty"`
 	VideoPrice             *ratio_setting.VideoPriceConfig `json:"video_price,omitempty"`
+	ImagePrice             ratio_setting.ImagePriceConfig  `json:"image_price,omitempty"`
 	PricingVersion         string                          `json:"pricing_version,omitempty"`
 }
 
@@ -431,6 +432,9 @@ func updatePricing() {
 				pricing.VideoPrice = &videoPrice
 				pricing.ModelPrice = videoPrice.DefaultPrice
 			}
+		}
+		if imagePrice, ok := ratio_setting.GetImagePriceConfig(model); ok && len(imagePrice) > 0 {
+			pricing.ImagePrice = imagePrice
 		}
 		pricingMap = append(pricingMap, pricing)
 	}

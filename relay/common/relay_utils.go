@@ -182,6 +182,7 @@ func ResolveTaskDuration(req TaskSubmitReq, fallback int) int {
 	return fallback
 }
 
+// NormalizeVideoResolution 将视频请求的 size 归一化为分辨率标签（如 720p/1080p）。
 func NormalizeVideoResolution(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {
@@ -209,6 +210,34 @@ func NormalizeVideoResolution(value string) string {
 		return "720p"
 	default:
 		return "480p"
+	}
+}
+
+// NormalizeImageResolution 将图片请求的 size/image_size 归一化为 1k/2k/4k 档位。
+// 与图片网关的路由口径保持一致：最长边 ≤1024 为 1k，≤1536 为 2k，其余为 4k。
+func NormalizeImageResolution(size string) string {
+	normalized := strings.ToLower(strings.TrimSpace(size))
+	switch normalized {
+	case "1k", "2k", "4k":
+		return normalized
+	}
+	parts := strings.FieldsFunc(normalized, func(r rune) bool { return r == 'x' || r == '*' })
+	if len(parts) != 2 {
+		return ""
+	}
+	width, widthErr := strconv.Atoi(parts[0])
+	height, heightErr := strconv.Atoi(parts[1])
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return ""
+	}
+	longest := max(width, height)
+	switch {
+	case longest <= 1024:
+		return "1k"
+	case longest <= 1536:
+		return "2k"
+	default:
+		return "4k"
 	}
 }
 

@@ -159,6 +159,17 @@ func (i *ImageRequest) GetTokenCountMeta() *types.TokenCountMeta {
 		imageN = *i.N
 	}
 
+	// 部分客户端使用 image_size 传分辨率，与网关保持一致一并参与按分辨率计费。
+	imageSize := i.Size
+	if imageSize == "" {
+		if raw, ok := i.Extra["image_size"]; ok {
+			var size string
+			if kitutil.Unmarshal(raw, &size) == nil {
+				imageSize = size
+			}
+		}
+	}
+
 	// Keep n separate from ImagePriceRatio so size/quality and count remain
 	// independent billing dimensions. Fixed-price pre-consume stores this on
 	// PriceData, and image settlement reuses or replaces the same "n" ratio.
@@ -166,6 +177,7 @@ func (i *ImageRequest) GetTokenCountMeta() *types.TokenCountMeta {
 		CombineText:     i.Prompt,
 		MaxTokens:       1584,
 		ImagePriceRatio: sizeRatio * qualityRatio,
+		ImageSize:       imageSize,
 		BillingRatios:   map[string]float64{"n": float64(imageN)},
 	}
 }

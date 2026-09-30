@@ -34,7 +34,11 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  hasImagePrices,
+  isPerSecondModel,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import {
   formatPrice,
   formatRequestPrice,
@@ -176,6 +180,31 @@ export function usePricingColumns(
         }
 
         const isTokenBased = isTokenBasedModel(model)
+
+        if (hasImagePrices(model)) {
+          const prices = Object.entries(model.image_price || {})
+          const firstTier = prices[0]
+          const resolution = firstTier?.[0] || '1k'
+          const unitPrice = firstTier?.[1] || model.model_price || 0
+          return (
+            <div className='max-w-full min-w-0'>
+              <span className='font-mono text-sm tabular-nums'>
+                {`${resolution.toUpperCase()} `}
+                {formatUnitPrice(
+                  model,
+                  unitPrice,
+                  showRechargePrice,
+                  priceRate,
+                  usdExchangeRate,
+                  selectedGroup
+                )}
+              </span>
+              <div className='text-muted-foreground/50 text-[10px]'>
+                / {t('image')}
+              </div>
+            </div>
+          )
+        }
 
         if (isPerSecondModel(model)) {
           const prices = Object.entries(

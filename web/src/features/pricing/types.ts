@@ -61,6 +61,8 @@ export type PricingModel = {
     minimum_duration: number
     resolution_prices?: Record<string, number>
   }
+  /** Per-image prices by resolution tier (1k/2k/4k) for per-request image models */
+  image_price?: Record<string, number>
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**

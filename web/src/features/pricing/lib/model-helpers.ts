@@ -114,3 +114,10 @@ export function isPerSecondModel(model: PricingModel): boolean {
     model.billing_mode === 'per_second'
   )
 }
+
+/**
+ * Check if model is a per-request image model priced by resolution (1k/2k/4k)
+ */
+export function hasImagePrices(model: PricingModel): boolean {
+  return Object.keys(model.image_price || {}).length > 0
+}

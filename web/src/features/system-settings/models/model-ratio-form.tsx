@@ -50,6 +50,7 @@ import {
 type ModelFormValues = {
   ModelPrice: string
   VideoPrice: string
+  ImagePrice: string
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string
@@ -75,6 +76,7 @@ type ModelRatioFormProps = {
 type ModelJsonFieldName =
   | 'ModelPrice'
   | 'VideoPrice'
+  | 'ImagePrice'
   | 'ModelRatio'
   | 'CacheRatio'
   | 'CreateCacheRatio'
@@ -99,6 +101,12 @@ const modelJsonFields: Array<{
     labelKey: 'Video second pricing',
     descriptionKey:
       'JSON map of model to per-second video prices and resolution prices.',
+  },
+  {
+    name: 'ImagePrice',
+    labelKey: 'Image resolution pricing',
+    descriptionKey:
+      'JSON map of model to per-image prices by resolution (1k/2k/4k).',
   },
   {
     name: 'ModelRatio',
@@ -275,6 +283,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               ref={visualEditorRef}
               savedModelPrice={savedValues.ModelPrice}
               savedVideoPrice={savedValues.VideoPrice}
+              savedImagePrice={savedValues.ImagePrice}
               savedModelRatio={savedValues.ModelRatio}
               savedCacheRatio={savedValues.CacheRatio}
               savedCreateCacheRatio={savedValues.CreateCacheRatio}
@@ -295,6 +304,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               billingMode={form.watch('BillingMode')}
               billingExpr={form.watch('BillingExpr')}
               videoPrice={form.watch('VideoPrice')}
+              imagePrice={form.watch('ImagePrice')}
               candidateModelNames={
                 isUnsetVariant ? enabledModelsQuery.data?.data : undefined
               }

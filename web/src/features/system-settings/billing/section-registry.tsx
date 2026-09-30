@@ -30,6 +30,7 @@ import { OnlineRechargeSettingsSection } from './online-recharge-settings-sectio
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
   VideoPrice: settings.VideoPrice,
+  ImagePrice: settings.ImagePrice,
   ModelRatio: settings.ModelRatio,
   CacheRatio: settings.CacheRatio,
   CreateCacheRatio: settings.CreateCacheRatio,

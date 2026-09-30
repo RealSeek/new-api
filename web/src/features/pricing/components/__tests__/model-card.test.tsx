@@ -42,4 +42,36 @@ describe('模型广场模型卡片', () => {
     expect(within(priceRows[1]).getByText('$0.5')).toBeVisible()
     expect(priceRows[1]).toHaveTextContent('/ second')
   })
+
+  test('按分辨率计价的图片模型展示 1K/2K/4K 单张价格', () => {
+    const model: PricingModel = {
+      id: 2,
+      model_name: 'gpt-image-2',
+      quota_type: 1,
+      model_ratio: 1,
+      model_price: 0.05,
+      completion_ratio: 1,
+      enable_groups: [],
+      image_price: {
+        '1k': 0.05,
+        '2k': 0.1,
+        '4k': 0.2,
+      },
+    }
+
+    render(<ModelCard model={model} onClick={() => undefined} />)
+
+    const priceList = screen.getByRole('list', { name: 'Resolution prices' })
+    expect(priceList).toHaveClass('flex-col')
+    const priceRows = within(priceList).getAllByRole('listitem')
+    expect(priceRows).toHaveLength(3)
+    expect(within(priceRows[0]).getByText('1K')).toBeVisible()
+    expect(within(priceRows[0]).getByText('$0.05')).toBeVisible()
+    expect(priceRows[0]).toHaveTextContent('/ image')
+    expect(within(priceRows[1]).getByText('2K')).toBeVisible()
+    expect(within(priceRows[1]).getByText('$0.1')).toBeVisible()
+    expect(within(priceRows[2]).getByText('4K')).toBeVisible()
+    expect(within(priceRows[2]).getByText('$0.2')).toBeVisible()
+    expect(priceRows[2]).toHaveTextContent('/ image')
+  })
 })
