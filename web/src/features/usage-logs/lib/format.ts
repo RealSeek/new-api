@@ -231,6 +231,19 @@ export function getResponseTimeColor(
 }
 
 /**
+ * 请求转换区块的可见性：日志归属者（含普通用户）都能看到自己请求的路径与
+ * 格式转换，便于自查；退款日志（type=6）没有请求信息，不展示。
+ */
+export function shouldShowRequestConversion(
+  logType: number,
+  requestPath?: string,
+  conversionChain: string[] = []
+): boolean {
+  if (logType === 6) return false
+  return Boolean(requestPath) || conversionChain.length > 0
+}
+
+/**
  * Format model name with mapping indicator
  */
 export function formatModelName(log: UsageLog): {

@@ -76,6 +76,7 @@ import {
   getResponseTimeColor,
   getReasoningEffortVariant,
   renderAuditContent,
+  shouldShowRequestConversion,
 } from '../../lib/format'
 import {
   getLogTypeConfig,
@@ -604,10 +605,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
     conversionChain.length <= 1
       ? t('Native format')
       : conversionChain.join(' -> ')
-  const showConversion =
-    props.isAdmin &&
-    props.log.type !== 6 &&
-    (other?.request_path || conversionChain.length > 0)
+  const showConversion = shouldShowRequestConversion(
+    props.log.type,
+    other?.request_path,
+    conversionChain
+  )
 
   const useChannel = other?.admin_info?.use_channel
   const channelChain =
@@ -745,7 +747,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
           )}
         </div>
 
-        {/* Request conversion (admin only, not for refund) */}
+        {/* Request conversion (visible to the log owner; not for refund logs) */}
         {showConversion && (
           <DetailSection label={t('Request Conversion')}>
             <div className='relative min-w-0'>
