@@ -200,6 +200,8 @@ export interface LogOtherData {
   image?: boolean
   image_ratio?: number
   image_output?: number
+  /** 图片按分辨率计费命中的档位（1k/2k/4k） */
+  image_resolution?: string
   web_search?: boolean
   web_search_call_count?: number
   web_search_price?: number

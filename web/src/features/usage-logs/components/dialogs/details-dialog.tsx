@@ -461,6 +461,13 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
     })
   }
 
+  if (other.image_resolution) {
+    rows.push({
+      label: t('Image Resolution'),
+      value: other.image_resolution.toUpperCase(),
+    })
+  }
+
   return (
     <DetailSection label={t('Token Breakdown')}>
       {rows.map((row) => (

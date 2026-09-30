@@ -237,6 +237,7 @@ export function formatModelName(log: UsageLog): {
   name: string
   isMapped: boolean
   actualModel?: string
+  imageResolution?: string
 } {
   const other = parseLogOther(log.other)
   const isMapped = !!(
@@ -249,6 +250,7 @@ export function formatModelName(log: UsageLog): {
     name: log.model_name,
     isMapped,
     actualModel: isMapped ? other.upstream_model_name : undefined,
+    imageResolution: other?.image_resolution,
   }
 }
 

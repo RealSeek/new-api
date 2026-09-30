@@ -30,6 +30,8 @@ type PriceData struct {
 	Quota                int // 按次计费的最终额度（MJ / Task）
 	QuotaToPreConsume    int // 按量计费的预消耗额度
 	GroupRatioInfo       GroupRatioInfo
+	// ImageResolution 记录图片按分辨率计费命中的档位（1k/2k/4k），用于消费日志。
+	ImageResolution string
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {

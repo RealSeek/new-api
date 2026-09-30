@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils'
 interface ModelBadgeProps {
   modelName: string
   actualModel?: string
+  imageResolution?: string
   className?: string
 }
 
@@ -148,6 +149,11 @@ function ModelBadgeContent(props: ModelBadgeProps) {
           </span>
         )}
         <span className='whitespace-nowrap'>{props.modelName}</span>
+        {props.imageResolution && (
+          <span className='border-border/70 text-muted-foreground rounded border px-1 text-[10px] leading-4 font-semibold uppercase'>
+            {props.imageResolution.toUpperCase()}
+          </span>
+        )}
       </span>
     </StatusBadge>
   )

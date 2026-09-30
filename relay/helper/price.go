@@ -90,6 +90,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	var cacheCreationRatio1h float64
 	var audioRatio float64
 	var audioCompletionRatio float64
+	var imageResolution string
 	var freeModel bool
 	if !usePrice {
 		preConsumedTokens := common.Max(promptTokens, common.PreConsumedQuota)
@@ -125,8 +126,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		preConsumedQuota = quota
 	} else {
 		// 图片模型按分辨率档位（1k/2k/4k）计价时，直接用对应档位的单张价格。
-		if tierPrice, ok := ratio_setting.GetImagePrice(info.OriginModelName, relaycommon.NormalizeImageResolution(meta.ImageSize)); ok {
+		imageTier := relaycommon.NormalizeImageResolution(meta.ImageSize)
+		if tierPrice, ok := ratio_setting.GetImagePrice(info.OriginModelName, imageTier); ok {
 			modelPrice = tierPrice
+			imageResolution = imageTier
 		} else if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
 		}
@@ -166,6 +169,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		CacheCreation5mRatio: cacheCreationRatio5m,
 		CacheCreation1hRatio: cacheCreationRatio1h,
 		QuotaToPreConsume:    preConsumedQuota,
+		ImageResolution:      imageResolution,
 	}
 	if usePrice {
 		for name, ratio := range meta.BillingRatios {
