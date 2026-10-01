@@ -230,6 +230,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	started := time.Now()
 	var info *relaycommon.RelayInfo
 	billingPrepared := false
+	var gatewayUsage *rsGatewayUsageTracker
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			apiErr = types.NewError(fmt.Errorf("responses websocket call panic: %v", recovered), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -243,7 +244,20 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		// reads a termination decision after this point on the WebSocket path,
 		// so neither policy record belongs here.
 		if info != nil && billingPrepared {
-			apiErr = RefundFailedRequestBilling(c, info, apiErr)
+			if info.ChannelType == appconstant.ChannelTypeRSGateway {
+				if gatewayUsage != nil {
+					usage := gatewayUsage.Usage()
+					interrupted := info.StreamStatus.EndReason != relaycommon.StreamEndReasonDone
+					if !shouldRefundRSGatewayPreConsumed(usage, interrupted, gatewayUsage.failed) {
+						service.PostTextConsumeQuota(c, info, usage, nil)
+					}
+				}
+				if info.Billing != nil {
+					info.Billing.Refund(c)
+				}
+			} else {
+				apiErr = RefundFailedRequestBilling(c, info, apiErr)
+			}
 		}
 	}()
 	if modelName == "" {
@@ -264,6 +278,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			return apiErr
 		}
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
+		info.InitChannelMeta(c)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
 		if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
@@ -287,9 +302,13 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if apiErr != nil {
 				return apiErr
 			}
+			if info != nil && channel.Type == appconstant.ChannelTypeRSGateway {
+				return types.NewError(errors.New("reconnect to reserve gateway billing before switching channel"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			}
 			service.AppendUsedChannel(c, channel.Id)
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
+				info.InitChannelMeta(c)
 				info.IsStream = true
 				common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
 				if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
@@ -314,6 +333,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			target, dialErr := relaychannel.DoWssRequest(adaptor, c, info, nil)
 			if dialErr != nil {
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
+				if info.ChannelType == appconstant.ChannelTypeRSGateway {
+					return types.NewError(dialErr, types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
+				}
 				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
 				decision := service.DecideRelayRetry(c, apiErr, common.RetryTimes-retry.GetRetry())
@@ -357,6 +379,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	}
 
 	accumulator := service.NewResponsesUsageAccumulator(info)
+	if info.ChannelType == appconstant.ChannelTypeRSGateway {
+		gatewayUsage = newRSGatewayUsageTracker(false)
+	}
 	info.StreamStatus = relaycommon.NewStreamStatus()
 	info.StreamStatus.RequireTerminal()
 	common.SetContextKey(c, appconstant.ContextKeyResponseStreamStatus, info.StreamStatus)
@@ -377,7 +402,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if incoming.err != nil {
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, incoming.err)
 				state.closeAfter = true
-				ConsumeResponsesQuota(c, info, accumulator.Finish())
+				if gatewayUsage == nil {
+					ConsumeResponsesQuota(c, info, accumulator.Finish())
+				}
 				return nil
 			}
 			info.SetFirstResponseTime()
@@ -416,6 +443,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						}
 						continue
 					}
+					if gatewayUsage != nil {
+						gatewayUsage.mergeJSON(incoming.body)
+					}
 					if accepted {
 						if rejection.Error != nil {
 							code := ""
@@ -428,7 +458,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 						s.lastResponseID = responseID
 						state.terminal, state.closeAfter = &incoming, ambiguous
-						ConsumeResponsesQuota(c, info, accumulator.Finish())
+						if gatewayUsage == nil {
+							ConsumeResponsesQuota(c, info, accumulator.Finish())
+						}
 						return nil
 					}
 					if rejection.Error == nil {
@@ -442,10 +474,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					}
 					return rejected
 				}
+				if gatewayUsage != nil {
+					gatewayUsage.mergeJSON(incoming.body)
+				}
 				if strings.HasPrefix(event.Type, "response.") {
 					if !accepted {
 						// Like HTTP, bind the session only once upstream accepted the request.
-						service.RecordChannelAffinity(c, s.lockedChannelID)
+						if gatewayUsage == nil {
+							service.RecordChannelAffinity(c, s.lockedChannelID)
+						}
 					}
 					accepted = true
 					if event.Response != nil && event.Response.ID != "" {
@@ -461,7 +498,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				}
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 				state.terminal = &incoming
-				ConsumeResponsesQuota(c, info, accumulator.Finish())
+				if gatewayUsage == nil {
+					ConsumeResponsesQuota(c, info, accumulator.Finish())
+				}
 				return nil
 			}
 			if err := s.writeClient(incoming.kind, incoming.body); err != nil {
@@ -490,11 +529,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		case <-idle.C:
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
 			state.closeAfter = true
-			ConsumeResponsesQuota(c, info, accumulator.Finish())
+			if gatewayUsage == nil {
+				ConsumeResponsesQuota(c, info, accumulator.Finish())
+			}
 			return nil
 		case <-s.ctx.Done():
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, s.ctx.Err())
-			ConsumeResponsesQuota(c, info, accumulator.Finish())
+			if gatewayUsage == nil {
+				ConsumeResponsesQuota(c, info, accumulator.Finish())
+			}
 			return nil
 		}
 	}
@@ -549,7 +592,7 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	// Changes that alter the physical upstream connection require a new
 	// handshake. Request-level settings can be refreshed without rotating keys.
 	if channel.GetBaseURL() != s.lockedContext[appconstant.ContextKeyChannelBaseUrl] ||
-		!reflect.DeepEqual(channel.GetHeaderOverride(), s.lockedContext[appconstant.ContextKeyChannelHeaderOverride]) {
+		(channel.Type != appconstant.ChannelTypeRSGateway && !reflect.DeepEqual(channel.GetHeaderOverride(), s.lockedContext[appconstant.ContextKeyChannelHeaderOverride])) {
 		return types.NewErrorWithStatusCode(errors.New("upstream connection settings changed; reconnect required"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 	}
 	if previous, ok := s.lockedContext[appconstant.ContextKeyChannelSetting].(dto.ChannelSettings); ok && previous.Proxy != channel.GetSetting().Proxy {

@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
@@ -161,4 +162,125 @@ func CompleteRSGatewaySettlement(requestId string, input RSGatewayCompletion) er
 		}
 	})
 	return nil
+}
+
+// RefundRSGatewayTaskQuota refunds the durable charge once. The task quota is
+// the retry marker; the original request ledger remains the accounting record.
+func RefundRSGatewayTaskQuota(task *Task) (int, error) {
+	var stored Task
+	var token Token
+	quota := 0
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).First(&stored, task.ID).Error; err != nil {
+			return err
+		}
+		if stored.Quota == 0 {
+			return nil
+		}
+		if stored.Platform != "rs-gateway" || stored.Status != TaskStatusFailure {
+			return errors.New("gateway task is not refundable")
+		}
+		if err := common.ValidateWalletQuota(stored.Quota); err != nil {
+			return err
+		}
+		// Migrated tasks predate request provenance. Their durable task row
+		// identifies the refund; do not guess which historical request charged it.
+		ledger := RSGatewaySettlement{
+			RequestId: fmt.Sprintf("task-refund:%d", stored.ID), UserId: stored.UserId, TokenId: stored.PrivateData.TokenId, ChannelId: stored.ChannelId,
+			Quota: int64(stored.Quota), State: "settled", Funding: stored.PrivateData.BillingSource, SubscriptionId: stored.PrivateData.SubscriptionId,
+			CreatedAt: common.GetTimestamp(),
+		}
+		legacy := stored.PrivateData.Execution == nil || stored.PrivateData.Execution.RequestID == ""
+		if !legacy {
+			ledger = RSGatewaySettlement{}
+			if err := lockForUpdate(tx).Where("request_id = ?", stored.PrivateData.Execution.RequestID).First(&ledger).Error; err != nil {
+				return err
+			}
+		} else if ledger.Funding == "" {
+			ledger.Funding = "wallet"
+		}
+		if ledger.State != "settled" || ledger.Quota != int64(stored.Quota) || ledger.UserId != stored.UserId || ledger.ChannelId != stored.ChannelId ||
+			(!legacy && ledger.Funding != stored.PrivateData.BillingSource) || ledger.SubscriptionId != stored.PrivateData.SubscriptionId {
+			return errors.New("gateway task charge does not match settlement ledger")
+		}
+		amount := int64(stored.Quota)
+		if ledger.Funding == "subscription" {
+			result := tx.Model(&UserSubscription{}).Where("id = ? AND user_id = ? AND amount_used >= ?", ledger.SubscriptionId, stored.UserId, amount).
+				Update("amount_used", gorm.Expr("amount_used - ?", amount))
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("gateway task subscription refund failed")
+			}
+			if err := tx.Model(&SubscriptionPreConsumeRecord{}).Where("request_id = ?", ledger.RequestId).Update("status", "refunded").Error; err != nil {
+				return err
+			}
+		} else if ledger.Funding != "wallet" {
+			return errors.New("unsupported gateway task funding source")
+		}
+		userUpdates := map[string]any{"used_quota": gorm.Expr("used_quota - ?", amount)}
+		userQuery := tx.Model(&User{}).Where("id = ?", stored.UserId)
+		if ledger.Funding == "wallet" {
+			userQuery = userQuery.Where("quota <= ?", int64(common.MaxWalletQuota)-amount)
+			userUpdates["quota"] = gorm.Expr("quota + ?", amount)
+		}
+		result := userQuery.Updates(userUpdates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("gateway task wallet refund failed")
+		}
+		if ledger.TokenId > 0 {
+			if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", ledger.TokenId, stored.UserId).First(&token).Error; err != nil {
+				return err
+			}
+			result = tx.Model(&token).Updates(map[string]any{
+				"remain_quota": gorm.Expr("remain_quota + ?", amount), "used_quota": gorm.Expr("used_quota - ?", amount),
+			})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("gateway task token refund failed")
+			}
+		}
+		if err := tx.Model(&Channel{}).Where("id = ?", stored.ChannelId).Update("used_quota", gorm.Expr("used_quota - ?", amount)).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&stored).Update("quota", 0).Error; err != nil {
+			return err
+		}
+		ledger.Quota, ledger.State, ledger.UpdatedAt = 0, "refunded", common.GetTimestamp()
+		if legacy {
+			if err := tx.Create(&ledger).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Save(&ledger).Error; err != nil {
+				return err
+			}
+		}
+		quota = int(amount)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	task.Quota = 0
+	if quota == 0 {
+		return 0, nil
+	}
+	if stored.PrivateData.BillingSource != "subscription" {
+		if err := cacheIncrUserQuota(stored.UserId, int64(quota)); err != nil {
+			common.SysError(fmt.Sprintf("gateway task %s wallet cache refund: %v", stored.TaskID, err))
+		}
+	}
+	if common.RedisEnabled && token.Id > 0 {
+		if _, err := cacheApplyTokenQuotaDelta(token.Id, token.Key, int64(quota)); err != nil {
+			common.SysError(fmt.Sprintf("gateway task %s token cache refund: %v", stored.TaskID, err))
+		}
+	}
+	return quota, nil
 }

@@ -358,7 +358,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && (!info.PriceData.FreeModel || info.ChannelType == constant.ChannelTypeRSGateway) {
 		if info.ChannelType == constant.ChannelTypeRSGateway {
-			if err := model.BeginRSGatewaySettlement(info.RequestId, info.UserId, info.TokenId, info.ChannelId); err != nil {
+			tokenId := info.TokenId
+			if info.IsPlayground {
+				tokenId = 0
+			}
+			if err := model.BeginRSGatewaySettlement(info.RequestId, info.UserId, tokenId, info.ChannelId); err != nil {
 				return nil, service.TaskErrorWrapperLocal(err, "gateway_settlement_unavailable", http.StatusServiceUnavailable)
 			}
 		}

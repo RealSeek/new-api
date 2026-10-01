@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,10 +16,39 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
+func TestRSGatewayVideoDurationValidation(t *testing.T) {
+	source, err := os.ReadFile("../plugins/tasks/rs-gateway/plugin.js")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(string(source), jsplugin.Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		body    map[string]any
+		invalid bool
+	}{
+		{"conflicting metadata", map[string]any{"seconds": 8, "metadata": map[string]any{"seconds": 1}}, true},
+		{"conflicting multipart metadata", map[string]any{"seconds": "8", "metadata": `{"seconds":1}`}, true},
+		{"conflicting alias", map[string]any{"seconds": 8, "durationSeconds": 1}, true},
+		{"matching metadata", map[string]any{"seconds": "8", "metadata": map[string]any{"durationSeconds": 8}}, false},
+		{"metadata only", map[string]any{"metadata": map[string]any{"seconds": 8}}, true},
+		{"oversized duration", map[string]any{"seconds": 3601}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": tc.body, "baseUrl": "https://gateway.example", "upstreamModel": "video"})
+			if tc.invalid {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestRSGatewayVideoSubmissionPersistsAndChargesOnce(t *testing.T) {
-	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.RSGatewaySettlement{})
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.RSGatewaySettlement{})
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
@@ -58,6 +88,8 @@ func TestRSGatewayVideoSubmissionPersistsAndChargesOnce(t *testing.T) {
 	initial := int(10 * common.QuotaPerUnit)
 	user := model.User{Username: "gateway-video-owner", AffCode: "gateway-video-aff", Quota: initial}
 	require.NoError(t, db.Create(&user).Error)
+	token := model.Token{UserId: user.Id, Key: "playground-context-token", RemainQuota: initial}
+	require.NoError(t, db.Create(&token).Error)
 	ch := model.Channel{Name: "RS Gateway", Type: constant.ChannelTypeRSGateway}
 	require.NoError(t, db.Create(&ch).Error)
 	c := taskSubmissionTestContext()
@@ -75,6 +107,8 @@ func TestRSGatewayVideoSubmissionPersistsAndChargesOnce(t *testing.T) {
 	common.SetContextKey(c, constant.ContextKeyChannelKey, "gateway-key")
 	info := taskSubmissionRelayInfo(nil)
 	info.UserId, info.RequestId = user.Id, "gateway-video-request"
+	info.TokenId = token.Id
+	c.Set(common.RequestIdKey, info.RequestId)
 	info.OriginModelName, info.UserGroup = "gateway-video", "default"
 	info.TokenName = "video-token"
 	info.IsPlayground = true
@@ -92,12 +126,14 @@ func TestRSGatewayVideoSubmissionPersistsAndChargesOnce(t *testing.T) {
 	require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).First(&stored).Error)
 	assert.Equal(t, constant.TaskPlatform("rs-gateway"), stored.Platform)
 	assert.Equal(t, "vendor-video", stored.GetUpstreamTaskID())
+	assert.Equal(t, "gateway-key", stored.PrivateData.Key)
 	require.NotNil(t, stored.PrivateData.Execution.TaskPlugin)
 	assert.Equal(t, "rs-gateway", stored.PrivateData.Execution.TaskPlugin.Key)
 	var ledger model.RSGatewaySettlement
 	require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&ledger).Error)
 	assert.Equal(t, "settled", ledger.State)
 	assert.Equal(t, int64(want), ledger.Quota)
+	assert.Zero(t, ledger.TokenId, "playground did not reserve API token quota")
 	require.NoError(t, info.Billing.Settle(want))
 	info.Billing.Refund(c)
 	var updated model.User
@@ -108,4 +144,37 @@ func TestRSGatewayVideoSubmissionPersistsAndChargesOnce(t *testing.T) {
 	require.NoError(t, db.Where("user_id = ?", user.Id).Find(&logs).Error)
 	require.Len(t, logs, 1)
 	assert.Equal(t, want, logs[0].Quota)
+
+	// A failed task update must roll back the wallet and ledger too.
+	stored.Status = model.TaskStatusFailure
+	require.NoError(t, db.Model(&stored).Update("status", stored.Status).Error)
+	stale := stored
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register("gateway:reject-task-quota", func(tx *gorm.DB) {
+		if tx.Statement.Model != nil {
+			if _, ok := tx.Statement.Model.(*model.Task); ok {
+				tx.AddError(errors.New("simulated task storage failure"))
+			}
+		}
+	}))
+	assert.False(t, service.RefundTaskQuota(t.Context(), &stored, "provider failed"))
+	require.NoError(t, db.Callback().Update().Remove("gateway:reject-task-quota"))
+	require.NoError(t, db.First(&updated, user.Id).Error)
+	assert.Equal(t, initial-want, updated.Quota)
+	assert.Equal(t, want, stored.Quota)
+	require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&ledger).Error)
+	assert.Equal(t, "settled", ledger.State)
+	require.True(t, service.RefundTaskQuota(t.Context(), &stored, "provider failed"))
+	require.True(t, service.RefundTaskQuota(t.Context(), &stale, "retry"))
+	require.NoError(t, db.First(&updated, user.Id).Error)
+	assert.Equal(t, initial, updated.Quota)
+	assert.Zero(t, updated.UsedQuota)
+	assert.Equal(t, 1, updated.RequestCount)
+	require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&ledger).Error)
+	assert.Equal(t, "refunded", ledger.State)
+	assert.Zero(t, ledger.Quota)
+	require.NoError(t, db.First(&stored, stored.ID).Error)
+	assert.Zero(t, stored.Quota)
+	require.NoError(t, db.First(&token, token.Id).Error)
+	assert.Equal(t, initial, token.RemainQuota)
+	assert.Zero(t, token.UsedQuota)
 }

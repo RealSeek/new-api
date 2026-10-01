@@ -13,17 +13,21 @@ export const meta = {
 
 export function buildSubmitRequest(ctx) {
   const body = Object.assign({}, ctx.requestBody, { model: ctx.upstreamModel });
-  for (const value of [
-    body.seconds,
-    body.duration,
-    body.durationSeconds,
-    (body.metadata || {}).seconds,
-    (body.metadata || {}).duration,
-    (body.metadata || {}).durationSeconds,
-  ]) {
+  const metadata = typeof body.metadata === "string" ? JSON.parse(body.metadata) : body.metadata || {};
+  let duration;
+  for (const value of [body.seconds, body.duration, body.durationSeconds, metadata.seconds, metadata.duration, metadata.durationSeconds]) {
     if (value !== undefined && (!Number.isInteger(Number(value)) || Number(value) <= 0 || Number(value) > 3600)) {
       throw new Error("duration must be between 1 and 3600 seconds");
     }
+    if (value !== undefined) {
+      if (duration !== undefined && duration !== Number(value)) throw new Error("conflicting video durations");
+      duration = Number(value);
+    }
+  }
+  // The gateway reads top-level seconds/duration. Do not charge a metadata
+  // duration while forwarding a request that makes it use its default.
+  if (duration !== undefined && body.seconds === undefined && body.duration === undefined) {
+    throw new Error("video duration requires top-level seconds or duration");
   }
   const base = ctx.baseUrl.replace(/\/$/, "");
   const path = ctx.action === "remix" ? "/v1/videos/" + encodeURIComponent(ctx.originTaskId) + "/remix" : "/v1/videos";

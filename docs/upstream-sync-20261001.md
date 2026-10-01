@@ -26,6 +26,23 @@
 
 SQLite 回归已运行；未连接生产数据库，也未运行真实 MySQL/PostgreSQL 环境验证。本次仅完成代码合并，不包含远程推送或部署。
 
+## 合并后修复（2026-10-02）
+
+- 网关视频拒绝顶层字段与 metadata 的时长冲突，同时检查 multipart 中 JSON 字符串形式的 metadata。只提供 metadata/durationSeconds 时长、未提供网关识别的顶层 seconds/duration 时拒绝提交，避免本地按指定时长扣费而网关使用默认时长。
+- 创建视频任务时保存本次选中的网关密钥，轮询与内容下载沿用同一身份。已经创建但没有保存密钥的多密钥任务无法自动推断创建身份，需要通过网关记录核对。
+- 失败视频的资金、令牌、任务额度、用量统计与退款账本在主库同一事务提交。任一步失败均回滚，任务保留额度，轮询继续重试；重复任务副本不会重复退款。新任务通过已有 Execution.RequestID 更新原结算账本；缺少请求来源的历史迁移任务以 task-refund:<数据库任务ID> 创建独立退款记录，不猜测原请求账目。独立日志库的退款日志在资金事务提交后写入，不与主库形成跨库事务。
+- 渠道 61 可开启 Responses WebSocket；每轮请求独立建账、预扣、按网关实际用量结算或退款，包括零价请求。保留请求扩展字段、零值和 false，网关连接失败不触发重试或自动封禁。连接第二轮不再因被忽略的请求头覆盖配置报错，上一轮迟到用量不会进入下一轮账单。普通渠道预扣后重试选中网关时，要求客户端重连，以重新建立网关计费会话。
+- Playground 视频账本不记录未预扣的 API 令牌，避免失败退款时凭空增加令牌余额。
+
+本轮验证使用 Go 1.26.1、Bun 1.4.0、真实 SQLite **3.50.4**：
+
+- 根模块 `go build ./...` 通过；本次没有修改 relaykit。
+- `go test ./controller ./service ./relay ./model -run 'TestRSGateway|TestResponsesWebSocket|TestRefundTaskQuota|TestRecalculateTaskQuota|TestRunTaskPolling|TestTaskPolling|TestPrepareRequestBilling' -count=1 -timeout=150s` 通过。之后新增的免费请求用例以及时序/Playground 修复单独增量测试通过。
+- 覆盖钱包/订阅退款的令牌写入故障回滚、任务写入故障回滚、自动重试、退款幂等、迁移任务退款、视频真实提交计费、HTTP/WS 对照、连续两轮请求、旧用量隔离、拒绝/失败/断开退款以及免费请求账本结束。
+- 前端 Responses WebSocket 设置测试 **27 个用例通过**；`bun run typecheck`、相关前端文件及网关插件 lint 通过。
+
+**尚未完成的验证：** 没有可用的真实 MySQL/PostgreSQL 测试实例，用户已确认先修复并记录缺口。当前不能宣称三个数据库的事务与锁行为均已验证；部署前仍需补齐。现有控制器数据库夹具可使用 `TEST_TASK_DB_DIALECT=mysql/postgres` 和 `TEST_MYSQL_DSN` / `TEST_POSTGRES_DSN` 连接隔离测试数据库，再运行 `go test ./controller -run TestRSGatewayVideoSubmissionPersistsAndChargesOnce -count=1 -v`；订阅退款及并发锁场景也应在两种数据库补验。
+
 ## 部署步骤
 
 1. 备份主库、独立日志库、环境配置和当前部署镜像；先在数据库副本上启动新版，确认迁移、登录、OnlyArt、价格和历史任务查询/下载。

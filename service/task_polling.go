@@ -142,6 +142,18 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 
 	common.SysLog("任务进度轮询开始")
 	sweepTimedOutTasks(ctx)
+	var pendingRefunds []*model.Task
+	if err := model.DB.Where("platform = ? AND status = ? AND quota > 0", "rs-gateway", model.TaskStatusFailure).
+		Order("id").Limit(constant.TaskQueryLimit).Find(&pendingRefunds).Error; err != nil {
+		logger.LogError(ctx, fmt.Sprintf("load pending gateway task refunds: %v", err))
+	} else {
+		for _, task := range pendingRefunds {
+			if ctx.Err() != nil {
+				break
+			}
+			RefundTaskQuota(ctx, task, task.FailReason)
+		}
+	}
 	allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
 	summary.UnfinishedTasks = len(allTasks)
 	platformTask := make(map[constant.TaskPlatform][]*model.Task)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -22,9 +23,10 @@ import (
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
-	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
+	isGateway := info.ChannelMeta != nil && info.ChannelType == constant.ChannelTypeRSGateway
+	needSensitiveCheck := !isGateway && setting.ShouldCheckPromptSensitive()
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
-	if info.Request != nil && (needSensitiveCheck || constant.CountToken) {
+	if info.Request != nil && (needSensitiveCheck || (!isGateway && constant.CountToken)) {
 		meta = info.Request.GetTokenCountMeta()
 	} else {
 		// Avoid building CombineText when only the pricing quantities are needed.
@@ -49,15 +51,37 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		}
 	}
 
-	tokens, err := service.EstimateRequestToken(c, meta, info)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeCountTokenFailed)
+	tokens := 0
+	if !isGateway {
+		var err error
+		tokens, err = service.EstimateRequestToken(c, meta, info)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeCountTokenFailed)
+		}
 	}
 	info.SetEstimatePromptTokens(tokens)
 
 	priceData, err := helper.ModelPriceHelper(c, info, tokens, meta)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
+	}
+	if isGateway {
+		tokenId := info.TokenId
+		if info.IsPlayground {
+			tokenId = 0
+		}
+		if err := model.BeginRSGatewaySettlement(info.RequestId, info.UserId, tokenId, info.ChannelId); err != nil {
+			logger.LogError(c, fmt.Sprintf("gateway ledger unavailable, request_id=%s: %v", info.RequestId, err))
+			return types.NewErrorWithStatusCode(errors.New("gateway settlement unavailable"), types.ErrorCodeUpdateDataError, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		}
+		info.ForcePreConsume = true
+		apiErr := service.PreConsumeBilling(c, priceData.QuotaToPreConsume, info)
+		if apiErr != nil {
+			if err := model.CompleteRSGatewaySettlement(info.RequestId, model.RSGatewayCompletion{Refunded: true}); err != nil {
+				logger.LogError(c, fmt.Sprintf("gateway refund pending, request_id=%s: %v", info.RequestId, err))
+			}
+		}
+		return apiErr
 	}
 	if priceData.FreeModel {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", info.OriginModelName))
