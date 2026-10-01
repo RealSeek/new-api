@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -203,6 +204,20 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			}
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			// 作图客户端常用 image_size/imageSize 传分辨率（与网关口径一致）。
+			// 只记录到 Extra 参与按分辨率计费，不改写 size，避免上游拒绝 image_size 这类取值。
+			imageSize := strings.TrimSpace(formData.Get("image_size"))
+			if imageSize == "" {
+				imageSize = strings.TrimSpace(formData.Get("imageSize"))
+			}
+			if imageSize != "" {
+				if imageRequest.Extra == nil {
+					imageRequest.Extra = make(map[string]json.RawMessage, 1)
+				}
+				if raw, marshalErr := common.Marshal(imageSize); marshalErr == nil {
+					imageRequest.Extra["image_size"] = raw
+				}
+			}
 			if streamValue := strings.TrimSpace(formData.Get("stream")); streamValue != "" {
 				stream, err := strconv.ParseBool(streamValue)
 				if err != nil {

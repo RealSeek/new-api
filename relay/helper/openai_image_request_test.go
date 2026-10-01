@@ -72,6 +72,62 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 	})
 }
 
+// TestGetAndValidOpenAIImageRequestMultipartImageSize verifies that the
+// resolution field used by drawing clients (image_size/imageSize) reaches the
+// billing meta without rewriting the forwarded size field.
+func TestGetAndValidOpenAIImageRequestMultipartImageSize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newContext := func(t *testing.T, fields map[string]string) *gin.Context {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+		require.NoError(t, writer.WriteField("prompt", "edit this image"))
+		for key, value := range fields {
+			require.NoError(t, writer.WriteField(key, value))
+		}
+		require.NoError(t, writer.Close())
+
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+		c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+		return c
+	}
+
+	tests := []struct {
+		name     string
+		fields   map[string]string
+		wantSize string
+		wantMeta string
+	}{
+		{
+			name:     "image_size is used for billing meta",
+			fields:   map[string]string{"image_size": "2k"},
+			wantMeta: "2k",
+		},
+		{
+			name:     "imageSize alias is used for billing meta",
+			fields:   map[string]string{"imageSize": "4K"},
+			wantMeta: "4K",
+		},
+		{
+			name:     "standard size wins over image_size",
+			fields:   map[string]string{"size": "1024x1024", "image_size": "4k"},
+			wantSize: "1024x1024",
+			wantMeta: "1024x1024",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := GetAndValidOpenAIImageRequest(newContext(t, tt.fields), relayconstant.RelayModeImagesEdits)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantSize, req.Size)
+			require.Equal(t, tt.wantMeta, req.GetTokenCountMeta().ImageSize)
+		})
+	}
+}
+
 // TestGetAndValidOpenAIImageRequestNBounds guards the billing invariant that
 // the image generation count can never reach quota calculation with a value
 // large enough to overflow int64 into a negative charge.

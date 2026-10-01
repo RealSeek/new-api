@@ -350,7 +350,7 @@ func TestModelPriceHelperUsesImageResolutionPrice(t *testing.T) {
 	require.NoError(t, err)
 	// 2048x2048 命中 4k 档位，单价 0.2 USD，按 2 张预扣
 	require.Equal(t, 0.2, priceData.ModelPrice)
-	require.Equal(t, common.QuotaPerUnit/5*2, priceData.QuotaToPreConsume)
+	require.Equal(t, int(common.QuotaPerUnit/5*2), priceData.QuotaToPreConsume)
 }
 
 func TestModelPriceHelperFallsBackToFixedPriceForUnconfiguredImageResolution(t *testing.T) {
@@ -378,5 +378,5 @@ func TestModelPriceHelperFallsBackToFixedPriceForUnconfiguredImageResolution(t *
 	require.NoError(t, err)
 	// 1k 档位未配置价格，回退到固定价 0.05 USD
 	require.Equal(t, 0.05, priceData.ModelPrice)
-	require.Equal(t, common.QuotaPerUnit/20, priceData.QuotaToPreConsume)
+	require.Equal(t, int(common.QuotaPerUnit/20), priceData.QuotaToPreConsume)
 }
