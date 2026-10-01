@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -128,7 +129,29 @@ func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	}
 	req, ok := v.(TaskSubmitReq)
 	if !ok {
-		return TaskSubmitReq{}, fmt.Errorf("invalid task request type")
+		if fields, isMap := v.(map[string]any); isMap {
+			fields = maps.Clone(fields)
+			for _, key := range []string{"duration", "durationSeconds"} {
+				if value, present := fields[key]; present && value != nil {
+					duration, err := strconv.Atoi(fmt.Sprint(value))
+					if err != nil {
+						return TaskSubmitReq{}, fmt.Errorf("invalid task %s: %w", key, err)
+					}
+					fields["duration"] = duration
+				}
+			}
+			if seconds, present := fields["seconds"]; present && seconds != nil {
+				fields["seconds"] = fmt.Sprint(seconds)
+			}
+			v = fields
+		}
+		body, err := common.Marshal(v)
+		if err != nil {
+			return TaskSubmitReq{}, err
+		}
+		if err := common.Unmarshal(body, &req); err != nil {
+			return TaskSubmitReq{}, err
+		}
 	}
 	return req, nil
 }
@@ -326,9 +349,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return taskErr
 	}
 
-	action := constant.TaskActionTextGenerate
+	action := constant.TaskActionTextToVideo
 	if hasInputReference {
-		action = constant.TaskActionGenerate
+		action = constant.TaskActionImageToVideo
 	}
 	if strings.HasPrefix(model, "sora-2") {
 

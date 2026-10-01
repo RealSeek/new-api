@@ -8,9 +8,9 @@ describe('请求转换区块可见性', () => {
   })
 
   test('只有格式转换链路时同样可见', () => {
-    expect(
-      shouldShowRequestConversion(2, undefined, ['OpenAI Images'])
-    ).toBe(true)
+    expect(shouldShowRequestConversion(2, undefined, ['OpenAI Images'])).toBe(
+      true
+    )
   })
 
   test('退款日志不展示请求转换', () => {

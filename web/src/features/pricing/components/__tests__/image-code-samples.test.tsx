@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
-import { ModelDetailsApi } from '../model-details-api'
+
 import type { PricingModel } from '../../types'
+import { ModelDetailsApi } from '../model-details-api'
 
 vi.mock('@/hooks/use-status', () => ({
   useStatus: () => ({ status: { server_address: 'https://ai.example.test' } }),

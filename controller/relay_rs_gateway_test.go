@@ -9,16 +9,25 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestRelayRSGatewaySkipsRequestValidationAndNormalizesErrorResponse(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.RSGatewaySettlement{}))
+	originalDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = originalDB })
 	service.InitHttpClient()
 	originalRatios := ratio_setting.ModelRatio2JSONString()
 	originalFreeModelPreConsume := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
@@ -78,9 +87,11 @@ func TestRelayRSGatewaySkipsRequestValidationAndNormalizesErrorResponse(t *testi
 	ctx.Set("id", 42)
 	ctx.Set("token_id", 3)
 	ctx.Set("token_name", "测试令牌")
+	ctx.Set(common.RequestIdKey, "gateway-error-response")
 	ctx.Set(string(constant.ContextKeyUserName), "RealSeek")
 
 	Relay(ctx, types.RelayFormatOpenAI)
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
 
 	captured := <-received
 	require.NoError(t, captured.requestReadError)

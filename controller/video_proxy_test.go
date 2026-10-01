@@ -53,6 +53,8 @@ func TestVideoProxyConfiguredGatewayAllowsPrivateEndpointWithoutRedirects(t *tes
 	channel := model.Channel{Type: constant.ChannelTypeRSGateway, BaseURL: &upstream.URL, Key: "test-key"}
 	require.NoError(t, db.Create(&channel).Error)
 	task := model.Task{UserId: 1, ChannelId: channel.Id, TaskID: "public-id", Status: model.TaskStatusSuccess, PrivateData: model.TaskPrivateData{UpstreamTaskID: "upstream-id"}}
+	task.Platform = "rs-gateway"
+	task.PrivateData.Execution = &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{Key: "rs-gateway", Name: "RS Gateway", Version: "1.0.0", APIVersion: 1}}
 	require.NoError(t, db.Create(&task).Error)
 	request := func(userID int) *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
@@ -74,5 +76,5 @@ func TestVideoProxyConfiguredGatewayAllowsPrivateEndpointWithoutRedirects(t *tes
 	require.NoError(t, db.Model(&channel).Update("type", constant.ChannelTypeMiniMax).Error)
 	task.PrivateData.ResultURL = upstream.URL + "/v1/videos/upstream-id/content"
 	require.NoError(t, db.Save(&task).Error)
-	require.Equal(t, http.StatusForbidden, request(1).Code)
+	require.Equal(t, http.StatusBadGateway, request(1).Code)
 }

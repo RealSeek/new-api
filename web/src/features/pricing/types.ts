@@ -27,7 +27,36 @@ export type PricingVendor = {
   description?: string
 }
 
+export type BillingUsageUnit = 'second' | 'count' | 'token' | 'credit'
+
+export type BillingUsageFieldSchema = {
+  type?: 'number' | 'boolean'
+  unit?: BillingUsageUnit
+  unitLabel?: string | Record<string, string>
+  enum?: string[]
+  enumLabels?: Record<string, string | Record<string, string>>
+  description?: string | Record<string, string>
+}
+
+export type BillingUsageSchema = Record<string, BillingUsageFieldSchema>
+
+export type BillingUsageExample = {
+  label: string
+  facts: Record<string, string | number>
+}
+
+export type BillingPluginVariant = {
+  plugin_key: string
+  plugin_name: string
+  icon?: string
+  billing_expr: string
+  billing_mode?: 'ratio' | 'tiered_expr'
+  billing_usage_schema: BillingUsageSchema
+  billing_usage_examples?: BillingUsageExample[]
+}
+
 export type PricingModel = {
+  billing_plugin_variants?: BillingPluginVariant[]
   id: number
   model_name: string
   description?: string
@@ -64,7 +93,15 @@ export type PricingModel = {
   /** Per-image prices by resolution tier (1k/2k/4k) for per-request image models */
   image_price?: Record<string, number>
   /** 合并模型各分辨率档位的展示单价（unit: second/request） */
-  resolution_alias_prices?: { resolution: string; price: number; unit: string }[]
+  resolution_alias_prices?: {
+    resolution: string
+    price: number
+    unit: string
+  }[]
+  /** Task-plugin usage facts and their billing units. */
+  billing_usage_schema?: BillingUsageSchema
+  /** Display-only labeled usage vectors for pricing examples. */
+  billing_usage_examples?: BillingUsageExample[]
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**

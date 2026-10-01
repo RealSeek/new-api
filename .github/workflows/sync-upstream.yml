@@ -1,4 +1,4 @@
-name: Sync Upstream
+name: Check Upstream Updates
 
 on:
   schedule:
@@ -6,48 +6,33 @@ on:
     - cron: '0 20 * * *'
   workflow_dispatch:
 
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+permissions:
+  contents: read
 
+jobs:
+  check:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Add upstream remote
-        run: git remote add upstream https://github.com/QuantumNous/new-api.git
+          persist-credentials: false
 
       - name: Fetch upstream
-        run: git fetch upstream
+        run: git fetch https://github.com/QuantumNous/new-api.git main:refs/remotes/upstream/main
 
-      - name: Merge upstream/main
+      - name: Report updates
+        shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout main
-
-          echo "::group::尝试合并上游分支"
-          if ! git merge upstream/main --no-edit; then
-            echo "::endgroup::"
-            echo "::error::❌ Merge 失败！以下是详细信息："
-            echo ""
-            echo "=== Git 状态 ==="
-            git status
-            echo ""
-            echo "=== 冲突文件列表 ==="
-            git diff --name-only --diff-filter=U || echo "无法获取冲突文件列表"
-            echo ""
-            echo "=== 冲突详情 ==="
-            git diff --diff-filter=U || echo "无法获取冲突详情"
-            exit 1
-          fi
-          echo "::endgroup::"
-          echo "✅ Merge 成功完成"
-
-      - name: Push changes
-        run: git push origin main
+          {
+            echo '## new-api upstream updates'
+            echo ''
+            echo "Upstream: $(git rev-parse upstream/main)"
+            echo "Pending commits: $(git rev-list --count HEAD..upstream/main)"
+            echo ''
+            echo 'Merge after checking RS Gateway channel 61, Task Plugin channel 64, task migrations, and billing regressions. See docs/upstream-sync-20261001.md.'
+            echo ''
+            git log --format='- %h %s' HEAD..upstream/main
+          } >> "$GITHUB_STEP_SUMMARY"

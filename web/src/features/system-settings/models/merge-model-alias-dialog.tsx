@@ -20,14 +20,10 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/ui/button'
-import {
-  Field,
-  FieldDescription,
-  FieldLabel,
-} from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
 import { Dialog } from '@/components/dialog'
+import { Button } from '@/components/ui/button'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 
 export type ResolutionAliasConfig = {
   default_resolution?: string
@@ -61,9 +57,9 @@ export function MergeModelAliasDialog(props: MergeModelAliasDialogProps) {
   const { t } = useTranslation()
   const [aliasName, setAliasName] = useState('')
   const [defaultResolution, setDefaultResolution] = useState('720p')
-  const [rows, setRows] = useState<Array<{ model: string; resolution: string }>>(
-    []
-  )
+  const [rows, setRows] = useState<
+    Array<{ model: string; resolution: string }>
+  >([])
 
   useEffect(() => {
     if (!props.open) return
@@ -72,7 +68,9 @@ export function MergeModelAliasDialog(props: MergeModelAliasDialogProps) {
       resolution: guessResolution(model),
     }))
     setRows(nextRows)
-    setAliasName(props.targets.length > 0 ? guessAliasName(props.targets[0]) : '')
+    setAliasName(
+      props.targets.length > 0 ? guessAliasName(props.targets[0]) : ''
+    )
     const labels = nextRows.map((row) => row.resolution).filter(Boolean)
     setDefaultResolution(labels.includes('720p') ? '720p' : labels[0] || '720p')
   }, [props.open, props.targets])

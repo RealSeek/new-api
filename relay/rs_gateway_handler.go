@@ -90,6 +90,10 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		if !constant.ErrorLogEnabled {
 			return
 		}
+		other := model.NewLogOther()
+		other.SetPublic("request_path", c.Request.URL.Path)
+		other.SetPublic("status_code", statusCode)
+		other.SetPublic("rs_gateway", true)
 		model.RecordErrorLog(
 			c,
 			info.UserId,
@@ -101,11 +105,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 			int(time.Since(startTime).Seconds()),
 			info.IsStream,
 			info.UsingGroup,
-			map[string]interface{}{
-				"request_path": c.Request.URL.Path,
-				"status_code":  statusCode,
-				"rs_gateway":   true,
-			},
+			other,
 		)
 	}
 	adaptor := GetAdaptor(info.ApiType)

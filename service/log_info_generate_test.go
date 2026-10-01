@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/QuantumNous/new-api/common"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,14 +27,17 @@ func TestGenerateTextOtherInfoPrefersUpstreamFirstByte(t *testing.T) {
 		UpstreamFirstByteMs: 29528,
 	}
 
-	other := GenerateTextOtherInfo(c, info, 0, 1, 0, 0, 0, 0, 0)
+	encoded, err := common.Marshal(GenerateTextOtherInfo(c, info, 0, 1, 0, 0, 0, 0, 0))
+	require.NoError(t, err)
+	var other map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &other))
 
 	assert.Equal(t, float64(29528), other["frt"])
 	adminInfo, ok := other["admin_info"].(map[string]interface{})
 	require.True(t, ok)
 	assert.InDelta(t, 57000, adminInfo["frt_client_ms"].(float64), 2000)
 	assert.InDelta(t, 57000-29528, adminInfo["frt_gateway_buffer_ms"].(float64), 2000)
-	assert.InDelta(t, 73000, adminInfo["duration_ms"].(int64), 2000)
+	assert.InDelta(t, 73000, adminInfo["duration_ms"].(float64), 2000)
 }
 
 // 非网关通道没有上游上报值，保持原有端到端口径，且不写拆分字段。
@@ -48,7 +52,10 @@ func TestGenerateTextOtherInfoKeepsMeasuredFirstByteWithoutUpstream(t *testing.T
 		FirstResponseTime: time.Now().Add(-7 * time.Second),
 	}
 
-	other := GenerateTextOtherInfo(c, info, 0, 1, 0, 0, 0, 0, 0)
+	encoded, err := common.Marshal(GenerateTextOtherInfo(c, info, 0, 1, 0, 0, 0, 0, 0))
+	require.NoError(t, err)
+	var other map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &other))
 
 	assert.InDelta(t, 3000, other["frt"].(float64), 2000)
 	adminInfo, ok := other["admin_info"].(map[string]interface{})

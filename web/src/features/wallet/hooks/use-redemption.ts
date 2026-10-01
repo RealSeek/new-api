@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 
 import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { redeemTopupCodes } from '../api'
 
@@ -80,10 +81,10 @@ export function useRedemption() {
           return true
         }
 
-        toast.error(response.message || t('Redemption failed'))
+        handleServerError(response, t('Redemption failed'))
         return false
-      } catch {
-        toast.error(t('Redemption failed'))
+      } catch (error) {
+        handleServerError(error, t('Redemption failed'))
         return false
       } finally {
         setRedeeming(false)

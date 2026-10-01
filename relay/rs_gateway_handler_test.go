@@ -275,8 +275,8 @@ func TestParseUpstreamFirstByteMs(t *testing.T) {
 func TestCopyRSGatewayResponseHeadersHidesInternalTimingHeader(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	header := http.Header{
-		"Content-Type":                  {"text/event-stream"},
-		"X-Request-Id":                  {"gw-123"},
+		"Content-Type":                   {"text/event-stream"},
+		"X-Request-Id":                   {"gw-123"},
 		rsGatewayUpstreamFirstByteHeader: {"29528"},
 	}
 

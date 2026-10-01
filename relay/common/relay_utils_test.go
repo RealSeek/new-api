@@ -78,7 +78,7 @@ func TestValidateMultipartDirectNormalizesImageField(t *testing.T) {
 	storedReq, err := GetTaskRequest(context)
 	require.NoError(t, err)
 	require.Equal(t, []string{"https://example.com/first.png"}, storedReq.Images)
-	require.Equal(t, constant.TaskActionGenerate, info.Action)
+	require.Equal(t, constant.TaskActionImageToVideo, info.Action)
 }
 
 // TestTaskDurationBounds guards the billing invariant that user-supplied
@@ -139,7 +139,7 @@ func TestTaskDurationBounds(t *testing.T) {
 		})
 		t.Run(tt.name+" (basic task request)", func(t *testing.T) {
 			context, info := newContext(t, tt.body)
-			taskErr := ValidateBasicTaskRequest(context, info, constant.TaskActionGenerate)
+			taskErr := ValidateBasicTaskRequest(context, info, constant.TaskActionImageToVideo)
 			if tt.wantErr {
 				require.NotNil(t, taskErr)
 				require.Equal(t, "invalid_seconds", taskErr.Code)
@@ -174,7 +174,7 @@ func TestVideoDurationAliases(t *testing.T) {
 					defer jsoncommon.CleanupBodyStorage(c)
 					info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
 					if basic {
-						require.Nil(t, ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate))
+						require.Nil(t, ValidateBasicTaskRequest(c, info, constant.TaskActionTextToVideo))
 					} else {
 						require.Nil(t, ValidateMultipartDirect(c, info))
 					}
@@ -228,5 +228,15 @@ func TestNormalizeImageResolution(t *testing.T) {
 	}
 	for input, expected := range tests {
 		assert.Equal(t, expected, NormalizeImageResolution(input), "input: %s", input)
+	}
+}
+
+func TestPluginTaskRequestNormalizesDurationAliases(t *testing.T) {
+	for _, body := range []map[string]any{{"duration": "8"}, {"durationSeconds": 8}, {"seconds": 8}} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set("task_request", body)
+		request, err := GetTaskRequest(c)
+		require.NoError(t, err)
+		assert.Equal(t, 8, ResolveTaskDuration(request, 5))
 	}
 }

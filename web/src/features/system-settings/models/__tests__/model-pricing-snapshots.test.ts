@@ -24,6 +24,7 @@ import {
 } from '../model-pricing-snapshots'
 
 const emptyRatios = {
+  videoPrice: '{}',
   modelPrice: '{}',
   modelRatio: '{}',
   cacheRatio: '{}',
