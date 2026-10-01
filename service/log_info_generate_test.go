@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 func TestGenerateTextOtherInfoPrefersUpstreamFirstByte(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	info := &relaycommon.RelayInfo{
 		StartTime:           time.Now().Add(-73 * time.Second),
@@ -37,6 +39,7 @@ func TestGenerateTextOtherInfoPrefersUpstreamFirstByte(t *testing.T) {
 func TestGenerateTextOtherInfoKeepsMeasuredFirstByteWithoutUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	info := &relaycommon.RelayInfo{
 		StartTime:         time.Now().Add(-10 * time.Second),
