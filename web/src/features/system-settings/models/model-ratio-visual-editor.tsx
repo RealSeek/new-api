@@ -24,7 +24,7 @@ import type {
   VisibilityState,
   SortingState,
 } from '@tanstack/react-table'
-import { Copy, Plus } from 'lucide-react'
+import { Copy, Layers, Plus } from 'lucide-react'
 import {
   useState,
   useMemo,
@@ -63,8 +63,11 @@ import {
   getSnapshotSignature,
   isBasePricingUnset,
   type ModelRow,
-} from './model-pricing-snapshots'
-import { buildModelRatioColumns } from './model-ratio-table-columns'
+} from './model-pricing-snapshots'import { buildModelRatioColumns } from './model-ratio-table-columns'
+import {
+  type ResolutionAliasConfig,
+  MergeModelAliasDialog,
+} from './merge-model-alias-dialog'
 
 type ModelRatioVisualEditorProps = {
   savedModelPrice: string
@@ -82,6 +85,7 @@ type ModelRatioVisualEditorProps = {
   modelPrice: string
   videoPrice: string
   imagePrice: string
+  modelAliases: string
   modelRatio: string
   cacheRatio: string
   createCacheRatio: string
@@ -125,6 +129,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     modelPrice,
     videoPrice,
     imagePrice,
+    modelAliases,
     modelRatio,
     cacheRatio,
     createCacheRatio,
@@ -148,6 +153,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editData, setEditData] = useState<ModelRatioData | null>(null)
+  const [mergeTargets, setMergeTargets] = useState<string[] | null>(null)
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [globalFilter, setGlobalFilter] = useState('')
@@ -517,6 +523,31 @@ const ModelRatioVisualEditorComponent = forwardRef<
     },
   })
 
+  const handleOpenMergeDialog = useCallback(() => {
+    const names = table
+      .getFilteredSelectedRowModel()
+      .rows.map((row) => row.original.name)
+    if (names.length < 2) {
+      toast.error(t('Select at least two models to merge'))
+      return
+    }
+    setMergeTargets(names)
+  }, [table, t])
+
+  const handleMergeConfirm = useCallback(
+    (aliasName: string, config: ResolutionAliasConfig) => {
+      const aliasMap = safeJsonParse<Record<string, ResolutionAliasConfig>>(
+        modelAliases,
+        { fallback: {}, silent: true }
+      )
+      aliasMap[aliasName] = config
+      onChange('ModelAliases', JSON.stringify(aliasMap, null, 2))
+      setMergeTargets(null)
+      toast.success(t('Merge applied, save the page to take effect'))
+    },
+    [modelAliases, onChange, t]
+  )
+
   const persistPricingData = useCallback(
     (data: ModelRatioData, targetNames: string[] = [data.name]) => {
       const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
@@ -868,6 +899,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
       </div>
 
       <DataTableBulkActions table={table} entityName={t('model')}>
+        <Button size='sm' variant='outline' onClick={handleOpenMergeDialog}>
+          <Layers data-icon='inline-start' />
+          {t('Merge models')}
+        </Button>
         <Button size='sm' disabled={!editData} onClick={handleBatchCopy}>
           <Copy data-icon='inline-start' />
           {editData
@@ -875,6 +910,15 @@ const ModelRatioVisualEditorComponent = forwardRef<
             : t('Open a source model first')}
         </Button>
       </DataTableBulkActions>
+
+      <MergeModelAliasDialog
+        open={mergeTargets !== null}
+        targets={mergeTargets ?? []}
+        onOpenChange={(open) => {
+          if (!open) setMergeTargets(null)
+        }}
+        onConfirm={handleMergeConfirm}
+      />
 
       {isMobile && (
         <ModelPricingSheet
@@ -911,6 +955,7 @@ export const ModelRatioVisualEditor = memo(
       prevProps.modelPrice === nextProps.modelPrice &&
       prevProps.videoPrice === nextProps.videoPrice &&
       prevProps.imagePrice === nextProps.imagePrice &&
+      prevProps.modelAliases === nextProps.modelAliases &&
       prevProps.modelRatio === nextProps.modelRatio &&
       prevProps.cacheRatio === nextProps.cacheRatio &&
       prevProps.createCacheRatio === nextProps.createCacheRatio &&

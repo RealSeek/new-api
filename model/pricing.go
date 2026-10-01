@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/model_alias_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 )
@@ -37,8 +38,15 @@ type Pricing struct {
 	BillingExpr            string                          `json:"billing_expr,omitempty"`
 	VideoPrice             *ratio_setting.VideoPriceConfig `json:"video_price,omitempty"`
 	ImagePrice             ratio_setting.ImagePriceConfig  `json:"image_price,omitempty"`
+	ResolutionAliasPrices  []ResolutionAliasPrice          `json:"resolution_alias_prices,omitempty"`
 	PricingVersion         string                          `json:"pricing_version,omitempty"`
 }
+
+// ResolutionAliasPrice 是合并模型在某个分辨率档位下的展示单价。
+type ResolutionAliasPrice struct {
+	Resolution string  `json:"resolution"`
+	Price      float64 `json:"price"`
+	Unit       string  `json:"unit"` // second / request
 
 type PricingVendor struct {
 	ID          int    `json:"id"`
@@ -194,6 +202,35 @@ func appendPricingEndpoint(endpoints []string, endpoint string) []string {
 		return endpoints
 	}
 	return append(endpoints, endpoint)
+}
+
+// buildResolutionAliasPrices 汇总合并模型各分辨率变体的展示单价。
+// 变体的计费方式不一致时以第一档为准（单位取首个有价档位）。
+func buildResolutionAliasPrices(alias model_alias_setting.ResolutionAlias) []ResolutionAliasPrice {
+	rows := make([]ResolutionAliasPrice, 0, len(alias.Resolutions))
+	for _, resolution := range alias.ResolutionLabels() {
+		variant := alias.Resolutions[resolution]
+		price, unit, ok := resolutionVariantPrice(variant)
+		if !ok {
+			continue
+		}
+		rows = append(rows, ResolutionAliasPrice{Resolution: resolution, Price: price, Unit: unit})
+	}
+	return rows
+}
+
+// resolutionVariantPrice 返回某个变体模型的展示单价与单位（second/request）。
+func resolutionVariantPrice(variant string) (float64, string, bool) {
+	if billing_setting.GetBillingMode(variant) == billing_setting.BillingModePerSecond {
+		if price, ok := ratio_setting.GetVideoPrice(variant, "default"); ok {
+			return price, "second", true
+		}
+		return 0, "", false
+	}
+	if price, ok := ratio_setting.GetModelPrice(variant, false); ok {
+		return price, "request", true
+	}
+	return 0, "", false
 }
 
 func updatePricing() {
@@ -435,6 +472,16 @@ func updatePricing() {
 		}
 		if imagePrice, ok := ratio_setting.GetImagePriceConfig(model); ok && len(imagePrice) > 0 {
 			pricing.ImagePrice = imagePrice
+		}
+		if alias, ok := model_alias_setting.GetResolutionAlias(model); ok {
+			pricing.ResolutionAliasPrices = buildResolutionAliasPrices(alias)
+			if len(pricing.ResolutionAliasPrices) > 0 {
+				if pricing.ResolutionAliasPrices[0].Unit == "second" {
+					pricing.QuotaType = 2
+				} else {
+					pricing.QuotaType = 1
+				}
+			}
 		}
 		pricingMap = append(pricingMap, pricing)
 	}

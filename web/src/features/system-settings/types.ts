@@ -210,6 +210,7 @@ export type ModelSettings = {
   ModelPrice: string
   VideoPrice: string
   ImagePrice: string
+  ModelAliases: string
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string
@@ -273,6 +274,7 @@ export type BillingSettings = {
   ModelPrice: string
   VideoPrice: string
   ImagePrice: string
+  ModelAliases: string
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string

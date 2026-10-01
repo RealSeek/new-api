@@ -586,6 +586,7 @@ function PriceSection(props: {
   const isTokenBased = isTokenBasedModel(props.model)
   const isPerSecond = isPerSecondModel(props.model)
   const isImagePriceModel = hasImagePrices(props.model)
+  const aliasPrices = props.model.resolution_alias_prices || []
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
   const baseGroupKey = '_base'
   const baseGroupRatioMap = { [baseGroupKey]: 1 }
@@ -709,6 +710,39 @@ function PriceSection(props: {
             </div>
           </div>
         )}
+      </section>
+    )
+  }
+
+  if (aliasPrices.length > 0) {
+    return (
+      <section>
+        <SectionTitle>{t('Resolution prices')}</SectionTitle>
+        <div className='grid grid-cols-2 gap-2'>
+          {aliasPrices.map((row) => (
+            <div
+              key={row.resolution}
+              className='bg-muted/20 rounded-lg border p-3'
+            >
+              <div className='text-muted-foreground text-xs'>
+                {row.resolution.toUpperCase()}
+              </div>
+              <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
+                {formatUnitPriceForGroup(
+                  row.price,
+                  baseGroupKey,
+                  props.showRechargePrice,
+                  props.priceRate,
+                  props.usdExchangeRate,
+                  baseGroupRatioMap
+                )}
+                <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
+                  / {row.unit === 'second' ? t('second') : t('request')}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
     )
   }
@@ -955,6 +989,7 @@ function GroupPricingSection(props: {
   const isTokenBased = isTokenBasedModel(props.model)
   const isPerSecond = isPerSecondModel(props.model)
   const isImagePriceModel = hasImagePrices(props.model)
+  const aliasPrices = props.model.resolution_alias_prices || []
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
 
   const extraPriceTypes = useMemo(() => {
@@ -1168,9 +1203,34 @@ function GroupPricingSection(props: {
     </>
   )
 
+  const renderAliasGroupPrice = (group: string) => (
+    <>
+      {aliasPrices.map((row) => (
+        <div key={row.resolution} className='whitespace-nowrap'>
+          <span className='text-muted-foreground/70 mr-1 text-[10px]'>
+            {row.resolution.toUpperCase()}
+          </span>
+          {formatUnitPriceForGroup(
+            row.price,
+            group,
+            showRechargePrice,
+            props.priceRate,
+            props.usdExchangeRate,
+            props.groupRatio
+          )}
+          <span className='text-muted-foreground/50 ml-1 text-[10px]'>
+            / {row.unit === 'second' ? t('second') : t('request')}
+          </span>
+        </div>
+      ))}
+    </>
+  )
+
   let renderGroupPriceCell: (group: string) => React.ReactNode =
     renderFixedGroupPrice
-  if (isPerSecond) {
+  if (aliasPrices.length > 0) {
+    renderGroupPriceCell = renderAliasGroupPrice
+  } else if (isPerSecond) {
     renderGroupPriceCell = renderPerSecondGroupPrice
   } else if (isImagePriceModel) {
     renderGroupPriceCell = renderImageGroupPrice

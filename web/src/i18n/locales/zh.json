@@ -5392,6 +5392,20 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Merge models": "合并模型",
+    "Merge into one model": "合并为一个模型",
+    "Alias model name": "合并后的模型名（别名）",
+    "Default resolution": "默认分辨率",
+    "Resolution variants": "分辨率变体",
+    "Merge": "合并",
+    "Select at least two models to merge": "请至少选择两个模型进行合并",
+    "Alias name and at least one resolution are required": "请填写别名并至少配置一个分辨率",
+    "Default resolution must be one of the merged resolutions": "默认分辨率必须是已配置的分辨率之一",
+    "Merge applied, save the page to take effect": "合并已写入表单，请保存后生效",
+    "Clients request the alias with a resolution; the matching variant is used for billing and forwarding.": "客户端用别名 + resolution 请求，平台按分辨率匹配到具体变体用于计费与转发。",
+    "Confirm, then save the pricing page to apply. Only the selected models are merged.": "确认后请保存页面生效；只有被勾选的模型会被合并。",
+    "Merged model aliases": "合并模型别名",
+    "JSON map of alias model to its resolution variants. Clients request the alias with a resolution; billing and forwarding use the matching variant.": "别名模型到分辨率变体的 JSON 映射。客户端用别名 + resolution 请求，计费与转发按匹配到的变体执行。"
   }
 }

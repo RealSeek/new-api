@@ -46,6 +46,7 @@ const defaultModelSettings: ModelSettings = {
   ModelPrice: '',
   VideoPrice: '{}',
   ImagePrice: '{}',
+  ModelAliases: '{}',
   ModelRatio: '',
   CacheRatio: '',
   CreateCacheRatio: '',

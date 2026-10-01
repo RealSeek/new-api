@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_alias_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -144,6 +145,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
 	common.OptionMap["VideoPrice"] = ratio_setting.VideoPrice2JSONString()
 	common.OptionMap["ImagePrice"] = ratio_setting.ImagePrice2JSONString()
+	common.OptionMap["ModelAliases"] = model_alias_setting.ModelAliasesJSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
 	common.OptionMap["CreateCacheRatio"] = ratio_setting.CreateCacheRatio2JSONString()
 	common.OptionMap["GroupRatio"] = ratio_setting.GroupRatio2JSONString()
@@ -216,6 +218,9 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "ImagePrice" {
 		return ratio_setting.ValidateImagePriceJSONString(value)
+	}
+	if key == "ModelAliases" {
+		return model_alias_setting.ValidateModelAliasesJSONString(value)
 	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
@@ -581,6 +586,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = ratio_setting.UpdateVideoPriceByJSONString(value)
 	case "ImagePrice":
 		err = ratio_setting.UpdateImagePriceByJSONString(value)
+	case "ModelAliases":
+		err = model_alias_setting.UpdateModelAliasesByJSONString(value)
 	case "CacheRatio":
 		err = ratio_setting.UpdateCacheRatioByJSONString(value)
 	case "CreateCacheRatio":

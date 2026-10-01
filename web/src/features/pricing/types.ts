@@ -63,6 +63,8 @@ export type PricingModel = {
   }
   /** Per-image prices by resolution tier (1k/2k/4k) for per-request image models */
   image_price?: Record<string, number>
+  /** 合并模型各分辨率档位的展示单价（unit: second/request） */
+  resolution_alias_prices?: { resolution: string; price: number; unit: string }[]
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**

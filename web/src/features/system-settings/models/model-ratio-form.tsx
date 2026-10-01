@@ -51,6 +51,7 @@ type ModelFormValues = {
   ModelPrice: string
   VideoPrice: string
   ImagePrice: string
+  ModelAliases: string
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string
@@ -77,6 +78,7 @@ type ModelJsonFieldName =
   | 'ModelPrice'
   | 'VideoPrice'
   | 'ImagePrice'
+  | 'ModelAliases'
   | 'ModelRatio'
   | 'CacheRatio'
   | 'CreateCacheRatio'
@@ -107,6 +109,12 @@ const modelJsonFields: Array<{
     labelKey: 'Image resolution pricing',
     descriptionKey:
       'JSON map of model to per-image prices by resolution (1k/2k/4k).',
+  },
+  {
+    name: 'ModelAliases',
+    labelKey: 'Merged model aliases',
+    descriptionKey:
+      'JSON map of alias model to its resolution variants. Clients request the alias with a resolution; billing and forwarding use the matching variant.',
   },
   {
     name: 'ModelRatio',
@@ -305,6 +313,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               billingExpr={form.watch('BillingExpr')}
               videoPrice={form.watch('VideoPrice')}
               imagePrice={form.watch('ImagePrice')}
+              modelAliases={form.watch('ModelAliases')}
               candidateModelNames={
                 isUnsetVariant ? enabledModelsQuery.data?.data : undefined
               }

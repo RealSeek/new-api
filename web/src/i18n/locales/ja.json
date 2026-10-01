@@ -5392,6 +5392,20 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Merge models": "Merge models",
+    "Merge into one model": "Merge into one model",
+    "Alias model name": "Alias model name",
+    "Default resolution": "Default resolution",
+    "Resolution variants": "Resolution variants",
+    "Merge": "Merge",
+    "Select at least two models to merge": "Select at least two models to merge",
+    "Alias name and at least one resolution are required": "Alias name and at least one resolution are required",
+    "Default resolution must be one of the merged resolutions": "Default resolution must be one of the merged resolutions",
+    "Merge applied, save the page to take effect": "Merge applied, save the page to take effect",
+    "Clients request the alias with a resolution; the matching variant is used for billing and forwarding.": "Clients request the alias with a resolution; the matching variant is used for billing and forwarding.",
+    "Confirm, then save the pricing page to apply. Only the selected models are merged.": "Confirm, then save the pricing page to apply. Only the selected models are merged.",
+    "Merged model aliases": "Merged model aliases",
+    "JSON map of alias model to its resolution variants. Clients request the alias with a resolution; billing and forwarding use the matching variant.": "JSON map of alias model to its resolution variants. Clients request the alias with a resolution; billing and forwarding use the matching variant."
   }
 }

@@ -180,6 +180,29 @@ export function usePricingColumns(
         }
 
         const isTokenBased = isTokenBasedModel(model)
+        const aliasPrices = model.resolution_alias_prices || []
+
+        if (aliasPrices.length > 0) {
+          const first = aliasPrices[0]
+          return (
+            <div className='max-w-full min-w-0'>
+              <span className='font-mono text-sm tabular-nums'>
+                {`${first.resolution.toUpperCase()} `}
+                {formatUnitPrice(
+                  model,
+                  first.price,
+                  showRechargePrice,
+                  priceRate,
+                  usdExchangeRate,
+                  selectedGroup
+                )}
+              </span>
+              <div className='text-muted-foreground/50 text-[10px]'>
+                / {first.unit === 'second' ? t('second') : t('request')}
+              </div>
+            </div>
+          )
+        }
 
         if (hasImagePrices(model)) {
           const prices = Object.entries(model.image_price || {})

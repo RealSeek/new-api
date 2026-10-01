@@ -306,6 +306,7 @@ export function ModelMutateDrawer({
       ModelPrice: '',
       VideoPrice: '{}',
       ImagePrice: '{}',
+      ModelAliases: '{}',
       ModelRatio: '',
       CacheRatio: '',
       CompletionRatio: '',

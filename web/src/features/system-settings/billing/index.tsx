@@ -44,6 +44,7 @@ const defaultBillingSettings: BillingSettings = {
   ModelPrice: '',
   VideoPrice: '{}',
   ImagePrice: '{}',
+  ModelAliases: '{}',
   ModelRatio: '',
   CacheRatio: '',
   CreateCacheRatio: '',

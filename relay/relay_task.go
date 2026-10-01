@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/model_alias_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -177,13 +178,25 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
 
+	// 2.6 合并模型：客户端只请求别名，按请求里的分辨率解析到具体变体。
+	// 变体名用于转发（UpstreamModelName）与计价，日志/任务记录仍保留别名。
+	pricingModelName := modelName
+	if alias, ok := model_alias_setting.GetResolutionAlias(modelName); ok {
+		variant, _, aliasErr := model_alias_setting.ResolveAliasVariant(alias, taskResolutionCandidates(c))
+		if aliasErr != nil {
+			return nil, service.TaskErrorWrapperLocal(fmt.Errorf("模型 %s：%s", modelName, aliasErr.Error()), "invalid_resolution", http.StatusBadRequest)
+		}
+		pricingModelName = variant
+		info.UpstreamModelName = variant
+	}
+
 	// 3. 预生成公开 task ID（仅首次）
 	if info.PublicTaskID == "" {
 		info.PublicTaskID = model.GenerateTaskID()
 	}
 
-	// 4. 价格计算：基础模型价格
-	info.OriginModelName = modelName
+	// 4. 价格计算：基础模型价格（合并模型按解析出的变体计价）
+	info.OriginModelName = pricingModelName
 	priceData, err := helper.ModelPriceHelperPerCall(c, info)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
@@ -202,6 +215,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
 	}
+
+	// 计价结束：对外（日志、任务、账单上下文）恢复展示合并名，转发仍用变体名。
+	info.OriginModelName = modelName
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {
@@ -258,6 +274,26 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+// taskResolutionCandidates 汇总任务请求里可能携带分辨率的字段。
+// explicit 是文档约定的 resolution 字段（与 metadata.resolution）；
+// fallback 是 size 归一化结果，仅在能命中配置的档位时才使用。
+func taskResolutionCandidates(c *gin.Context) (explicit []string, fallback []string) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, nil
+	}
+	if value := strings.TrimSpace(req.Resolution); value != "" {
+		explicit = append(explicit, value)
+	}
+	if value, ok := req.Metadata["resolution"].(string); ok && strings.TrimSpace(value) != "" {
+		explicit = append(explicit, strings.TrimSpace(value))
+	}
+	if value := strings.TrimSpace(req.Size); value != "" {
+		fallback = append(fallback, relaycommon.NormalizeVideoResolution(value))
+	}
+	return explicit, fallback
 }
 
 func applyPerSecondBilling(info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) {

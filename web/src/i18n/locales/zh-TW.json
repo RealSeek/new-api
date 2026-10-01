@@ -5392,6 +5392,20 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Merge models": "合併模型",
+    "Merge into one model": "合併為一個模型",
+    "Alias model name": "合併後的模型名（別名）",
+    "Default resolution": "預設解析度",
+    "Resolution variants": "解析度變體",
+    "Merge": "合併",
+    "Select at least two models to merge": "請至少選擇兩個模型進行合併",
+    "Alias name and at least one resolution are required": "請填寫別名並至少配置一個解析度",
+    "Default resolution must be one of the merged resolutions": "預設解析度必須是已配置的解析度之一",
+    "Merge applied, save the page to take effect": "合併已寫入表單，請儲存後生效",
+    "Clients request the alias with a resolution; the matching variant is used for billing and forwarding.": "客戶端以別名 + resolution 請求，平台依解析度匹配具體變體用於計費與轉發。",
+    "Confirm, then save the pricing page to apply. Only the selected models are merged.": "確認後請儲存頁面生效；只有被勾選的模型會被合併。",
+    "Merged model aliases": "合併模型別名",
+    "JSON map of alias model to its resolution variants. Clients request the alias with a resolution; billing and forwarding use the matching variant.": "別名模型到解析度變體的 JSON 映射。客戶端以別名 + resolution 請求，計費與轉發依匹配到的變體執行。"
   }
 }
