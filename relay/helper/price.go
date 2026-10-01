@@ -11,6 +11,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/model_alias_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
@@ -268,7 +269,12 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 	return priceData, nil
 }
 
+// HasModelBillingConfig 判断模型是否可直接对外提供：
+// 合并模型（别名）的价格在分辨率变体上，自身没有价格配置，但同样可对外提供。
 func HasModelBillingConfig(modelName string) bool {
+	if _, ok := model_alias_setting.GetResolutionAlias(modelName); ok {
+		return true
+	}
 	if billing_setting.GetBillingMode(modelName) == billing_setting.BillingModePerSecond {
 		_, ok := ratio_setting.GetVideoPriceConfig(modelName)
 		return ok

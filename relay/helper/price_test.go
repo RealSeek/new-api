@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_alias_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -89,6 +90,27 @@ func TestHasModelBillingConfigAcceptsPerSecondPrice(t *testing.T) {
 	}`))
 
 	require.True(t, HasModelBillingConfig("video-test"))
+}
+
+// 合并模型的价格在分辨率变体上，模型列表不能因其自身没有价格而过滤掉它。
+func TestHasModelBillingConfigAcceptsResolutionAlias(t *testing.T) {
+	savedConfig := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		savedConfig[key] = value
+		return nil
+	}))
+	originalAliases := model_alias_setting.ModelAliasesJSONString()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(savedConfig))
+		require.NoError(t, model_alias_setting.UpdateModelAliasesByJSONString(originalAliases))
+	})
+
+	require.NoError(t, model_alias_setting.UpdateModelAliasesByJSONString(`{
+		"MiniMaxH3": {"default_resolution": "720p", "resolutions": {"720p": "MiniMaxH3-720p"}}
+	}`))
+
+	require.True(t, HasModelBillingConfig("MiniMaxH3"))
+	require.False(t, HasModelBillingConfig("model-without-any-price"))
 }
 
 func TestModelPriceHelperTieredPreConsumeMaxTokensFallback(t *testing.T) {
