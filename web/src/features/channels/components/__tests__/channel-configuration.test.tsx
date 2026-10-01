@@ -44,6 +44,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import type { TaskPluginOption } from '../../api'
 import {
   CHANNEL_TYPE_OLLAMA,
+  CHANNEL_TYPE_RS_GATEWAY,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
@@ -55,7 +56,9 @@ import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 const originalAuth = useAuthStore.getState().auth
 let client: QueryClient
 let editingChannel: Channel
-let pluginOptions: TaskPluginOption[]
+let pluginOptions: Array<
+  Omit<TaskPluginOption, 'models'> & { models: string[] | null }
+>
 const plugins: TaskPluginOption[] = [
   {
     key: 'video-a',
@@ -224,6 +227,62 @@ function useWideScreen() {
     toJSON: () => ({}),
   } as DOMRect)
 }
+
+test.each(['create', 'edit'] as const)(
+  'opening the %s gateway drawer with null plugin models keeps model configuration usable',
+  async (mode) => {
+    pluginOptions = [
+      ...plugins,
+      {
+        key: 'rs-gateway',
+        name: 'RS Gateway',
+        models: null,
+        channelTypes: [CHANNEL_TYPE_RS_GATEWAY],
+      },
+    ]
+    editingChannel.type = CHANNEL_TYPE_RS_GATEWAY
+    const user = userEvent.setup()
+    render(
+      <ConfigurationHarness
+        initialOpen={false}
+        currentRow={mode === 'edit' ? editingChannel : undefined}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Open channel' }))
+    if (mode === 'create') {
+      await user.click(await screen.findByRole('option', { name: /#61/ }))
+    }
+    expect(await screen.findByRole('textbox', { name: 'Name *' })).toBeVisible()
+    expect(
+      screen.getByRole('tab', { name: /Connection & Models/ })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.queryByRole('group', { name: 'Plugin extensions' })
+    ).not.toBeInTheDocument()
+    if (mode === 'create') {
+      await user.click(
+        screen.getByRole('combobox', {
+          name: 'Select models or add custom ones',
+        })
+      )
+      await user.click(
+        await screen.findByRole('option', { name: 'custom-model' })
+      )
+      await user.keyboard('{Escape}')
+    }
+    await user.click(screen.getByRole('button', { name: 'Configure Models' }))
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Configure Models',
+    })
+    expect(dialog).toBeVisible()
+    expect(
+      within(dialog).queryByRole('tab', { name: 'RS Gateway' })
+    ).not.toBeInTheDocument()
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'custom-model' })
+    ).toBeChecked()
+  }
+)
 
 test('changing built-in providers updates server-provided URL placeholders without replacing the draft address', async () => {
   const user = userEvent.setup()

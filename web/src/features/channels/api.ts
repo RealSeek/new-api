@@ -79,9 +79,13 @@ export type TaskPluginOption = {
 export async function getTaskPluginOptions(): Promise<TaskPluginOption[]> {
   const response = await api.get<{
     success: boolean
-    data: TaskPluginOption[]
+    data: Array<Omit<TaskPluginOption, 'models'> & { models: string[] | null }>
   }>('/api/task_plugin_options')
-  return requireServerSuccess(response.data).data
+  // Plugins bound by channel type may have no models; Go encodes a nil slice as null.
+  return requireServerSuccess(response.data).data.map((plugin) => ({
+    ...plugin,
+    models: plugin.models ?? [],
+  }))
 }
 
 export type CodexUsageResponse = {
