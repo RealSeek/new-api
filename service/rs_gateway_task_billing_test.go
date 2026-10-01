@@ -5,12 +5,82 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestRSGatewayConcurrentTaskRefundCreditsOnce(t *testing.T) {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		t.Skip("concurrent row locking requires a real MySQL or PostgreSQL test database")
+	}
+	for _, funding := range []string{BillingSourceWallet, BillingSourceSubscription} {
+		t.Run(funding, func(t *testing.T) {
+			truncate(t)
+			seedUser(t, 1, 10000)
+			seedToken(t, 1, 1, "concurrent-gateway-token", 5000)
+			seedChannel(t, 1)
+			seedChargedAccounting(t, 1, 1, 1, 3000, 1)
+			subscriptionID := 0
+			if funding == BillingSourceSubscription {
+				subscriptionID = 1
+				seedSubscription(t, 1, 1, 10000, 3000)
+			}
+			require.NoError(t, model.DB.AutoMigrate(&model.RSGatewaySettlement{}, &model.SubscriptionPreConsumeRecord{}))
+			task := makeTask(1, 1, 3000, 1, funding, subscriptionID)
+			task.Platform, task.Status = "rs-gateway", model.TaskStatusFailure
+			require.NoError(t, model.DB.Create(task).Error)
+			requestID := fmt.Sprintf("task-refund:%d", task.ID)
+			t.Cleanup(func() {
+				require.NoError(t, model.DB.Where("request_id = ?", requestID).Delete(&model.RSGatewaySettlement{}).Error)
+			})
+			start := make(chan struct{})
+			results := make(chan struct {
+				quota int
+				err   error
+			}, 2)
+			for range 2 {
+				stale := *task
+				go func() {
+					<-start
+					quota, err := model.RefundRSGatewayTaskQuota(&stale)
+					results <- struct {
+						quota int
+						err   error
+					}{quota, err}
+				}()
+			}
+			close(start)
+			totalRefund := 0
+			for range 2 {
+				result := <-results
+				require.NoError(t, result.err)
+				totalRefund += result.quota
+			}
+			assert.Equal(t, 3000, totalRefund)
+			wantWallet := 13000
+			if funding == BillingSourceSubscription {
+				wantWallet = 10000
+				var sub model.UserSubscription
+				require.NoError(t, model.DB.First(&sub, subscriptionID).Error)
+				assert.Zero(t, sub.AmountUsed)
+			}
+			assert.Equal(t, wantWallet, getUserQuota(t, 1))
+			assert.Zero(t, getTaskQuota(t, task.ID))
+			var token model.Token
+			require.NoError(t, model.DB.First(&token, 1).Error)
+			assert.Equal(t, 8000, token.RemainQuota)
+			assert.Zero(t, token.UsedQuota)
+			var ledger model.RSGatewaySettlement
+			require.NoError(t, model.DB.Where("request_id = ?", requestID).First(&ledger).Error)
+			assert.Equal(t, "refunded", ledger.State)
+			assert.Zero(t, ledger.Quota)
+		})
+	}
+}
 
 func TestRSGatewayTaskRefundRollsBackTokenFailureAndPollingRetries(t *testing.T) {
 	for _, funding := range []string{BillingSourceWallet, BillingSourceSubscription} {

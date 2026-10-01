@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -23,11 +24,32 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	dialect := common.DatabaseType(os.Getenv("TEST_TASK_DB_DIALECT"))
+	var driver gorm.Dialector
+	switch dialect {
+	case "", common.DatabaseTypeSQLite:
+		dialect = common.DatabaseTypeSQLite
+		driver = sqlite.Open(":memory:")
+	case common.DatabaseTypeMySQL:
+		if os.Getenv("TEST_MYSQL_DSN") == "" {
+			panic("TEST_MYSQL_DSN is required for service database tests")
+		}
+		driver = mysql.Open(os.Getenv("TEST_MYSQL_DSN"))
+	case common.DatabaseTypePostgreSQL:
+		if os.Getenv("TEST_POSTGRES_DSN") == "" {
+			panic("TEST_POSTGRES_DSN is required for service database tests")
+		}
+		driver = postgres.New(postgres.Config{DSN: os.Getenv("TEST_POSTGRES_DSN"), PreferSimpleProtocol: true})
+	default:
+		panic("unsupported service test database dialect: " + string(dialect))
+	}
+	db, err := gorm.Open(driver, &gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
 	}
@@ -35,12 +57,16 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to get sql.DB: " + err.Error())
 	}
-	sqlDB.SetMaxOpenConns(1)
+	if dialect == common.DatabaseTypeSQLite {
+		sqlDB.SetMaxOpenConns(1)
+	} else {
+		sqlDB.SetMaxOpenConns(4)
+	}
 
 	model.DB = db
 	model.LOG_DB = db
 
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(dialect, dialect)
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -59,6 +85,15 @@ func TestMain(m *testing.M) {
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
+	var version string
+	versionQuery := "SELECT version()"
+	if dialect == common.DatabaseTypeSQLite {
+		versionQuery = "SELECT sqlite_version()"
+	}
+	if err := db.Raw(versionQuery).Scan(&version).Error; err != nil {
+		panic("failed to read test database version: " + err.Error())
+	}
+	fmt.Printf("service test database: %s %s\n", dialect, version)
 
 	os.Exit(m.Run())
 }

@@ -52,3 +52,15 @@ SQLite 回归已运行；未连接生产数据库，也未运行真实 MySQL/Pos
 5. 确认新增访问令牌设置及旧令牌退役期限符合使用安排，再切换流量。
 
 回滚应同时恢复旧镜像和升级前数据库备份；仅回退代码不能撤销任务 platform 等数据库迁移。
+
+## PostgreSQL 发布前验证（2026-10-02）
+
+在服务器使用已有 `postgres:15` 镜像建立独立内部网络和独立数据卷，实际版本为 **PostgreSQL 15.17**。测试容器未连接生产网络或数据库。服务测试夹具现在也支持 `TEST_TASK_DB_DIALECT` 和相应 DSN；这些夹具会创建及清理测试数据，只能连接隔离测试库。
+
+- Windows / Go 1.26.1：`go test ./service -run 'TestRSGatewayTaskRefund|TestRSGatewayMigratedTaskRefund|TestRSGatewayConcurrentTaskRefund|TestRefundTaskQuota' -count=1 -timeout=150s` 通过，SQLite 仍走原有单连接夹具；并发数据库行锁案例在 SQLite 下明确跳过。
+- 使用 `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOWORK=off GOEXPERIMENT=greenteagc go test -c` 构建 service 和 controller 测试程序，在隔离 Docker 容器中以 `TEST_TASK_DB_DIALECT=postgres` 和 `TEST_POSTGRES_DSN` 运行。
+- service 测试程序以 `-test.run 'TestRSGatewayTaskRefund|TestRSGatewayMigratedTaskRefund|TestRSGatewayConcurrentTaskRefund|TestRefundTaskQuota' -test.v -test.timeout 150s` 通过：钱包/订阅退款、令牌故障回滚、轮询重试、历史任务退款，以及两个数据库连接同时退款只入账一次。
+- controller 测试程序以 `-test.run '^TestRSGatewayVideoSubmissionPersistsAndChargesOnce$' -test.v -test.timeout 150s` 通过：真实提交、预扣/结算、任务与密钥保存、任务写入故障回滚、退款与重复退款，以及 Playground 不增加未预扣令牌余额。
+- 新版的时间区间生成和星期本地化已覆盖服务器旧版未提交修复，相关 `time-rule-expr.test.ts` / `billing-expression.test.ts` 共 **110** 个用例通过；服务器原始补丁单独备份，未重复移植旧实现。
+
+本轮补齐了上述 PostgreSQL 事务与并发行锁验证。生产数据副本的启动迁移与部署结果另存服务器发布记录。**真实 MySQL 验证仍缺失，不能宣称三种数据库完整兼容性验证已完成。**
