@@ -20,6 +20,7 @@ func TestGenerateTextOtherInfoPrefersUpstreamFirstByte(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	info := &relaycommon.RelayInfo{
+		ChannelMeta:         &relaycommon.ChannelMeta{},
 		StartTime:           time.Now().Add(-73 * time.Second),
 		FirstResponseTime:   time.Now().Add(-16 * time.Second),
 		UpstreamFirstByteMs: 29528,
@@ -42,6 +43,7 @@ func TestGenerateTextOtherInfoKeepsMeasuredFirstByteWithoutUpstream(t *testing.T
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	info := &relaycommon.RelayInfo{
+		ChannelMeta:       &relaycommon.ChannelMeta{},
 		StartTime:         time.Now().Add(-10 * time.Second),
 		FirstResponseTime: time.Now().Add(-7 * time.Second),
 	}
