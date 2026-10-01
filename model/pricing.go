@@ -47,6 +47,7 @@ type ResolutionAliasPrice struct {
 	Resolution string  `json:"resolution"`
 	Price      float64 `json:"price"`
 	Unit       string  `json:"unit"` // second / request
+}
 
 type PricingVendor struct {
 	ID          int    `json:"id"`
