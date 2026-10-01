@@ -182,7 +182,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 变体名用于转发（UpstreamModelName）与计价，日志/任务记录仍保留别名。
 	pricingModelName := modelName
 	if alias, ok := model_alias_setting.GetResolutionAlias(modelName); ok {
-		variant, _, aliasErr := model_alias_setting.ResolveAliasVariant(alias, taskResolutionCandidates(c))
+		explicit, fallback := taskResolutionCandidates(c)
+		variant, _, aliasErr := model_alias_setting.ResolveAliasVariant(alias, explicit, fallback)
 		if aliasErr != nil {
 			return nil, service.TaskErrorWrapperLocal(fmt.Errorf("模型 %s：%s", modelName, aliasErr.Error()), "invalid_resolution", http.StatusBadRequest)
 		}
