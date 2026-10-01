@@ -63,7 +63,8 @@ import {
   getSnapshotSignature,
   isBasePricingUnset,
   type ModelRow,
-} from './model-pricing-snapshots'import { buildModelRatioColumns } from './model-ratio-table-columns'
+} from './model-pricing-snapshots'
+import { buildModelRatioColumns } from './model-ratio-table-columns'
 import {
   type ResolutionAliasConfig,
   MergeModelAliasDialog,
