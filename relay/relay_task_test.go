@@ -519,6 +519,7 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 		videoInput              bool
 		reservedSeconds         float64
 		price                   float64
+		surcharge               float64
 		aliasPrice              *ratio_setting.VideoPriceConfig
 		aliasExpression         string
 		metadataResolution      string
@@ -537,6 +538,8 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 		{name: "alias expression replaces legacy variant tariff", model: "seedance-2.0", resolution: "720p", duration: &automaticDuration, reservedSeconds: 15, price: 0.9, aliasExpression: `tier("video", u("seconds") * 0.9)`},
 		{name: "resolution and reference video select second tariff", model: "seedance-2.0", resolution: "1080p", duration: &automaticDuration, videoInput: true, reservedSeconds: 15, price: 2.2, aliasExpression: `u("resolution") == "1080p" && u("video_input") == true ? tier("reference", u("seconds") * 2.2) : tier("base", u("seconds") * 0.57)`},
 		{name: "same resolution without reference uses independent tariff", model: "seedance-2.0", resolution: "1080p", duration: &automaticDuration, reservedSeconds: 15, price: 0.57, aliasExpression: `u("resolution") == "1080p" && u("video_input") == true ? tier("reference", u("seconds") * 2.2) : tier("base", u("seconds") * 0.57)`},
+		{name: "reference video fixed surcharge settles once", model: "seedance-2.0", resolution: "720p", duration: &automaticDuration, videoInput: true, reservedSeconds: 15, price: 0.5, surcharge: 1.2, aliasExpression: `u("video_input") == true ? tier("reference", u("seconds") * 0.5 + 1.2) : tier("base", u("seconds") * 0.5)`},
+		{name: "reference surcharge does not apply without video", model: "seedance-2.0", resolution: "720p", duration: &automaticDuration, reservedSeconds: 15, price: 0.5, aliasExpression: `u("video_input") == true ? tier("reference", u("seconds") * 0.5 + 1.2) : tier("base", u("seconds") * 0.5)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(prices))
@@ -570,6 +573,7 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 					assert.Equal(t, tc.aliasExpression, publicPricing.BillingExpr)
 					assert.True(t, publicPricing.BillingUsageSchema["resolution"].AllowCustomValues)
 					assert.Equal(t, "second", publicPricing.BillingUsageSchema["seconds"].Unit)
+					assert.NotContains(t, publicPricing.BillingUsageSchema, "web_search_calls")
 					assert.Empty(t, publicPricing.ResolutionAliasPrices)
 				} else {
 					assert.Equal(t, []model.ResolutionAliasPrice{{Resolution: "480p", Price: 0.57, Unit: "second"}, {Resolution: "720p", Price: 0.95, Unit: "second"}, {Resolution: "1080p", Price: 2.2, Unit: "second"}, {Resolution: "4k", Price: 4.3, Unit: "second"}}, publicPricing.ResolutionAliasPrices)
@@ -636,7 +640,7 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 			require.NotNil(t, snapshot)
 			assert.Equal(t, tc.reservedSeconds, snapshot.UsageFacts["seconds"])
 			assert.Equal(t, tc.videoInput, snapshot.UsageFacts["video_input"])
-			assert.Equal(t, common.QuotaRound(tc.reservedSeconds*tc.price*common.QuotaPerUnit*snapshot.GroupRatio), result.Quota)
+			assert.Equal(t, common.QuotaRound((tc.reservedSeconds*tc.price+tc.surcharge)*common.QuotaPerUnit*snapshot.GroupRatio), result.Quota)
 			// Changing the tariff cannot alter a task already reserved at the old price.
 			require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(`{}`))
 			task := model.InitTask(constant.TaskPlatform("rs-gateway"), info)
@@ -666,7 +670,7 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 					settled, usage, err := service.EvaluateTaskCompletionUsage(snapshot, parsed.UsageFacts)
 					require.NoError(t, err)
 					assert.Equal(t, completion.seconds, usage["seconds"])
-					assert.Equal(t, common.QuotaRound(completion.seconds*tc.price*common.QuotaPerUnit*snapshot.GroupRatio), settled.ActualQuotaAfterGroup)
+					assert.Equal(t, common.QuotaRound((completion.seconds*tc.price+tc.surcharge)*common.QuotaPerUnit*snapshot.GroupRatio), settled.ActualQuotaAfterGroup)
 					assert.Equal(t, tc.reservedSeconds, snapshot.UsageFacts["seconds"])
 				})
 			}

@@ -143,14 +143,15 @@ it('adds custom resolution rows, saves per-second prices and restores them when 
     },
     schema
   )
-  expect(
-    screen.getByRole('combobox', { name: 'Billing unit' })
-  ).toHaveTextContent('Per-second')
+  expect(screen.getByRole('button', { name: 'Per-second' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   const custom = screen.getByRole('textbox', { name: 'Custom resolution' })
   fireEvent.change(custom, { target: { value: '1440p' } })
   fireEvent.keyDown(custom, { key: 'Enter' })
   const rowPrice = screen.getByRole('textbox', {
-    name: 'Unit price: seconds: resolution: 1440p · video_input: Yes',
+    name: 'Unit price: seconds: resolution: 1440p',
   })
   fireEvent.change(rowPrice, { target: { value: '2.2' } })
   const saved = await commit(editor.ref)
@@ -168,18 +169,17 @@ it('adds custom resolution rows, saves per-second prices and restores them when 
   renderEditor(saved ?? {}, schema)
   expect(
     screen.getByRole('textbox', {
-      name: 'Unit price: seconds: resolution: 1440p · video_input: Yes',
+      name: 'Unit price: seconds: resolution: 1440p',
     })
   ).toHaveValue('2.2')
   const user = userEvent.setup()
-  await user.click(screen.getByRole('combobox', { name: 'Billing unit' }))
-  await user.click(await screen.findByRole('option', { name: 'Per-token' }))
+  await user.click(screen.getByRole('button', { name: 'Per-token' }))
   expect(
     screen.queryByRole('textbox', { name: /Unit price: seconds:/ })
   ).not.toBeInTheDocument()
   expect(
     screen.getByRole('textbox', {
-      name: 'Unit price: tokens: resolution: 1440p · video_input: Yes',
+      name: 'Unit price: tokens: resolution: 1440p',
     })
   ).toHaveValue('0')
 })
@@ -194,10 +194,177 @@ it('opens saved video token prices in the token billing unit without changing ch
       resolution: { enum: ['720p'], allowCustomValues: true },
     }
   )
-  expect(
-    screen.getByRole('combobox', { name: 'Billing unit' })
-  ).toHaveTextContent('Per-token')
+  expect(screen.getByRole('button', { name: 'Per-token' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   expect(await commit(editor.ref)).toMatchObject({ billingExpr: expression })
+})
+
+it('retains both video unit drafts and charges the reference surcharge only when enabled and present', async () => {
+  const editor = renderEditor(
+    {
+      billingMode: 'tiered_expr',
+      billingExpr: 'tier("base", u("seconds") * 0.5)',
+    },
+    {
+      resolution: { enum: ['720p'], allowCustomValues: true },
+      seconds: { type: 'number', unit: 'second' },
+      tokens: { type: 'number', unit: 'token' },
+      video_input: { type: 'boolean' },
+    }
+  )
+  const user = userEvent.setup()
+  const charge = (expression: string, videoInput: boolean) =>
+    evaluateBillingExpression(expression, {
+      usage: {
+        resolution: '720p',
+        seconds: 5,
+        tokens: 2000000,
+        video_input: videoInput,
+      },
+    })
+  await user.click(
+    screen.getByRole('switch', { name: 'Charge extra for reference video' })
+  )
+  fireEvent.change(
+    screen.getByRole('textbox', {
+      name: 'Reference video surcharge: resolution: 720p',
+    }),
+    { target: { value: '1.2' } }
+  )
+  expect(
+    charge((await commit(editor.ref))?.billingExpr ?? '', true)
+  ).toMatchObject({ status: 'success', cost: 3.7 })
+  expect(
+    charge((await commit(editor.ref))?.billingExpr ?? '', false)
+  ).toMatchObject({ status: 'success', cost: 2.5 })
+  expect(
+    evaluateBillingExpression((await commit(editor.ref))?.billingExpr ?? '', {
+      usage: {
+        resolution: '1440p',
+        seconds: 5,
+        tokens: 2000000,
+        video_input: false,
+      },
+    })
+  ).toMatchObject({ status: 'success', cost: 2.5 })
+  await user.click(screen.getByRole('button', { name: 'Per-token' }))
+  fireEvent.change(
+    screen.getByRole('textbox', {
+      name: 'Unit price: tokens: resolution: 720p',
+    }),
+    { target: { value: '4' } }
+  )
+  expect(
+    charge((await commit(editor.ref))?.billingExpr ?? '', true)
+  ).toMatchObject({ status: 'success', cost: 9.2 })
+  await user.click(screen.getByRole('button', { name: 'Per-second' }))
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Unit price: seconds: resolution: 720p',
+    })
+  ).toHaveValue('0.5')
+  expect(
+    charge((await commit(editor.ref))?.billingExpr ?? '', true)
+  ).toMatchObject({ status: 'success', cost: 3.7 })
+  await user.click(
+    screen.getByRole('switch', { name: 'Charge extra for reference video' })
+  )
+  expect(
+    screen.queryByRole('textbox', { name: /Reference video surcharge:/ })
+  ).not.toBeInTheDocument()
+  const saved = await commit(editor.ref)
+  expect(charge(saved?.billingExpr ?? '', true)).toMatchObject({
+    status: 'success',
+    cost: 2.5,
+  })
+  expect(charge(saved?.billingExpr ?? '', false)).toMatchObject({
+    status: 'success',
+    cost: 2.5,
+  })
+  await user.click(
+    screen.getByRole('switch', { name: 'Charge extra for reference video' })
+  )
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Reference video surcharge: resolution: 720p',
+    })
+  ).toHaveValue('1.2')
+  await user.click(screen.getByRole('button', { name: 'Per-token' }))
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Unit price: tokens: resolution: 720p',
+    })
+  ).toHaveValue('4')
+  const tokenSaved = await commit(editor.ref)
+  editor.unmount()
+  renderEditor(tokenSaved ?? {}, {
+    resolution: { enum: ['720p'], allowCustomValues: true },
+    seconds: { type: 'number', unit: 'second' },
+    tokens: { type: 'number', unit: 'token' },
+    video_input: { type: 'boolean' },
+  })
+  expect(
+    screen.getByRole('switch', { name: 'Charge extra for reference video' })
+  ).toHaveAttribute('aria-checked', 'true')
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Reference video surcharge: resolution: 720p',
+    })
+  ).toHaveValue('1.2')
+})
+
+it('adds a fixed reference fee to the base request charge for enum video inputs', async () => {
+  const editor = renderEditor(
+    {
+      billingMode: 'tiered_expr',
+      billingExpr: 'tier("base", u("seconds") * 0.5 + 0.3)',
+    },
+    {
+      resolution: { enum: ['720p'] },
+      seconds: { type: 'number', unit: 'second' },
+      tokens: { type: 'number', unit: 'token' },
+      video_input: { enum: ['none', 'video'] },
+    }
+  )
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('switch', { name: 'Charge extra for reference video' })
+  )
+  fireEvent.change(
+    screen.getByRole('textbox', {
+      name: 'Reference video surcharge: resolution: 720p',
+    }),
+    { target: { value: '1.2' } }
+  )
+  fireEvent.change(
+    screen.getByRole('textbox', {
+      name: 'Additional charge: resolution: 720p',
+    }),
+    { target: { value: '0.6' } }
+  )
+  const saved = await commit(editor.ref)
+  expect(
+    evaluateBillingExpression(saved?.billingExpr ?? '', {
+      usage: {
+        resolution: '720p',
+        seconds: 5,
+        tokens: 999999,
+        video_input: 'video',
+      },
+    })
+  ).toMatchObject({ status: 'success', cost: 4.3 })
+  expect(
+    evaluateBillingExpression(saved?.billingExpr ?? '', {
+      usage: {
+        resolution: '720p',
+        seconds: 5,
+        tokens: 999999,
+        video_input: 'none',
+      },
+    })
+  ).toMatchObject({ status: 'success', cost: 3.1 })
 })
 
 async function selectCurrency(label: string) {
