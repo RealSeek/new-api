@@ -966,8 +966,7 @@ export function extractUsageOnComplete(task, taskResult, body) {
   const content = body.content || {};
   // Charge output duration only; reference-video duration contributes to tokens.
   // Missing duration keeps the frozen submission estimate.
-  const duration = content.duration === undefined ? body.duration : content.duration;
-  if (duration !== undefined) facts.seconds = duration;
+  if (body.duration !== undefined) facts.seconds = body.duration;
   const resolution = trimmed(content.resolution || body.resolution).toLowerCase();
   if (videoProfile(task).resolutions.includes(resolution)) facts.resolution = resolution;
   return facts;

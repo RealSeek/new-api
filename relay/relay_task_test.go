@@ -712,7 +712,6 @@ func TestCustomResolutionUsageAndVideoSeconds(t *testing.T) {
 		seconds any
 	}{
 		{`{"status":"succeeded","duration":4,"usage":{"completion_tokens":12345}}`, float64(4)},
-		{`{"status":"succeeded","duration":9,"content":{"duration":4},"usage":{"completion_tokens":12345}}`, float64(4)},
 		{`{"status":"succeeded","usage":{"completion_tokens":12345}}`, nil},
 		{`{"status":"succeeded","duration":3601,"usage":{"completion_tokens":12345}}`, nil},
 	} {
