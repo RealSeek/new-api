@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.2.1",
+  version: "1.2.2",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -45,6 +45,9 @@ export function buildSubmitRequest(ctx) {
   const base = ctx.baseUrl.replace(/\/$/, "");
   const path = ctx.action === "remix" ? "/v1/videos/" + encodeURIComponent(ctx.originTaskId) + "/remix" : "/v1/videos";
   const headers = { Authorization: "Bearer " + ctx.apiKey };
+  for (const name of Object.keys(ctx.requestHeaders || {})) {
+    if (name.toLowerCase() === "idempotency-key") headers["Idempotency-Key"] = ctx.requestHeaders[name];
+  }
   if ((ctx.files || []).length || String((ctx.requestHeaders || {})["Content-Type"] || "").includes("multipart/form-data")) {
     const parts = [];
     for (const key of Object.keys(body)) {
@@ -112,6 +115,7 @@ export function parseTaskResult(_ctx, body) {
     queued: "QUEUED",
     pending: "QUEUED",
     processing: "IN_PROGRESS",
+    running: "IN_PROGRESS",
     in_progress: "IN_PROGRESS",
     completed: "SUCCESS",
     succeeded: "SUCCESS",

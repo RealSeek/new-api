@@ -16,12 +16,17 @@ func TestRSGatewayPluginPreservesArbitraryVideoRequest(t *testing.T) {
 	require.NoError(t, err)
 	body := map[string]any{"model": "custom-video", "prompt": "a wave", "seconds": 5, "parameters": map[string]any{"seed": 0, "watermark": false}}
 	ctx := map[string]any{"requestBody": body, "upstreamModel": "mapped-video", "baseUrl": "https://gateway.example/", "apiKey": "channel-key"}
+	ctx["requestHeaders"] = map[string]any{"Idempotency-Key": "art-video-job-1"}
 	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
 	require.NoError(t, err)
 	request := value.(map[string]any)
 	assert.Equal(t, "https://gateway.example/v1/videos", request["url"])
 	assert.Equal(t, "mapped-video", request["body"].(map[string]any)["model"])
 	assert.Equal(t, body["parameters"], request["body"].(map[string]any)["parameters"])
+	assert.Equal(t, "art-video-job-1", request["headers"].(map[string]any)["Idempotency-Key"])
+	value, err = plugin.Engine.Call(t.Context(), "parseTaskResult", ctx, map[string]any{"id": "task-1", "status": "running"})
+	require.NoError(t, err)
+	assert.Equal(t, "IN_PROGRESS", value.(map[string]any)["status"])
 	value, err = plugin.Engine.Call(t.Context(), "parseSubmitResponse", ctx, map[string]any{"statusCode": 202, "body": map[string]any{"id": "private/task", "status": "queued"}})
 	require.NoError(t, err)
 	assert.Equal(t, "private/task", value.(map[string]any)["taskId"])
