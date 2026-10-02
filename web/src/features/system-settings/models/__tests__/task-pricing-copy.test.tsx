@@ -22,6 +22,7 @@ import i18next from 'i18next'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { ImageTaskPricingEditor } from '../image-task-pricing-editor'
 import { TaskUsagePricingEditor } from '../task-usage-pricing-editor'
 
 function renderPricing(unitLabel?: Record<string, string>) {
@@ -55,6 +56,36 @@ function renderPricing(unitLabel?: Record<string, string>) {
 
 afterEach(async () => {
   await act(() => i18next.changeLanguage('en'))
+})
+
+it('edits image resolution prices with the task pricing table', async () => {
+  const user = userEvent.setup()
+  const onChange = vi.fn()
+  render(
+    <ImageTaskPricingEditor
+      billingExpr='(param("image_tier") == "1k" ? tier("1k", fixed(0.08)) : param("image_tier") == "2k" ? tier("2k", fixed(0.1)) : param("image_tier") == "4k" ? tier("4k", fixed(0.12)) : tier("image", fixed(0.08))) * image_count'
+      requestRuleExpr=''
+      onBillingExprChange={onChange}
+    />
+  )
+
+  expect(screen.getByRole('table')).toBeVisible()
+  expect(screen.getByText('1K')).toBeVisible()
+  expect(screen.getByText('2K')).toBeVisible()
+  expect(screen.getByText('4K')).toBeVisible()
+  expect(screen.getByText('Price per image')).toBeVisible()
+  expect(screen.queryByText('Additional charge')).not.toBeInTheDocument()
+
+  await user.click(
+    screen.getByRole('button', { name: 'Remove resolution: 4k' })
+  )
+  expect(onChange).toHaveBeenLastCalledWith(
+    '(param("image_tier") == "1k" ? tier("1k", fixed(0.08)) : param("image_tier") == "2k" ? tier("2k", fixed(0.1)) : tier("image", fixed(0.08))) * image_count'
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Request simulation' }))
+  expect(screen.queryByRole('alert')).not.toHaveTextContent('request body')
+  expect(screen.getByText(/Simulated request cost.*\$0\.08/)).toBeVisible()
 })
 
 it('shows localized schema explanations in the price table and calculator', async () => {

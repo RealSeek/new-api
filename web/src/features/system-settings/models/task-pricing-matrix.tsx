@@ -78,6 +78,7 @@ type TaskPricingMatrixProps = {
   currency?: PricingCurrency
   rows: TaskMatrixRow[]
   usageSchema: BillingUsageSchema
+  showAdditionalCharge?: boolean
   matchedRowIndex: number | null
   onRowChange: (index: number, next: TaskMatrixRow) => void
   onFillColumn: (priceKey: string, value: number) => void
@@ -171,6 +172,7 @@ type TaskMatrixTableProps = {
   entries: IndexedTaskMatrixRow[]
   enumFields: [string, BillingUsageFieldSchema][]
   numberFields: [string, BillingUsageFieldSchema][]
+  showAdditionalCharge?: boolean
   hiddenEnumField?: string
   firstRow: TaskMatrixRow
   allRowsFree: boolean
@@ -234,28 +236,30 @@ function TaskMatrixTable(props: TaskMatrixTableProps) {
               </div>
             </TableHead>
           ))}
-          <TableHead scope='col' className='min-w-40'>
-            <div className='flex items-center justify-between gap-2'>
-              <div className='flex flex-col gap-0.5'>
-                <span>{t('Additional charge')}</span>
-                <span className='text-muted-foreground max-w-48 text-xs font-normal whitespace-normal'>
-                  {t(
-                    'Added to the usage cost. Set to 0 for no additional charge.'
-                  )}
-                </span>
-                <span className='text-muted-foreground text-[11px] font-normal'>
-                  {(props.currency ?? USD_PRICING_CURRENCY).symbol}/
-                  {t('request')}
-                </span>
+          {props.showAdditionalCharge !== false && (
+            <TableHead scope='col' className='min-w-40'>
+              <div className='flex items-center justify-between gap-2'>
+                <div className='flex flex-col gap-0.5'>
+                  <span>{t('Additional charge')}</span>
+                  <span className='text-muted-foreground max-w-48 text-xs font-normal whitespace-normal'>
+                    {t(
+                      'Added to the usage cost. Set to 0 for no additional charge.'
+                    )}
+                  </span>
+                  <span className='text-muted-foreground text-[11px] font-normal'>
+                    {(props.currency ?? USD_PRICING_CURRENCY).symbol}/
+                    {t('request')}
+                  </span>
+                </div>
+                <FillColumnPopover
+                  currency={props.currency}
+                  priceKey='constant'
+                  initialValue={props.firstRow.constant}
+                  onFillColumn={props.onFillColumn}
+                />
               </div>
-              <FillColumnPopover
-                currency={props.currency}
-                priceKey='constant'
-                initialValue={props.firstRow.constant}
-                onFillColumn={props.onFillColumn}
-              />
-            </div>
-          </TableHead>
+            </TableHead>
+          )}
           <TableHead scope='col' className='w-10 px-1 text-center'>
             <span className='sr-only'>{t('Status')}</span>
           </TableHead>
@@ -336,34 +340,36 @@ function TaskMatrixTable(props: TaskMatrixTableProps) {
                   />
                 </TableCell>
               ))}
-              <TableCell>
-                <PricingAmountInput
-                  currency={props.currency}
-                  min={0}
-                  step={0.000001}
-                  value={entry.row.constant}
-                  data-matrix-col='constant'
-                  data-matrix-row={entry.index}
-                  aria-label={`${t('Additional charge')}: ${rowLabel}`}
-                  onFocus={(event) => {
-                    if (Number(event.currentTarget.value) === 0) {
-                      event.currentTarget.select()
+              {props.showAdditionalCharge !== false && (
+                <TableCell>
+                  <PricingAmountInput
+                    currency={props.currency}
+                    min={0}
+                    step={0.000001}
+                    value={entry.row.constant}
+                    data-matrix-col='constant'
+                    data-matrix-row={entry.index}
+                    aria-label={`${t('Additional charge')}: ${rowLabel}`}
+                    onFocus={(event) => {
+                      if (Number(event.currentTarget.value) === 0) {
+                        event.currentTarget.select()
+                      }
+                    }}
+                    onChange={(usd) => {
+                      const value = Number(usd)
+                      props.onRowChange(entry.index, {
+                        ...entry.row,
+                        constant:
+                          Number.isFinite(value) && value >= 0 ? value : 0,
+                      })
+                    }}
+                    onKeyDown={(event) =>
+                      props.onPriceKeyDown(event, entry.index, 'constant')
                     }
-                  }}
-                  onChange={(usd) => {
-                    const value = Number(usd)
-                    props.onRowChange(entry.index, {
-                      ...entry.row,
-                      constant:
-                        Number.isFinite(value) && value >= 0 ? value : 0,
-                    })
-                  }}
-                  onKeyDown={(event) =>
-                    props.onPriceKeyDown(event, entry.index, 'constant')
-                  }
-                  className='min-w-28 font-mono'
-                />
-              </TableCell>
+                    className='min-w-28 font-mono'
+                  />
+                </TableCell>
+              )}
               <TableCell className='px-1 text-center'>
                 {!props.allRowsFree && isFree ? (
                   <Tooltip>
@@ -538,6 +544,7 @@ export function TaskPricingMatrix(props: TaskPricingMatrixProps) {
                 )}
                 enumFields={enumFields}
                 numberFields={numberFields}
+                showAdditionalCharge={props.showAdditionalCharge}
                 groupField={firstEnumField[0]}
                 groupValue={groupValue}
                 open={openGroups.includes(groupValue)}
@@ -566,6 +573,7 @@ export function TaskPricingMatrix(props: TaskPricingMatrixProps) {
             entries={entries}
             enumFields={enumFields}
             numberFields={numberFields}
+            showAdditionalCharge={props.showAdditionalCharge}
             firstRow={firstRow}
             allRowsFree={allRowsFree}
             matchedRowIndex={props.matchedRowIndex}

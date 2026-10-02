@@ -465,6 +465,16 @@ describe('task dynamic pricing', () => {
       getBillingModeLabelKey(
         pricingModel({
           billing_mode: 'tiered_expr',
+          billing_expr:
+            '(param("image_tier") == "1k" ? tier("1k", fixed(0.08)) : tier("image", fixed(0.08))) * image_count',
+        })
+      ),
+      'Task billing'
+    )
+    assert.equal(
+      getBillingModeLabelKey(
+        pricingModel({
+          billing_mode: 'tiered_expr',
           billing_expr: 'tier("base", p * 2 + c * 8)',
         })
       ),

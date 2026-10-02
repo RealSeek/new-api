@@ -29,6 +29,7 @@ import type {
 } from '@/features/model-pricing/pricing'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { formatBillingCondition } from '@/features/pricing/lib/billing-expression/condition-display'
+import { parseImageResolutionPricing } from '@/features/pricing/lib/image-resolution-pricing'
 
 import { formatPricingNumber } from './pricing-format'
 
@@ -268,6 +269,17 @@ export function buildPreviewRows(
 ): PreviewRow[] {
   if (mode === 'tiered_expr') {
     const effectiveExpr = combineBillingExpr(billingExpr, requestRuleExpr)
+    const imagePricing = parseImageResolutionPricing(billingExpr)
+    if (imagePricing) {
+      return [
+        { key: 'mode', label: t('Pricing'), value: t('Task billing') },
+        ...imagePricing.rows.map((row) => ({
+          key: row.resolution,
+          label: row.resolution.toUpperCase(),
+          value: `${formatPricingAmount(row.price, currency)} / ${t('image')}`,
+        })),
+      ]
+    }
     return [
       { key: 'mode', label: t('Pricing'), value: t('Expression') },
       {

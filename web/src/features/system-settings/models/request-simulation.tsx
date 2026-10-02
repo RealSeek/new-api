@@ -65,6 +65,7 @@ type RequestSimulationProps = {
   expression: string
   tokens?: BillingSimulationContext['tokens']
   usage?: BillingSimulationContext['usage']
+  initialBody?: string
   currency?: PricingCurrency
   usageSchema?: BillingUsageSchema
   mode: 'token' | 'task'
@@ -99,7 +100,7 @@ export function RequestSimulation(props: RequestSimulationProps) {
     }
   }, [props.usage, booleanInputs])
   const [open, setOpen] = useState(false)
-  const [body, setBody] = useState('{}')
+  const [body, setBody] = useState(props.initialBody ?? '{}')
   const [headers, setHeaders] = useState('{}')
   const [timeMode, setTimeMode] = useState('current')
   const [fixedTime, setFixedTime] = useState(() => new Date().toISOString())

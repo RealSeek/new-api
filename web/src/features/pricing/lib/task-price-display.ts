@@ -33,10 +33,11 @@ import {
 } from './billing-expr'
 import { formatBillingCondition } from './billing-expression/condition-display'
 import { compileBillingExpression } from './billing-expression/parser'
+import { visitExpression } from './billing-expression/types'
 import {
-  visitExpression,
-  type ExpressionNode,
-} from './billing-expression/types'
+  parseImageResolutionPricing,
+  type ImageResolutionPriceRow,
+} from './image-resolution-pricing'
 import { withPluginPricing } from './plugin-pricing'
 import {
   getTaskMatrixDisplayTiers,
@@ -105,24 +106,7 @@ export function getTaskResolutionPriceRows(
   })
 }
 
-export type ImageResolutionPriceRow = {
-  resolution: string
-  price: number
-}
-
-function readFixedTierPrice(node: ExpressionNode): number | null {
-  if (
-    node.kind !== 'call' ||
-    node.name !== 'tier' ||
-    node.args[1]?.kind !== 'call' ||
-    node.args[1].name !== 'fixed' ||
-    node.args[1].args[0]?.kind !== 'literal' ||
-    typeof node.args[1].args[0].value !== 'number'
-  ) {
-    return null
-  }
-  return node.args[1].args[0].value
-}
+export type { ImageResolutionPriceRow } from './image-resolution-pricing'
 
 /** Reads the canonical image-resolution expression produced by legacy migration. */
 export function getImageResolutionPriceRows(
@@ -135,54 +119,7 @@ export function getImageResolutionPriceRows(
   ) {
     return null
   }
-  const split = splitBillingExprAndRequestRules(model.billing_expr)
-  if (split.requestRuleExpr?.trim()) return null
-  const compiled = compileBillingExpression(split.billingExpr)
-  if (compiled.status !== 'ready') return null
-
-  let pricing = compiled.ast
-  if (pricing.kind !== 'binary' || pricing.operator !== '*') return null
-  if (
-    pricing.left.kind === 'variable' &&
-    pricing.left.name === 'image_count'
-  ) {
-    pricing = pricing.right
-  } else if (
-    pricing.right.kind === 'variable' &&
-    pricing.right.name === 'image_count'
-  ) {
-    pricing = pricing.left
-  } else {
-    return null
-  }
-
-  const rows: ImageResolutionPriceRow[] = []
-  let branch = pricing
-  while (branch.kind === 'conditional') {
-    const condition = branch.condition
-    if (
-      condition.kind !== 'binary' ||
-      condition.operator !== '==' ||
-      condition.left.kind !== 'call' ||
-      condition.left.name !== 'param' ||
-      condition.left.args[0]?.kind !== 'literal' ||
-      condition.left.args[0].value !== 'image_tier' ||
-      condition.right.kind !== 'literal' ||
-      typeof condition.right.value !== 'string' ||
-      !['1k', '2k', '4k'].includes(condition.right.value)
-    ) {
-      return null
-    }
-    const price = readFixedTierPrice(branch.yes)
-    if (price === null || price < 0) return null
-    rows.push({ resolution: condition.right.value, price })
-    branch = branch.no
-  }
-  if (readFixedTierPrice(branch) === null || rows.length === 0) return null
-  return rows.sort(
-    (left, right) =>
-      Number.parseInt(left.resolution) - Number.parseInt(right.resolution)
-  )
+  return parseImageResolutionPricing(model.billing_expr)?.rows ?? null
 }
 
 export function taskPriceLabel(

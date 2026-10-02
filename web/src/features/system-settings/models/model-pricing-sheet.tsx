@@ -85,6 +85,7 @@ import {
 import { PricingCurrencySelector } from '@/features/model-pricing/pricing-currency-selector'
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
+import { parseImageResolutionPricing } from '@/features/pricing/lib/image-resolution-pricing'
 import { pluginExpressionsEqual } from '@/features/pricing/lib/plugin-pricing'
 import {
   createDefaultTaskVisualConfig,
@@ -97,6 +98,7 @@ import { cn } from '@/lib/utils'
 import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
+import { ImageTaskPricingEditor } from './image-task-pricing-editor'
 import {
   EMPTY_IMAGE_TIER_PRICES,
   EMPTY_LANE_ENABLED,
@@ -373,6 +375,10 @@ export const ModelPricingEditorPanel = forwardRef<
     (!billingExpr || billingExpr === DEFAULT_TOKEN_BILLING_EXPR)
       ? defaultTaskBillingExpr
       : billingExpr
+  const imageResolutionPricing =
+    pricingMode === 'tiered_expr' && !taskUsageSchema
+      ? parseImageResolutionPricing(billingExpr)
+      : null
 
   useEffect(() => {
     conversionGeneration.current += 1
@@ -1043,28 +1049,42 @@ export const ModelPricingEditorPanel = forwardRef<
     [form, validatePricingValues, buildSubmitData]
   )
 
-  const expressionEditor = taskUsageSchema ? (
-    <TaskUsagePricingEditor
-      currency={currency}
-      key={`${editorReloadToken}:${watchedValues.name}`}
-      billingExpr={resolvedBillingExpr}
-      requestRuleExpr={requestRuleExpr}
-      usageSchema={taskUsageSchema}
-      usageExamples={taskUsageExamples}
-      onBillingExprChange={setBillingExpr}
-      onRequestRuleExprChange={setRequestRuleExpr}
-    />
-  ) : (
-    <TieredPricingEditor
-      currency={currency}
-      key={editorReloadToken}
-      modelName={watchedValues.name}
-      billingExpr={billingExpr}
-      requestRuleExpr={requestRuleExpr}
-      onBillingExprChange={setBillingExpr}
-      onRequestRuleExprChange={setRequestRuleExpr}
-    />
-  )
+  let expressionEditor: ReactNode
+  if (taskUsageSchema) {
+    expressionEditor = (
+      <TaskUsagePricingEditor
+        currency={currency}
+        key={`${editorReloadToken}:${watchedValues.name}`}
+        billingExpr={resolvedBillingExpr}
+        requestRuleExpr={requestRuleExpr}
+        usageSchema={taskUsageSchema}
+        usageExamples={taskUsageExamples}
+        onBillingExprChange={setBillingExpr}
+        onRequestRuleExprChange={setRequestRuleExpr}
+      />
+    )
+  } else if (imageResolutionPricing) {
+    expressionEditor = (
+      <ImageTaskPricingEditor
+        currency={currency}
+        billingExpr={billingExpr}
+        requestRuleExpr={requestRuleExpr}
+        onBillingExprChange={setBillingExpr}
+      />
+    )
+  } else {
+    expressionEditor = (
+      <TieredPricingEditor
+        currency={currency}
+        key={editorReloadToken}
+        modelName={watchedValues.name}
+        billingExpr={billingExpr}
+        requestRuleExpr={requestRuleExpr}
+        onBillingExprChange={setBillingExpr}
+        onRequestRuleExprChange={setRequestRuleExpr}
+      />
+    )
+  }
 
   const showActions = Boolean(onSave)
 
