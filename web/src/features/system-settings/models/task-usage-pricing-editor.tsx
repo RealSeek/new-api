@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -58,6 +59,7 @@ import {
   getTaskEnumFields,
   getTaskNumberFields,
   taskMatrixToTiers,
+  taskPricingSchema,
   tryParseTaskMatrixConfig,
   tryParseTaskVisualConfig,
   type TaskMatrixRow,
@@ -181,10 +183,13 @@ function TaskBillingPreview(props: TaskBillingPreviewProps) {
       {enumFields.length + numberFields.length > 0 ? (
         <div className='grid gap-3 sm:grid-cols-2'>
           {enumFields.map(([field, definition]) => {
-            const items = (definition.enum ?? []).map((value) => ({
-              value,
-              label: taskEnumLabel(definition, value, i18n.language),
-            }))
+            const items = (definition.enum ?? []).map((value) => {
+              let label = taskEnumLabel(definition, value, i18n.language)
+              if (definition.type === 'boolean') {
+                label = value === 'true' ? t('Yes') : t('No')
+              }
+              return { value, label }
+            })
             return (
               <Field key={field} className='gap-1.5'>
                 <FieldLabel>
@@ -280,20 +285,51 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   props: TaskUsagePricingEditorProps
 ) {
   const { t, i18n } = useTranslation()
+  const [usageSchema, setUsageSchema] = useState(() =>
+    taskPricingSchema(props.usageSchema, props.billingExpr)
+  )
+  const [customResolution, setCustomResolution] = useState('')
   const [editorMode, setEditorMode] = useState<EditorMode>(() =>
     props.billingExpr &&
-    !tryParseTaskMatrixConfig(props.billingExpr, props.usageSchema)
+    !tryParseTaskMatrixConfig(props.billingExpr, usageSchema)
       ? 'raw'
       : 'visual'
   )
   const [matrixRows, setMatrixRows] = useState<TaskMatrixRow[]>(() => {
-    const parsed = tryParseTaskMatrixConfig(
-      props.billingExpr,
-      props.usageSchema
-    )
-    return (parsed ?? createDefaultTaskMatrixConfig(props.usageSchema)).rows
+    const parsed = tryParseTaskMatrixConfig(props.billingExpr, usageSchema)
+    return (parsed ?? createDefaultTaskMatrixConfig(usageSchema)).rows
   })
   const [confirmVisualSwitch, setConfirmVisualSwitch] = useState(false)
+  const videoMeters = getTaskNumberFields(usageSchema).filter(
+    ([, definition]) =>
+      definition.unit === 'second' || definition.unit === 'token'
+  )
+  const hasVideoUnits =
+    Boolean(usageSchema.resolution) &&
+    videoMeters.some(([, definition]) => definition.unit === 'second') &&
+    videoMeters.some(([, definition]) => definition.unit === 'token')
+  const [billingUnit, setBillingUnit] = useState(() => {
+    const priced = videoMeters.filter(([field]) =>
+      matrixRows.some((row) => row.unitPrices[field] > 0)
+    )
+    return priced.length > 1
+      ? 'mixed'
+      : (priced[0]?.[0] ??
+          videoMeters.find(
+            ([, definition]) => definition.unit === 'second'
+          )?.[0] ??
+          '')
+  })
+  const displaySchema =
+    hasVideoUnits && billingUnit !== 'mixed'
+      ? Object.fromEntries(
+          Object.entries(usageSchema).filter(
+            ([field]) =>
+              !videoMeters.some(([meter]) => meter === field) ||
+              field === billingUnit
+          )
+        )
+      : usageSchema
   const [rawExpr, setRawExpr] = useState(() =>
     combineBillingExpr(props.billingExpr, props.requestRuleExpr)
   )
@@ -304,18 +340,18 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
       return { ...props.usageExamples[0].facts }
     }
     const sample: Record<string, number | string> = {}
-    for (const [field, definition] of getTaskEnumFields(props.usageSchema)) {
+    for (const [field, definition] of getTaskEnumFields(usageSchema)) {
       sample[field] = definition.enum?.[0] ?? ''
     }
-    for (const [field, definition] of getTaskNumberFields(props.usageSchema)) {
+    for (const [field, definition] of getTaskNumberFields(usageSchema)) {
       sample[field] = definition.unit === 'second' ? 5 : 1
     }
     return sample
   })
-  const enumFields = getTaskEnumFields(props.usageSchema)
-  const numberFields = getTaskNumberFields(props.usageSchema)
-  const combinations = getTaskEnumCombinations(props.usageSchema)
-  const visualTiers = taskMatrixToTiers({ rows: matrixRows }, props.usageSchema)
+  const enumFields = getTaskEnumFields(usageSchema)
+  const numberFields = getTaskNumberFields(displaySchema)
+  const combinations = getTaskEnumCombinations(usageSchema)
+  const visualTiers = taskMatrixToTiers({ rows: matrixRows }, usageSchema)
 
   let previewConfig: TaskVisualConfig | null = null
   let previewRequestRuleExpr = props.requestRuleExpr
@@ -323,12 +359,12 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   if (editorMode === 'visual') {
     const generatedExpression = generateTaskExprFromConfig(
       { tiers: visualTiers },
-      props.usageSchema
+      usageSchema
     )
     if (generatedExpression) previewConfig = { tiers: visualTiers }
     const nextMatchedRowIndex = combinations.findIndex((combination) =>
       Object.entries(combination).every(
-        ([field, value]) => previewSample[field] === value
+        ([field, value]) => String(previewSample[field]) === value
       )
     )
     if (nextMatchedRowIndex >= 0) {
@@ -336,21 +372,18 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
     }
   } else {
     const split = splitBillingExprAndRequestRules(rawExpr)
-    previewConfig = tryParseTaskVisualConfig(
-      split.billingExpr,
-      props.usageSchema
-    )
+    previewConfig = tryParseTaskVisualConfig(split.billingExpr, usageSchema)
     previewRequestRuleExpr = split.requestRuleExpr
   }
 
-  const publishRows = (nextRows: TaskMatrixRow[]) => {
+  const publishRows = (nextRows: TaskMatrixRow[], nextSchema = usageSchema) => {
     setMatrixRows(nextRows)
     props.onBillingExprChange(
       generateTaskExprFromConfig(
         {
-          tiers: taskMatrixToTiers({ rows: nextRows }, props.usageSchema),
+          tiers: taskMatrixToTiers({ rows: nextRows }, nextSchema),
         },
-        props.usageSchema
+        nextSchema
       )
     )
   }
@@ -370,6 +403,29 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
       }
     })
     publishRows(nextRows)
+  }
+
+  const addResolution = () => {
+    const value = customResolution.trim().toLowerCase()
+    if (!value || usageSchema.resolution.enum?.includes(value)) return
+    const nextSchema = {
+      ...usageSchema,
+      resolution: {
+        ...usageSchema.resolution,
+        enum: [...(usageSchema.resolution.enum ?? []), value],
+      },
+    }
+    const nextRows = createDefaultTaskMatrixConfig(nextSchema).rows.map(
+      (row) =>
+        matrixRows.find((current) =>
+          Object.entries(row.combination).every(
+            ([field, option]) => current.combination[field] === option
+          )
+        ) ?? row
+    )
+    setUsageSchema(nextSchema)
+    setCustomResolution('')
+    publishRows(nextRows, nextSchema)
   }
 
   const handleRawChange = (value: string) => {
@@ -396,14 +452,30 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   }
 
   const handleConfirmVisualSwitch = () => {
-    const nextRows = (
-      rawMatrix ?? createDefaultTaskMatrixConfig(props.usageSchema)
-    ).rows
+    const nextSchema = taskPricingSchema(
+      props.usageSchema,
+      rawSplit.billingExpr
+    )
+    const nextRows = (rawMatrix ?? createDefaultTaskMatrixConfig(nextSchema))
+      .rows
+    setUsageSchema(nextSchema)
     setMatrixRows(nextRows)
+    const pricedMeters = videoMeters.filter(([field]) =>
+      nextRows.some((row) => row.unitPrices[field] > 0)
+    )
+    setBillingUnit(
+      pricedMeters.length > 1
+        ? 'mixed'
+        : (pricedMeters[0]?.[0] ??
+            videoMeters.find(
+              ([, definition]) => definition.unit === 'second'
+            )?.[0] ??
+            '')
+    )
     props.onBillingExprChange(
       generateTaskExprFromConfig(
-        { tiers: taskMatrixToTiers({ rows: nextRows }, props.usageSchema) },
-        props.usageSchema
+        { tiers: taskMatrixToTiers({ rows: nextRows }, nextSchema) },
+        nextSchema
       )
     )
     props.onRequestRuleExprChange(rawMatrix ? rawSplit.requestRuleExpr : '')
@@ -482,6 +554,99 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
       <div className='bg-muted/30 space-y-3 rounded-md border p-3'>
         {editorMode === 'visual' ? (
           <>
+            {hasVideoUnits ? (
+              <Field className='gap-2'>
+                <FieldLabel>{t('Billing unit')}</FieldLabel>
+                <Select
+                  items={[
+                    ...videoMeters.map(([field, definition]) => ({
+                      value: field,
+                      label:
+                        definition.unit === 'second'
+                          ? t('Per-second')
+                          : t('Per-token'),
+                    })),
+                    ...(billingUnit === 'mixed'
+                      ? [{ value: 'mixed', label: t('Usage prices') }]
+                      : []),
+                  ]}
+                  value={billingUnit}
+                  onValueChange={(value) => {
+                    if (!value || value === billingUnit) return
+                    setBillingUnit(value)
+                    publishRows(
+                      matrixRows.map((row) => ({
+                        ...row,
+                        unitPrices: {
+                          ...row.unitPrices,
+                          ...Object.fromEntries(
+                            videoMeters.map(([field]) => [field, 0])
+                          ),
+                        },
+                      }))
+                    )
+                  }}
+                >
+                  <SelectTrigger
+                    aria-label={t('Billing unit')}
+                    className='w-full sm:w-56'
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {videoMeters.map(([field, definition]) => (
+                      <SelectItem key={field} value={field}>
+                        {definition.unit === 'second'
+                          ? t('Per-second')
+                          : t('Per-token')}
+                      </SelectItem>
+                    ))}
+                    {billingUnit === 'mixed' ? (
+                      <SelectItem value='mixed'>{t('Usage prices')}</SelectItem>
+                    ) : null}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  {t(
+                    'Changing the billing unit resets duration and token prices. Enter prices in the new unit before saving.'
+                  )}
+                </FieldDescription>
+              </Field>
+            ) : null}
+            {usageSchema.resolution?.allowCustomValues ? (
+              <Field className='gap-2'>
+                <FieldLabel>{t('Custom resolution')}</FieldLabel>
+                <div className='flex items-center gap-2'>
+                  <Input
+                    aria-label={t('Custom resolution')}
+                    value={customResolution}
+                    placeholder='1440p'
+                    onChange={(event) =>
+                      setCustomResolution(event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        addResolution()
+                      }
+                    }}
+                  />
+                  <Button
+                    type='button'
+                    variant='outline'
+                    disabled={
+                      !customResolution.trim() ||
+                      usageSchema.resolution.enum?.includes(
+                        customResolution.trim().toLowerCase()
+                      )
+                    }
+                    onClick={addResolution}
+                  >
+                    {t('Add resolution')}
+                  </Button>
+                </div>
+              </Field>
+            ) : null}
             {enumFields.length > 0 ? (
               <div className='flex flex-col gap-3'>
                 <p className='text-muted-foreground text-xs'>
@@ -492,7 +657,7 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
                 <TaskPricingMatrix
                   currency={props.currency}
                   rows={matrixRows}
-                  usageSchema={props.usageSchema}
+                  usageSchema={displaySchema}
                   matchedRowIndex={matchedRowIndex}
                   onRowChange={handleRowChange}
                   onFillColumn={handleFillColumn}
@@ -615,7 +780,7 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
               config={previewConfig}
               requestRuleExpr={previewRequestRuleExpr}
               sample={previewSample}
-              usageSchema={props.usageSchema}
+              usageSchema={displaySchema}
               usageExamples={props.usageExamples}
               onSampleChange={handlePreviewSampleChange}
               onSampleReplace={setPreviewSample}
@@ -646,7 +811,7 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
               <AlertDescription className='space-y-1 text-xs'>
                 <div>
                   {t('Usage parameters')}:{' '}
-                  {Object.keys(props.usageSchema)
+                  {Object.keys(usageSchema)
                     .sort((left, right) => left.localeCompare(right))
                     .map((field) => `u(${JSON.stringify(field)})`)
                     .join(', ')}
@@ -678,7 +843,7 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
               config={previewConfig}
               requestRuleExpr={previewRequestRuleExpr}
               sample={previewSample}
-              usageSchema={props.usageSchema}
+              usageSchema={usageSchema}
               usageExamples={props.usageExamples}
               onSampleChange={handlePreviewSampleChange}
               onSampleReplace={setPreviewSample}
@@ -691,15 +856,19 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
           editorMode === 'raw'
             ? rawExpr
             : combineBillingExpr(
-                generateTaskExprFromConfig(
-                  { tiers: visualTiers },
-                  props.usageSchema
-                ),
+                generateTaskExprFromConfig({ tiers: visualTiers }, usageSchema),
                 props.requestRuleExpr
               )
         }
-        usage={previewSample}
-        usageSchema={props.usageSchema}
+        usage={Object.fromEntries(
+          Object.entries(previewSample).map(([field, value]) => [
+            field,
+            usageSchema[field]?.type === 'boolean'
+              ? String(value) === 'true'
+              : value,
+          ])
+        )}
+        usageSchema={usageSchema}
         currency={props.currency}
         mode='task'
       />

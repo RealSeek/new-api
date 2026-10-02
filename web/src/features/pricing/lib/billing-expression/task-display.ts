@@ -82,7 +82,10 @@ function taskDisplayCondition(
         if (typeof literal.value !== 'boolean') return null
       } else if (typeof literal.value !== 'string') {
         return null
-      } else if (!definition.enum?.includes(literal.value)) {
+      } else if (
+        !definition.enum?.includes(literal.value) &&
+        !definition.allowCustomValues
+      ) {
         // An enum value the schema no longer declares never matches a request.
         return node.operator === '!='
       }

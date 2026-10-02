@@ -449,14 +449,7 @@ func updatePricing() {
 				}
 			}
 		}
-		usageModel := model
-		plugin, ok := pluginGeneration.GetByModel(model)
-		if !ok {
-			if target, resolved := ResolveTaskModelAlias(pluginGeneration, model); resolved {
-				plugin, ok = pluginGeneration.Get(target.PluginKey)
-				usageModel = target.Declared
-			}
-		}
+		plugin, usageModel, ok := ResolveTaskUsagePlugin(pluginGeneration, model)
 		if ok && plugin != nil {
 			usageSchema, usageExamples := plugin.Meta.UsageForModel(usageModel)
 			pricing.BillingUsageSchema = jsplugin.CloneUsageSchema(usageSchema)

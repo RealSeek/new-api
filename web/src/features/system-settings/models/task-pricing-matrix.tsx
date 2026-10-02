@@ -285,17 +285,24 @@ function TaskMatrixTable(props: TaskMatrixTableProps) {
                   'bg-primary/5 border-l-primary border-l-2'
               )}
             >
-              {visibleEnumFields.map(([field]) => (
-                <TableCell key={field}>
-                  <span className='break-words whitespace-normal'>
-                    {taskEnumLabel(
-                      usageSchema[field],
-                      entry.row.combination[field],
-                      i18n.language
-                    )}
-                  </span>
-                </TableCell>
-              ))}
+              {visibleEnumFields.map(([field, definition]) => {
+                let label = taskEnumLabel(
+                  usageSchema[field],
+                  entry.row.combination[field],
+                  i18n.language
+                )
+                if (definition.type === 'boolean') {
+                  label =
+                    entry.row.combination[field] === 'true' ? t('Yes') : t('No')
+                }
+                return (
+                  <TableCell key={field}>
+                    <span className='break-words whitespace-normal'>
+                      {label}
+                    </span>
+                  </TableCell>
+                )
+              })}
               {props.numberFields.map(([field]) => (
                 <TableCell key={field}>
                   <PricingAmountInput

@@ -508,6 +508,9 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 	plugin, err := registry.Register(source, pluginruntime.Options{})
 	require.NoError(t, err)
 	service.InitHttpClient()
+	previousRegistry := pluginruntime.DefaultRegistry
+	pluginruntime.DefaultRegistry = registry
+	t.Cleanup(func() { pluginruntime.DefaultRegistry = previousRegistry })
 	automaticDuration, fixedDuration := -1, 6
 	aliasPrice := &ratio_setting.VideoPriceConfig{DefaultDuration: 5, BillingStep: 1, MinimumDuration: 1, ResolutionPrices: map[string]float64{"480p": 0.57, "720p": 0.95, "1080p": 2.2, "4k": 4.3}}
 	for _, tc := range []struct {
@@ -532,6 +535,8 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 		{name: "partial alias configuration retains variant price", model: "seedance-2.0", resolution: "720p", duration: &automaticDuration, reservedSeconds: 15, price: 0.43, aliasPrice: &ratio_setting.VideoPriceConfig{DefaultDuration: 5, BillingStep: 1, MinimumDuration: 1, ResolutionPrices: map[string]float64{"480p": 0.57}}},
 		{name: "billing follows the routed resolution", model: "seedance-2.0", resolution: "480p", duration: &automaticDuration, reservedSeconds: 15, price: 0.57, aliasPrice: aliasPrice, metadataResolution: "720p"},
 		{name: "alias expression replaces legacy variant tariff", model: "seedance-2.0", resolution: "720p", duration: &automaticDuration, reservedSeconds: 15, price: 0.9, aliasExpression: `tier("video", u("seconds") * 0.9)`},
+		{name: "resolution and reference video select second tariff", model: "seedance-2.0", resolution: "1080p", duration: &automaticDuration, videoInput: true, reservedSeconds: 15, price: 2.2, aliasExpression: `u("resolution") == "1080p" && u("video_input") == true ? tier("reference", u("seconds") * 2.2) : tier("base", u("seconds") * 0.57)`},
+		{name: "same resolution without reference uses independent tariff", model: "seedance-2.0", resolution: "1080p", duration: &automaticDuration, reservedSeconds: 15, price: 0.57, aliasExpression: `u("resolution") == "1080p" && u("video_input") == true ? tier("reference", u("seconds") * 2.2) : tier("base", u("seconds") * 0.57)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(prices))
@@ -545,10 +550,13 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 			}
 			model.InvalidatePricingCache()
 			if tc.aliasExpression != "" {
+				expressions, err := common.Marshal(map[string]string{tc.model: tc.aliasExpression})
+				require.NoError(t, err)
 				require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
 					"billing_setting.billing_mode": `{"seedance-2.0":"tiered_expr"}`,
-					"billing_setting.billing_expr": `{"seedance-2.0":"tier(\"video\", u(\"seconds\") * 0.9)"}`,
+					"billing_setting.billing_expr": string(expressions),
 				}))
+				require.NoError(t, model.ValidateModelPricing(tc.model, model.PricingValues{"billing_setting.billing_mode": "tiered_expr", "billing_setting.billing_expr": tc.aliasExpression}))
 			}
 			if tc.aliasPrice == aliasPrice || tc.aliasExpression != "" {
 				var publicPricing model.Pricing
@@ -560,6 +568,8 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 				}
 				if tc.aliasExpression != "" {
 					assert.Equal(t, tc.aliasExpression, publicPricing.BillingExpr)
+					assert.True(t, publicPricing.BillingUsageSchema["resolution"].AllowCustomValues)
+					assert.Equal(t, "second", publicPricing.BillingUsageSchema["seconds"].Unit)
 					assert.Empty(t, publicPricing.ResolutionAliasPrices)
 				} else {
 					assert.Equal(t, []model.ResolutionAliasPrice{{Resolution: "480p", Price: 0.57, Unit: "second"}, {Resolution: "720p", Price: 0.95, Unit: "second"}, {Resolution: "1080p", Price: 2.2, Unit: "second"}, {Resolution: "4k", Price: 4.3, Unit: "second"}}, publicPricing.ResolutionAliasPrices)
@@ -661,6 +671,54 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestCustomResolutionUsageAndVideoSeconds(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		valid       bool
+	}{
+		{"custom preset", `{enum:["720p"],allowCustomValues:true}`, true},
+		{"closed enum rejects custom fact", `{enum:["720p"]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := strings.Replace(billingFallbackPlugin, "fetchMode:\"per_task\"", "fetchMode:\"per_task\",usageSchema:{seconds:{type:\"number\",unit:\"second\"},resolution:"+tc.field+"}", 1) + `export function extractUsage(){return {seconds:5,resolution:"1440p"};}`
+			plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+			require.NoError(t, err)
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			info.InitChannelMeta(c)
+			info.OriginModelName, info.UpstreamModelName = "declared-model", "declared-model"
+			facts, err := jsadaptor.New(plugin).ExtractUsageFactsValidated(c, info)
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "1440p", facts["resolution"])
+			assert.Equal(t, float64(5), facts["seconds"])
+		})
+	}
+	source, err := plugins.Source("doubao")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	schema, _ := plugin.Meta.UsageForModel("doubao-seedance-2-0-260128")
+	assert.Equal(t, "second", schema["seconds"].Unit)
+	task := &model.Task{Properties: model.Properties{OriginModelName: "doubao-seedance-2-0-260128"}}
+	adaptor := jsadaptor.New(plugin)
+	for _, tc := range []struct {
+		body    string
+		seconds any
+	}{
+		{`{"status":"succeeded","duration":4,"usage":{"completion_tokens":12345}}`, float64(4)},
+		{`{"status":"succeeded","duration":9,"content":{"duration":4},"usage":{"completion_tokens":12345}}`, float64(4)},
+		{`{"status":"succeeded","usage":{"completion_tokens":12345}}`, nil},
+		{`{"status":"succeeded","duration":3601,"usage":{"completion_tokens":12345}}`, nil},
+	} {
+		result, err := adaptor.ParseTaskResult(task, nil, []byte(tc.body))
+		require.NoError(t, err)
+		assert.Equal(t, tc.seconds, result.UsageFacts["seconds"])
 	}
 }
 

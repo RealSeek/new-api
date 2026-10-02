@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
 // TaskAliasTarget is one mapping-derived alias after cross-channel aggregation.
@@ -17,6 +19,24 @@ type TaskAliasTarget struct {
 	Alias     string
 	Declared  string
 	PluginKey string
+}
+
+// ResolveTaskUsagePlugin selects pricing metadata for declared, aliased and
+// gateway-owned Seedance models without claiming gateway protocol routes.
+func ResolveTaskUsagePlugin(g *jsplugin.RoutingGeneration, name string) (*jsplugin.LoadedPlugin, string, bool) {
+	if plugin, ok := g.GetByModel(name); ok {
+		return plugin, name, true
+	}
+	if target, ok := ResolveTaskModelAlias(g, name); ok {
+		plugin, found := g.Get(target.PluginKey)
+		return plugin, target.Declared, found
+	}
+	if relaycommon.IsSeedance2VideoModel(name) {
+		if plugin, ok := g.GetByChannelType(constant.ChannelTypeRSGateway); ok {
+			return plugin, name, true
+		}
+	}
+	return nil, "", false
 }
 
 type taskAliasView struct {

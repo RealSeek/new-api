@@ -187,12 +187,13 @@ type AuthMeta struct {
 // influence billing. Numeric facts use one of the host-owned canonical units;
 // boolean facts are flags; enum facts constrain non-numeric pricing selectors.
 type UsageFieldSchema struct {
-	Type        string                   `json:"type,omitempty"`
-	Unit        string                   `json:"unit,omitempty"`
-	UnitLabel   LocalizedText            `json:"unitLabel,omitempty"`
-	Enum        []string                 `json:"enum,omitempty"`
-	Description LocalizedText            `json:"description,omitempty"`
-	EnumLabels  map[string]LocalizedText `json:"enumLabels,omitempty"`
+	Type              string                   `json:"type,omitempty"`
+	Unit              string                   `json:"unit,omitempty"`
+	UnitLabel         LocalizedText            `json:"unitLabel,omitempty"`
+	Enum              []string                 `json:"enum,omitempty"`
+	AllowCustomValues bool                     `json:"allowCustomValues,omitempty"`
+	Description       LocalizedText            `json:"description,omitempty"`
+	EnumLabels        map[string]LocalizedText `json:"enumLabels,omitempty"`
 }
 
 type LoadedPlugin struct {
@@ -1493,12 +1494,19 @@ func decodeUsageSchema(value any) (map[string]UsageFieldSchema, error) {
 		}
 		for key := range fieldObject {
 			switch key {
-			case "type", "unit", "unitLabel", "enum", "description", "enumLabels":
+			case "type", "unit", "unitLabel", "enum", "description", "enumLabels", "allowCustomValues":
 			default:
 				return nil, fmt.Errorf("plugin meta usageSchema field %q has unknown property %q", name, key)
 			}
 		}
 		field := UsageFieldSchema{}
+		if raw, exists := fieldObject["allowCustomValues"]; exists {
+			flag, ok := raw.(bool)
+			if !ok {
+				return nil, fmt.Errorf("plugin meta usageSchema field %q allowCustomValues must be a boolean", name)
+			}
+			field.AllowCustomValues = flag
+		}
 		var err error
 		if field.Type, err = stringMetaField(fieldObject, "type"); err != nil {
 			return nil, err
@@ -1516,6 +1524,9 @@ func decodeUsageSchema(value any) (map[string]UsageFieldSchema, error) {
 			if field.Enum, err = strictStringSlice(fieldObject, "enum"); err != nil {
 				return nil, err
 			}
+		}
+		if _, exists := fieldObject["allowCustomValues"]; exists && field.Enum == nil {
+			return nil, fmt.Errorf("plugin meta usageSchema field %q allowCustomValues requires enum", name)
 		}
 		if rawLabels, exists := fieldObject["enumLabels"]; exists {
 			labels, ok := rawLabels.(map[string]any)
@@ -1540,6 +1551,9 @@ func decodeUsageSchema(value any) (map[string]UsageFieldSchema, error) {
 }
 
 func validateUsageFieldSchema(name string, field UsageFieldSchema) error {
+	if field.AllowCustomValues && field.Enum == nil {
+		return fmt.Errorf("plugin meta usageSchema field %q allowCustomValues requires enum", name)
+	}
 	if field.UnitLabel != nil {
 		if field.Type != "number" || field.Unit != "count" || field.Enum != nil {
 			return fmt.Errorf("plugin meta usageSchema field %q unitLabel requires a number field with count unit", name)
@@ -1696,7 +1710,7 @@ func validateUsageExampleValue(value any, field UsageFieldSchema) error {
 		if !ok {
 			return fmt.Errorf("enum is not an allowed value")
 		}
-		if slices.Contains(field.Enum, text) {
+		if slices.Contains(field.Enum, text) || (field.AllowCustomValues && strings.TrimSpace(text) != "") {
 			return nil
 		}
 		return fmt.Errorf("enum is not an allowed value")

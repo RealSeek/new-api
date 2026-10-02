@@ -25,7 +25,50 @@ import {
   parseTaskTiersFromExpr,
   splitBillingExprAndRequestRules,
 } from './billing-expr'
+import { compileBillingExpression } from './billing-expression/parser'
 import { evaluateBillingExpression } from './billing-expression/runtime'
+import { visitExpression } from './billing-expression/types'
+
+/** Retain custom selectors declared in saved prices when reopening the table. */
+export function taskPricingSchema(
+  schema: BillingUsageSchema,
+  expression: string
+): BillingUsageSchema {
+  const result = Object.fromEntries(
+    Object.entries(schema).map(([field, definition]) => [
+      field,
+      {
+        ...definition,
+        enum: definition.enum ? [...definition.enum] : undefined,
+      },
+    ])
+  )
+  const compiled = compileBillingExpression(expression)
+  if (compiled.status !== 'ready') return result
+  visitExpression(compiled.ast, (node) => {
+    if (
+      node.kind !== 'binary' ||
+      node.operator !== '==' ||
+      node.left.kind !== 'call' ||
+      node.left.name !== 'u' ||
+      node.left.args[0]?.kind !== 'literal' ||
+      typeof node.left.args[0].value !== 'string' ||
+      node.right.kind !== 'literal' ||
+      typeof node.right.value !== 'string'
+    ) {
+      return
+    }
+    const definition = result[node.left.args[0].value]
+    if (
+      definition?.allowCustomValues &&
+      definition.enum &&
+      !definition.enum.includes(node.right.value)
+    ) {
+      definition.enum.push(node.right.value)
+    }
+  })
+  return result
+}
 
 export const TASK_TOKEN_PRICE_SCALE = 1_000_000
 
@@ -81,7 +124,15 @@ export function getTaskEnumFields(
 ): [string, BillingUsageFieldSchema][] {
   if (!schema) return []
   return Object.entries(schema)
-    .filter((entry) => Boolean(entry[1].enum?.length))
+    .filter(
+      (entry) => Boolean(entry[1].enum?.length) || entry[1].type === 'boolean'
+    )
+    .map(([field, definition]): [string, BillingUsageFieldSchema] => [
+      field,
+      definition.type === 'boolean'
+        ? { ...definition, enum: ['false', 'true'] }
+        : definition,
+    ])
     .sort(([left], [right]) => left.localeCompare(right))
 }
 
@@ -157,7 +208,10 @@ export function taskMatrixToTiers(
         ([field]) => row.unitPrices[field] === firstRow.unitPrices[field]
       )
   )
-  if (isUniform) {
+  const openSelectors = Object.values(schema).some(
+    (definition) => definition.allowCustomValues
+  )
+  if (isUniform && !openSelectors) {
     return [
       {
         label: 'base',
@@ -173,10 +227,10 @@ export function taskMatrixToTiers(
     ]
   }
 
-  return config.rows.map((row, index) => ({
+  const tiers = config.rows.map((row, index) => ({
     label: taskMatrixRowLabel(row.combination),
     conditions:
-      index === config.rows.length - 1
+      index === config.rows.length - 1 && !openSelectors
         ? []
         : Object.entries(row.combination)
             .sort(([left], [right]) => left.localeCompare(right))
@@ -186,6 +240,11 @@ export function taskMatrixToTiers(
       numberFields.map(([field]) => [field, row.unitPrices[field] ?? 0])
     ),
   }))
+  const fallback = tiers.at(-1)
+  if (openSelectors && fallback) {
+    tiers.push({ ...fallback, label: 'base', conditions: [] })
+  }
+  return tiers
 }
 
 export function tryParseTaskMatrixConfig(
@@ -193,7 +252,8 @@ export function tryParseTaskMatrixConfig(
   schema: BillingUsageSchema
 ): TaskMatrixConfig | null {
   if (!expression) return null
-  const tiers = parseTaskTiersFromExpr(expression, schema)
+  schema = taskPricingSchema(schema, expression)
+  const tiers = parseTaskTiersFromExpr(expression, schema, true)
   if (tiers.length === 0) return null
 
   const numberFields = getTaskNumberFields(schema)
@@ -237,7 +297,7 @@ export function evaluateTaskVisualConfig(
   let matchedTier = fallback
   for (const tier of config.tiers.slice(0, -1)) {
     const matches = tier.conditions.every(
-      (condition) => sample[condition.field] === condition.value
+      (condition) => String(sample[condition.field]) === condition.value
     )
     if (matches) {
       matchedTier = tier
@@ -271,7 +331,14 @@ export function evaluateTaskVisualConfig(
   // Keep visual row selection and itemization, but share expression arithmetic
   // and unit semantics with raw simulation. Zero-price fields remain optional.
   const terms = [String(constant)]
-  const normalizedUsage = { ...sample }
+  const normalizedUsage: Record<string, number | string | boolean> = {
+    ...sample,
+  }
+  for (const [field, definition] of Object.entries(schema ?? {})) {
+    if (definition.type === 'boolean') {
+      normalizedUsage[field] = String(sample[field]) === 'true'
+    }
+  }
   for (const part of parts) {
     if (part.kind !== 'usage' || !part.field) continue
     normalizedUsage[part.field] = part.quantity ?? 0
@@ -366,11 +433,14 @@ function generateTaskTierCall(
   return `tier(${JSON.stringify(tier.label)}, ${generateTaskTierBody(tier, numberFields)})`
 }
 
-function generateTaskCondition(conditions: TaskVisualCondition[]): string {
+function generateTaskCondition(
+  conditions: TaskVisualCondition[],
+  schema: BillingUsageSchema
+): string {
   return conditions
     .map(
       (condition) =>
-        `u(${JSON.stringify(condition.field)}) == ${JSON.stringify(condition.value)}`
+        `u(${JSON.stringify(condition.field)}) == ${schema[condition.field]?.type === 'boolean' ? condition.value : JSON.stringify(condition.value)}`
     )
     .join(' && ')
 }
@@ -394,7 +464,7 @@ export function generateTaskExprFromConfig(
       parts.push(call)
       continue
     }
-    const condition = generateTaskCondition(tier.conditions)
+    const condition = generateTaskCondition(tier.conditions, schema)
     if (!condition) return ''
     parts.push(`${condition} ? ${call}`)
   }
@@ -406,7 +476,8 @@ export function tryParseTaskVisualConfig(
   schema: BillingUsageSchema
 ): TaskVisualConfig | null {
   if (!expression) return null
-  const tiers = parseTaskTiersFromExpr(expression, schema)
+  schema = taskPricingSchema(schema, expression)
+  const tiers = parseTaskTiersFromExpr(expression, schema, true)
   if (tiers.length === 0) return null
   return normalizeTaskVisualConfig(
     {

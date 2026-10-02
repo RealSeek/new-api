@@ -28,12 +28,50 @@ import {
   evaluateTaskVisualConfig,
   generateTaskExprFromConfig,
   getTaskEnumCombinations,
+  taskPricingSchema,
   taskMatrixRowLabel,
   taskMatrixToTiers,
   tryParseTaskMatrixConfig,
   type TaskMatrixConfig,
 } from '../lib/task-expr'
 import type { BillingUsageSchema } from '../types'
+
+test('round-trips custom resolution and reference-video prices in dollars per second', () => {
+  const schema: BillingUsageSchema = {
+    seconds: { type: 'number', unit: 'second' },
+    tokens: { type: 'number', unit: 'token' },
+    resolution: { enum: ['480p', '720p'], allowCustomValues: true },
+    video_input: { type: 'boolean' },
+  }
+  const expression =
+    'u("resolution") == "1440p" && u("video_input") == true ? tier("1440p-video", u("seconds") * 2.2) : tier("base", u("seconds") * 0.57)'
+  const effectiveSchema = taskPricingSchema(schema, expression)
+  assert.deepEqual(effectiveSchema.resolution.enum, ['480p', '720p', '1440p'])
+  const matrix = tryParseTaskMatrixConfig(expression, effectiveSchema)
+  assert.ok(matrix)
+  assert.equal(matrix.rows.length, 6)
+  const generated = generateTaskExprFromConfig(
+    { tiers: taskMatrixToTiers(matrix, effectiveSchema) },
+    effectiveSchema
+  )
+  for (const row of matrix.rows) {
+    const usage = {
+      ...row.combination,
+      video_input: row.combination.video_input === 'true',
+      seconds: 5,
+      tokens: 999999,
+    }
+    const expected =
+      row.combination.resolution === '1440p' && usage.video_input
+        ? 5 * 2.2
+        : 5 * 0.57
+    for (const candidate of [expression, generated]) {
+      const result = evaluateBillingExpression(candidate, { usage })
+      assert.ok(result.status === 'success')
+      assert.equal(result.cost, expected)
+    }
+  }
+})
 
 const singleEnumSchema: BillingUsageSchema = {
   seconds: { type: 'number', unit: 'second' },

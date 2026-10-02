@@ -223,6 +223,7 @@ function seedanceUsageSchema(profile) {
   const resolutionLabels = {};
   for (const resolution of profile.resolutions) resolutionLabels[resolution] = { en: resolution, zh: resolution };
   const schema = {
+    seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
     // Upstream billing tokens (estimated at submit, actual on completion).
     tokens: {
       type: "number",
@@ -232,6 +233,7 @@ function seedanceUsageSchema(profile) {
     // Output video resolution; Seedance token unit price varies by resolution tier.
     resolution: {
       enum: profile.resolutions,
+      allowCustomValues: true,
       enumLabels: resolutionLabels,
       description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
@@ -267,7 +269,7 @@ function seedanceUsageExamples(profile) {
   if (profile.videoInput) specs.push({ label: "720p · 5s (+4s 输入视频)", resolution: "720p", seconds: 9, video_input: "video" });
   if (profile.audio) specs.push({ label: "720p · 5s · 无声", resolution: "720p", seconds: 5, generate_audio: false });
   return specs.map((spec) => {
-    const facts = { tokens: Math.round(estimateTokens(spec.seconds, spec.resolution)), resolution: spec.resolution };
+    const facts = { seconds: 5, tokens: Math.round(estimateTokens(spec.seconds, spec.resolution)), resolution: spec.resolution };
     if (profile.videoInput) facts.video_input = spec.video_input || "none";
     if (profile.audio) facts.generate_audio = spec.generate_audio !== false;
     return { label: spec.label, facts: facts };
@@ -301,7 +303,7 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation and Seedream image generation",
     zh: "火山引擎豆包 Seedance 视频生成与 Seedream 图片生成",
   },
-  version: "1.2.1",
+  version: "1.3.0",
   author: { name: "QuantumNous" },
   channelTypes: [54, 45], // VolcEngine-type channels serve Ark video models with the same wire format
   models: Object.keys(VIDEO_MODELS).concat(Object.keys(IMAGE_MODELS)),
@@ -865,7 +867,7 @@ export function extractUsage(ctx) {
   seconds = Math.min(seconds, 3600);
   const profile = videoProfile(ctx);
   const resolution = videoResolution(ctx);
-  const facts = { tokens: estimateTokens(seconds, resolution), resolution: resolution };
+  const facts = { seconds: seconds, tokens: estimateTokens(seconds, resolution), resolution: resolution };
   // Every model reports video_input, including those whose profile omits it:
   // expressions saved when all Seedance models declared the field then keep
   // matching their no-video tier.
@@ -962,6 +964,10 @@ export function extractUsageOnComplete(task, taskResult, body) {
   if (!Number.isFinite(tokens) || tokens <= 0) tokens = Number(usage.total_tokens);
   if (Number.isFinite(tokens) && tokens > 0) facts.tokens = tokens;
   const content = body.content || {};
+  // Charge output duration only; reference-video duration contributes to tokens.
+  // Missing duration keeps the frozen submission estimate.
+  const duration = content.duration === undefined ? body.duration : content.duration;
+  if (duration !== undefined) facts.seconds = duration;
   const resolution = trimmed(content.resolution || body.resolution).toLowerCase();
   if (videoProfile(task).resolutions.includes(resolution)) facts.resolution = resolution;
   return facts;

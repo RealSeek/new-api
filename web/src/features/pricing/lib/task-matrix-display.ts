@@ -26,6 +26,7 @@ import {
 import { readConditionalTaskPricing } from './billing-expression/task-display'
 import {
   getTaskEnumFields,
+  taskPricingSchema,
   taskMatrixRowLabel,
   tryParseTaskMatrixConfig,
 } from './task-expr'
@@ -41,6 +42,7 @@ export function getTaskMatrixDisplayTiers(
   schema: BillingUsageSchema | null | undefined
 ): ParsedTaskTier[] | null {
   if (!schema) return null
+  schema = taskPricingSchema(schema, expression || '')
   if (getTaskEnumFields(schema).length === 0) return null
 
   const matrix = tryParseTaskMatrixConfig(expression, schema)
@@ -63,6 +65,7 @@ export function getTaskPricingDisplayTiers(
   expression: string | null | undefined,
   schema: BillingUsageSchema | null | undefined
 ): ParsedTaskTier[] {
+  if (schema) schema = taskPricingSchema(schema, expression || '')
   const tiers = parseTaskTiersFromExpr(expression || '', schema, true)
   if (tiers.length === 0 && expression && schema) {
     const { billingExpr } = splitBillingExprAndRequestRules(expression)

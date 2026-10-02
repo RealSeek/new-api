@@ -129,6 +129,77 @@ function renderEditor(
   }
 }
 
+it('adds custom resolution rows, saves per-second prices and restores them when reopened', async () => {
+  const schema: BillingUsageSchema = {
+    seconds: { type: 'number', unit: 'second' },
+    tokens: { type: 'number', unit: 'token' },
+    resolution: { enum: ['480p', '720p'], allowCustomValues: true },
+    video_input: { type: 'boolean' },
+  }
+  const editor = renderEditor(
+    {
+      billingMode: 'tiered_expr',
+      billingExpr: 'tier("base", u("seconds") * 0.5)',
+    },
+    schema
+  )
+  expect(
+    screen.getByRole('combobox', { name: 'Billing unit' })
+  ).toHaveTextContent('Per-second')
+  const custom = screen.getByRole('textbox', { name: 'Custom resolution' })
+  fireEvent.change(custom, { target: { value: '1440p' } })
+  fireEvent.keyDown(custom, { key: 'Enter' })
+  const rowPrice = screen.getByRole('textbox', {
+    name: 'Unit price: seconds: resolution: 1440p · video_input: Yes',
+  })
+  fireEvent.change(rowPrice, { target: { value: '2.2' } })
+  const saved = await commit(editor.ref)
+  expect(saved?.billingExpr).toContain('u("resolution") == "1440p"')
+  const result = evaluateBillingExpression(saved?.billingExpr ?? '', {
+    usage: {
+      seconds: 5,
+      tokens: 999999,
+      resolution: '1440p',
+      video_input: true,
+    },
+  })
+  expect(result).toMatchObject({ status: 'success', cost: 11 })
+  editor.unmount()
+  renderEditor(saved ?? {}, schema)
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Unit price: seconds: resolution: 1440p · video_input: Yes',
+    })
+  ).toHaveValue('2.2')
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('combobox', { name: 'Billing unit' }))
+  await user.click(await screen.findByRole('option', { name: 'Per-token' }))
+  expect(
+    screen.queryByRole('textbox', { name: /Unit price: seconds:/ })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Unit price: tokens: resolution: 1440p · video_input: Yes',
+    })
+  ).toHaveValue('0')
+})
+
+it('opens saved video token prices in the token billing unit without changing charges', async () => {
+  const expression = 'tier("base", u("tokens") * 42 / 1000000)'
+  const editor = renderEditor(
+    { billingMode: 'tiered_expr', billingExpr: expression },
+    {
+      seconds: { type: 'number', unit: 'second' },
+      tokens: { type: 'number', unit: 'token' },
+      resolution: { enum: ['720p'], allowCustomValues: true },
+    }
+  )
+  expect(
+    screen.getByRole('combobox', { name: 'Billing unit' })
+  ).toHaveTextContent('Per-token')
+  expect(await commit(editor.ref)).toMatchObject({ billingExpr: expression })
+})
+
 async function selectCurrency(label: string) {
   const user = userEvent.setup()
   await user.click(screen.getByRole('combobox', { name: 'Pricing currency' }))

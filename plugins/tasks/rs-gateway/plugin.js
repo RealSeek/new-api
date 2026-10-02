@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.1.0",
+  version: "1.2.0",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -10,12 +10,13 @@ export const meta = {
   fetchMode: "per_task",
   protocols: ["openai_video"],
   usageSchema: {
+    resolution: { enum: ["480p", "720p", "1080p", "4k"], allowCustomValues: true, description: { en: "Output video resolution", zh: "输出视频分辨率" } },
     seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
     tokens: { type: "number", unit: "token", description: { en: "Video generation token unit price", zh: "视频生成 Token 单价" } },
     video_input: { type: "boolean", description: { en: "Reference video present", zh: "存在参考视频" } },
     web_search_calls: { type: "number", unit: "count", description: { en: "Web search unit price", zh: "联网搜索单价" } },
   },
-  usageExamples: [{ label: "720p · 5s", facts: { seconds: 5, tokens: 108000, video_input: false, web_search_calls: 0 } }],
+  usageExamples: [{ label: "720p · 5s", facts: { resolution: "720p", seconds: 5, tokens: 108000, video_input: false, web_search_calls: 0 } }],
 };
 
 function seedanceModel(ctx) {
@@ -78,7 +79,7 @@ export function extractUsage(ctx) {
   const resolution = model[2] || String(body.resolution || metadata.resolution || body.size || "720p").trim().toLowerCase();
   const pixels = { "480p": 854 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080, "4k": 3840 * 2160 }[resolution];
   if (!pixels) throw new Error("unsupported Seedance resolution for token budget");
-  return { seconds, tokens: Math.ceil((seconds + (videoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: videoInput, web_search_calls: 0 };
+  return { resolution, seconds, tokens: Math.ceil((seconds + (videoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: videoInput, web_search_calls: 0 };
 }
 
 export function extractUsageOnComplete(_ctx, result, body) {

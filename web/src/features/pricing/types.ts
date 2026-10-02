@@ -34,6 +34,7 @@ export type BillingUsageFieldSchema = {
   unit?: BillingUsageUnit
   unitLabel?: string | Record<string, string>
   enum?: string[]
+  allowCustomValues?: boolean
   enumLabels?: Record<string, string | Record<string, string>>
   description?: string | Record<string, string>
 }

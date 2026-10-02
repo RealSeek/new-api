@@ -1595,7 +1595,7 @@ func validateUsageValue(value any, schema pluginruntime.UsageFieldSchema, allowN
 		if !ok {
 			return 0, fmt.Errorf("plugin usage enum must be a string")
 		}
-		if slices.Contains(schema.Enum, text) {
+		if slices.Contains(schema.Enum, text) || (schema.AllowCustomValues && strings.TrimSpace(text) != "") {
 			return 0, nil
 		}
 		return 0, fmt.Errorf("plugin usage enum is not an allowed value")

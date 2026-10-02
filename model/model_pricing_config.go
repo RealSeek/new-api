@@ -271,12 +271,8 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 			ModelPricingDescription: ModelPricingDescription{Effective: effectiveModelPricing(values, name)}}
 		entry.CacheWriteMode = ResolveCacheWriteMode(name, configured)
 		entry.BillingDetails = ResolveLegacyBillingDetails(name, entry.Effective, configured)
-		if plugin, ok := generation.GetByModel(name); ok {
-			entry.UsageSchema, _ = plugin.Meta.UsageForModel(name)
-		} else if target, ok := ResolveTaskModelAlias(generation, name); ok {
-			if plugin, ok := generation.Get(target.PluginKey); ok {
-				entry.UsageSchema, _ = plugin.Meta.UsageForModel(target.Declared)
-			}
+		if plugin, usageModel, ok := ResolveTaskUsagePlugin(generation, name); ok {
+			entry.UsageSchema, _ = plugin.Meta.UsageForModel(usageModel)
 		}
 		plugins := generation.PluginsByModel(name)
 		configuredVariants, _ := configured[billing_setting.PluginBillingExprOption].(map[string]any)
@@ -451,14 +447,10 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 						return fmt.Errorf("model %s: plugin %s: %w", name, plugin.Meta.Key, err)
 					}
 				}
-			} else if target, resolved := ResolveTaskModelAlias(generation, name); resolved {
-				if plugin, ok := generation.Get(target.PluginKey); ok {
-					if !unchanged || generation.SharedModel(target.Declared) {
-						schema, _ := plugin.Meta.UsageForModel(target.Declared)
-						err = billing_setting.SmokeTestTaskExpr(expression, schema)
-					}
-				} else {
-					err = billing_setting.SmokeTestExpr(expression)
+			} else if plugin, usageModel, ok := ResolveTaskUsagePlugin(generation, name); ok {
+				if !unchanged || generation.SharedModel(usageModel) {
+					schema, _ := plugin.Meta.UsageForModel(usageModel)
+					err = billing_setting.SmokeTestTaskExpr(expression, schema)
 				}
 			} else if !unchanged || len(billingexpr.UsedUsageKeys(expression)) == 0 {
 				err = billing_setting.SmokeTestExpr(expression)
