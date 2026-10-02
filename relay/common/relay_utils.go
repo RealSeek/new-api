@@ -168,6 +168,17 @@ func validatePrompt(prompt string) *dto.TaskError {
 // overflow quota calculation into a negative charge.
 const MaxTaskDurationSeconds = 3600
 
+// IsSeedance2VideoModel identifies the gateway's Seedance 2.x video variants.
+func IsSeedance2VideoModel(model string) bool {
+	switch model {
+	case "seedance-2.0", "seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p", "seedance-2.0-4k",
+		"seedance-2.5", "seedance-2.5-480p", "seedance-2.5-720p", "seedance-2.5-1080p":
+		return true
+	default:
+		return false
+	}
+}
+
 func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
 	seconds := ResolveTaskDuration(req, 0)
 	if seconds < 0 || seconds > MaxTaskDurationSeconds {

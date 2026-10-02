@@ -275,6 +275,33 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		pluginKey = pinnedPlugin.Plugin.Meta.Key
 	}
 	exprStr, exists := billing_setting.ResolveTaskBillingExpr(pluginKey, pricingModelName, info.UpstreamModelName)
+	// Freeze the configured per-second tariff as a usage expression for Seedance.
+	// Automatic duration reserves the model ceiling; completion overlays the
+	// actual output seconds without multiplying by reference-video duration.
+	if !exists && info.ChannelType == constant.ChannelTypeRSGateway && relaycommon.IsSeedance2VideoModel(info.UpstreamModelName) &&
+		billing_setting.GetBillingMode(pricingModelName) == billing_setting.BillingModePerSecond {
+		req, requestErr := relaycommon.GetTaskRequest(c)
+		if requestErr != nil {
+			return nil, service.TaskErrorWrapperLocal(requestErr, "invalid_request", http.StatusBadRequest)
+		}
+		resolution := relaycommon.NormalizeVideoResolution(req.Size)
+		if req.Resolution != "" {
+			resolution = relaycommon.NormalizeVideoResolution(req.Resolution)
+		}
+		if value, ok := req.Metadata["resolution"].(string); ok && value != "" {
+			resolution = relaycommon.NormalizeVideoResolution(value)
+		}
+		if resolution == "" {
+			resolution = model_alias_setting.DefaultAliasResolution
+		}
+		price, priced := ratio_setting.GetVideoPrice(pricingModelName, resolution)
+		config, configured := ratio_setting.GetVideoPriceConfig(pricingModelName)
+		if !priced || !configured {
+			return nil, service.TaskErrorWrapperLocal(fmt.Errorf("Seedance %s has no price for %s", pricingModelName, resolution), "model_price_error", http.StatusBadRequest)
+		}
+		exprStr = fmt.Sprintf("tier(\"video\", ceil(max(u(\"seconds\"), %d) / %d) * %d * %s)", config.MinimumDuration, config.BillingStep, config.BillingStep, strconv.FormatFloat(price, 'g', -1, 64))
+		exists = true
+	}
 	useTiered := exists || billing_setting.GetBillingMode(pricingModelName) == billing_setting.BillingModeTieredExpr
 	if useTiered {
 		provider, supported := adaptor.(channel.TaskUsageFactsProvider)

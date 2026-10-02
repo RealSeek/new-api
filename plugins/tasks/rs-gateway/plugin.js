@@ -2,21 +2,34 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.0.0",
+  version: "1.1.0",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
   models: [],
   fetchMode: "per_task",
   protocols: ["openai_video"],
+  usageSchema: {
+    seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
+    tokens: { type: "number", unit: "token", description: { en: "Video generation token unit price", zh: "视频生成 Token 单价" } },
+    video_input: { type: "boolean", description: { en: "Reference video present", zh: "存在参考视频" } },
+    web_search_calls: { type: "number", unit: "count", description: { en: "Web search unit price", zh: "联网搜索单价" } },
+  },
+  usageExamples: [{ label: "720p · 5s", facts: { seconds: 5, tokens: 108000, video_input: false, web_search_calls: 0 } }],
 };
+
+function seedanceModel(ctx) {
+  const model = /^(seedance-2\.[05])(?:-(480p|720p|1080p|4k))?$/.exec(ctx.upstreamModel || ctx.model || "");
+  return model && !(model[1] === "seedance-2.5" && model[2] === "4k") ? model : null;
+}
 
 export function buildSubmitRequest(ctx) {
   const body = Object.assign({}, ctx.requestBody, { model: ctx.upstreamModel });
   const metadata = typeof body.metadata === "string" ? JSON.parse(body.metadata) : body.metadata || {};
   let duration;
-  for (const value of [body.seconds, body.duration, body.durationSeconds, metadata.seconds, metadata.duration, metadata.durationSeconds]) {
-    if (value !== undefined && (!Number.isInteger(Number(value)) || Number(value) <= 0 || Number(value) > 3600)) {
+  for (const [index, value] of [body.seconds, body.duration, body.durationSeconds, metadata.seconds, metadata.duration, metadata.durationSeconds].entries()) {
+    const automatic = index === 1 && seedanceModel(ctx) && Number(value) === -1;
+    if (value !== undefined && !automatic && (!Number.isInteger(Number(value)) || Number(value) <= 0 || Number(value) > 3600)) {
       throw new Error("duration must be between 1 and 3600 seconds");
     }
     if (value !== undefined) {
@@ -44,6 +57,39 @@ export function buildSubmitRequest(ctx) {
   }
   headers["Content-Type"] = "application/json";
   return { url: base + path, method: "POST", headers, body };
+}
+
+export function extractUsage(ctx) {
+  // Legacy prices already apply their own seconds multiplier.
+  if (ctx.usagePurpose === "billing_ratios") return null;
+  const model = seedanceModel(ctx);
+  if (!model) return null;
+  const body = ctx.requestBody || {};
+  const metadata = typeof body.metadata === "string" ? JSON.parse(body.metadata) : body.metadata || {};
+  const content = typeof body.content === "string" ? JSON.parse(body.content) : body.content || metadata.content || [];
+  const references = typeof body.references === "string" ? JSON.parse(body.references) : body.references || [];
+  const videoInput = content.some(item => item.type === "video_url") || references.some(item => item.type === "video") || (metadata.reference_videos || []).length > 0 || (ctx.files || []).some(file => file.field === "video");
+  // Budget estimate only: the existing Ark formula uses pixels * 24 FPS / 1024.
+  // Automatic output and unknown reference-video lengths reserve the documented
+  // model duration ceiling. Completion replaces this estimate with real tokens.
+  const maxDuration = model[1] === "seedance-2.5" ? 30 : 15;
+  const requested = Number(body.duration === undefined ? body.seconds : body.duration);
+  const seconds = requested > 0 ? requested : maxDuration;
+  const resolution = model[2] || String(body.resolution || metadata.resolution || body.size || "720p").trim().toLowerCase();
+  const pixels = { "480p": 854 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080, "4k": 3840 * 2160 }[resolution];
+  if (!pixels) throw new Error("unsupported Seedance resolution for token budget");
+  return { seconds, tokens: Math.ceil((seconds + (videoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: videoInput, web_search_calls: 0 };
+}
+
+export function extractUsageOnComplete(_ctx, result, body) {
+  if (result.status !== "SUCCESS") return null;
+  const usage = body.usage || {};
+  const facts = {};
+  // Missing usage keeps the reservation; explicit zero remains a real zero.
+  if (usage.seconds !== undefined) facts.seconds = usage.seconds;
+  if (usage.completion_tokens !== undefined) facts.tokens = usage.completion_tokens;
+  if (usage.web_search_calls !== undefined) facts.web_search_calls = usage.web_search_calls;
+  return facts;
 }
 
 export function parseSubmitResponse(_ctx, resp) {
@@ -107,7 +153,7 @@ export const protocols = {
         model: (task.properties || {}).origin_model_name || "",
         status: statuses[task.status] || "unknown",
       });
-      if (task.status === "FAILURE") result.error = { code: "video_generation_failed", message: task.fail_reason || "gateway task failed" };
+      if (task.status === "FAILURE" && !result.error) result.error = { code: "video_generation_failed", message: task.fail_reason || "gateway task failed" };
       return result;
     },
   },

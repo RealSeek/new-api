@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,10 +14,14 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/plugins"
+	jsadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_alias_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -466,4 +471,189 @@ export function parseTaskResult() { return {status:"SUCCESS"}; }
 			assert.JSONEq(t, `{"status":`+strconv.Itoa(tc.status)+`}`, string(result.TaskData))
 		})
 	}
+}
+
+func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
+	saveBillingConfig(t)
+	savedPrices := ratio_setting.VideoPrice2JSONString()
+	savedAliases := model_alias_setting.ModelAliasesJSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(savedPrices))
+		require.NoError(t, model_alias_setting.UpdateModelAliasesByJSONString(savedAliases))
+	})
+	require.NoError(t, model_alias_setting.UpdateModelAliasesByJSONString(`{
+		"seedance-2.0":{"resolutions":{"480p":"seedance-2.0-480p","720p":"seedance-2.0-720p","1080p":"seedance-2.0-1080p","4k":"seedance-2.0-4k"}},
+		"seedance-2.5":{"resolutions":{"480p":"seedance-2.5-480p","720p":"seedance-2.5-720p","1080p":"seedance-2.5-1080p"}}
+	}`))
+	prices := `{
+		"seedance-2.0-480p":{"default_price":0.4,"default_duration":5,"billing_step":1,"minimum_duration":1},
+		"seedance-2.0-720p":{"default_price":0.43,"default_duration":5,"billing_step":1,"minimum_duration":1},
+		"seedance-2.5-480p":{"default_price":0.35,"default_duration":5,"billing_step":1,"minimum_duration":1},
+		"seedance-2.5-720p":{"default_price":0.5,"default_duration":5,"billing_step":1,"minimum_duration":1}
+	}`
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"seedance-2.0-480p":"per_second","seedance-2.0-720p":"per_second","seedance-2.5-480p":"per_second","seedance-2.5-720p":"per_second"}`,
+		"billing_setting.billing_expr": `{}`, billing_setting.PluginBillingExprOption: `{}`,
+	}))
+	source, err := plugins.Source("rs-gateway")
+	require.NoError(t, err)
+	registry := pluginruntime.NewRegistry()
+	plugin, err := registry.Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	service.InitHttpClient()
+	automaticDuration, fixedDuration := -1, 6
+	for _, tc := range []struct {
+		name, model, resolution string
+		duration                *int
+		videoInput              bool
+		reservedSeconds         float64
+		price                   float64
+	}{
+		{name: "2.0 automatic 480p", model: "seedance-2.0", resolution: "480p", duration: &automaticDuration, reservedSeconds: 15, price: 0.4},
+		{name: "2.5 automatic 480p", model: "seedance-2.5", resolution: "480p", duration: &automaticDuration, reservedSeconds: 30, price: 0.35},
+		{name: "2.5 automatic 720p", model: "seedance-2.5", resolution: "720p", duration: &automaticDuration, reservedSeconds: 30, price: 0.5},
+		{name: "omitted duration and resolution", model: "seedance-2.5", reservedSeconds: 30, price: 0.5},
+		{name: "fixed duration with reference video", model: "seedance-2.0", duration: &fixedDuration, videoInput: true, reservedSeconds: 6, price: 0.43},
+		{name: "unpriced high resolution", model: "seedance-2.0", resolution: "1080p", duration: &automaticDuration},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(prices))
+			content := []any{map[string]any{"type": "text", "text": "a wave"}}
+			if tc.videoInput {
+				content = append(content, map[string]any{"type": "video_url", "video_url": map[string]any{"url": "https://example.com/reference.mp4"}, "role": "reference_video"})
+			}
+			body := map[string]any{"model": tc.model, "content": content, "watermark": false, "seed": 0, "ratio": "adaptive", "callback_url": "https://example.com/callback"}
+			if tc.duration != nil {
+				body["duration"] = *tc.duration
+			}
+			if tc.resolution != "" {
+				body["resolution"] = tc.resolution
+			}
+			encoded, err := common.Marshal(body)
+			require.NoError(t, err)
+			var forwarded map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/videos", r.URL.Path)
+				assert.NoError(t, common.DecodeJson(r.Body, &forwarded))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"id":"upstream-job","status":"queued"}`))
+			}))
+			defer server.Close()
+			c, info := newTaskSubmitContext(t, tc.model, "")
+			delete(c.Keys, "task_request")
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(encoded))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeRSGateway)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			c.Set("group", "default")
+			info.OriginModelName, info.UserGroup, info.UsingGroup = tc.model, "default", "default"
+			// Reservation is provided by the fixture; no wallet or real upstream is used.
+			info.Billing = &imageReservation{limit: 1 << 30}
+			c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Generation: registry.Generation(), Plugin: plugin})
+			result, taskErr := RelayTaskSubmit(c, info)
+			if tc.price == 0 {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, "model_price_error", taskErr.Code)
+				assert.Nil(t, result)
+				assert.Nil(t, forwarded)
+				return
+			}
+			require.Nil(t, taskErr, "submission error: %+v", taskErr)
+			require.NotNil(t, result)
+			assert.Equal(t, "upstream-job", result.UpstreamTaskID)
+			resolution := tc.resolution
+			if resolution == "" {
+				resolution = "720p"
+			}
+			body["model"] = tc.model + "-" + resolution
+			wantBody, err := common.Marshal(body)
+			require.NoError(t, err)
+			actualBody, err := common.Marshal(forwarded)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(wantBody), string(actualBody))
+			snapshot := info.TieredBillingSnapshot
+			require.NotNil(t, snapshot)
+			assert.Equal(t, tc.reservedSeconds, snapshot.UsageFacts["seconds"])
+			assert.Equal(t, tc.videoInput, snapshot.UsageFacts["video_input"])
+			assert.Equal(t, common.QuotaRound(tc.reservedSeconds*tc.price*common.QuotaPerUnit*snapshot.GroupRatio), result.Quota)
+			// Changing the tariff cannot alter a task already reserved at the old price.
+			require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(`{}`))
+			task := model.InitTask(constant.TaskPlatform("rs-gateway"), info)
+			adaptor := jsadaptor.New(plugin)
+			for _, completion := range []struct {
+				name, raw string
+				seconds   float64
+				tokens    float64
+				valid     bool
+			}{
+				{name: "actual seconds reduce reservation", raw: `{"seconds":4,"completion_tokens":86400}`, seconds: 4, tokens: 86400, valid: true},
+				{name: "actual seconds exceed requested", raw: `{"seconds":9,"completion_tokens":194400}`, seconds: 9, tokens: 194400, valid: true},
+				{name: "explicit zero token usage", raw: `{"seconds":4,"completion_tokens":0}`, seconds: 4, valid: true},
+				{name: "missing usage retains reservation", raw: `{}`, seconds: tc.reservedSeconds},
+				{name: "negative upstream seconds rejected", raw: `{"seconds":-1,"completion_tokens":86400}`, seconds: tc.reservedSeconds},
+				{name: "oversized upstream seconds rejected", raw: `{"seconds":3601}`, seconds: tc.reservedSeconds},
+			} {
+				t.Run(completion.name, func(t *testing.T) {
+					parsed, err := adaptor.ParseTaskResult(task, nil, []byte(`{"status":"completed","metadata":{"url":"https://example.com/output.mp4"},"usage":`+completion.raw+`}`))
+					require.NoError(t, err)
+					assert.Equal(t, string(model.TaskStatusSuccess), parsed.Status)
+					if completion.valid {
+						assert.Equal(t, completion.tokens, parsed.UsageFacts["tokens"])
+					} else {
+						assert.Empty(t, parsed.UsageFacts)
+					}
+					settled, usage, err := service.EvaluateTaskCompletionUsage(snapshot, parsed.UsageFacts)
+					require.NoError(t, err)
+					assert.Equal(t, completion.seconds, usage["seconds"])
+					assert.Equal(t, common.QuotaRound(completion.seconds*tc.price*common.QuotaPerUnit*snapshot.GroupRatio), settled.ActualQuotaAfterGroup)
+					assert.Equal(t, tc.reservedSeconds, snapshot.UsageFacts["seconds"])
+				})
+			}
+		})
+	}
+}
+
+func TestSeedanceGatewayValidationAndFailedResponse(t *testing.T) {
+	source, err := plugins.Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct{ name, model, body, code string }{
+		{name: "automatic duration", model: "seedance-2.5-720p", body: `{"duration":-1}`},
+		{name: "string automatic duration", model: "seedance-2.0-480p", body: `{"duration":"-1"}`},
+		{name: "other models reject sentinel", model: "other-video", body: `{"duration":-1}`, code: "plugin_usage_invalid"},
+		{name: "seconds is never a sentinel", model: "seedance-2.5", body: `{"seconds":-1}`, code: "plugin_usage_invalid"},
+		{name: "nested duration remains bounded", model: "seedance-2.5", body: `{"duration":-1,"metadata":{"duration":-1}}`, code: "plugin_usage_invalid"},
+		{name: "nested duration overflow", model: "seedance-2.5", body: `{"duration":-1,"options":{"duration":3601}}`, code: "plugin_usage_invalid"},
+		{name: "conflicting durations", model: "seedance-2.5", body: `{"duration":-1,"seconds":5}`, code: "plugin_request_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway, ChannelBaseUrl: "https://gateway.example", UpstreamModelName: tc.model}}
+			adaptor := jsadaptor.New(plugin)
+			adaptor.Init(info)
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			if tc.code == "" {
+				assert.Nil(t, taskErr)
+			} else {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, tc.code, taskErr.Code)
+			}
+		})
+	}
+	providerError := `{"code":"InvalidParameter","message":"unsupported reference","param":"content","type":"invalid_request_error"}`
+	task := &model.Task{TaskID: "public-job", Status: model.TaskStatusFailure, FailReason: "unsupported reference", Data: []byte(`{"status":"failed","error":` + providerError + `}`)}
+	adaptor := jsadaptor.New(plugin)
+	rendered, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(rendered, &response))
+	errorJSON, err := common.Marshal(response["error"])
+	require.NoError(t, err)
+	assert.JSONEq(t, providerError, string(errorJSON))
+	assert.Equal(t, "public-job", response["id"])
+	assert.Equal(t, "failed", response["status"])
 }

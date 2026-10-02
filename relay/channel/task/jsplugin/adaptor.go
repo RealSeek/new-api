@@ -1451,7 +1451,20 @@ func (a *TaskAdaptor) usageRatios(ctx context.Context, models []string, hook str
 
 func (a *TaskAdaptor) validateResolvedUsageRequest(request any, models ...string) error {
 	schema, _ := a.plugin.Meta.UsageForModels(models...)
-	return a.validateResolvedUsageValue(jsonValue(request), schema)
+	value := jsonValue(request)
+	// Seedance's top-level duration=-1 is a generation option, never a negative
+	// billing quantity. Keep all nested and non-Seedance multiplier checks.
+	seedance := a.plugin.Meta.Key == "rs-gateway" && a.info != nil && relaycommon.IsSeedance2VideoModel(a.info.UpstreamModelName)
+	if fields, ok := value.(map[string]any); ok && seedance {
+		duration, present := fields["duration"]
+		number, numeric := usageNumber(duration, true)
+		if present && numeric && number == -1 {
+			fields = maps.Clone(fields)
+			delete(fields, "duration")
+			value = fields
+		}
+	}
+	return a.validateResolvedUsageValue(value, schema)
 }
 
 func (a *TaskAdaptor) validateResolvedUsageValue(value any, usageSchema map[string]pluginruntime.UsageFieldSchema) error {
