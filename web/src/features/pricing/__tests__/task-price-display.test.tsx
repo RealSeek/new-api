@@ -170,6 +170,77 @@ it.each([true, false, undefined])(
   }
 )
 
+it('shows one resolution table without duplicate reference prices or unsupported defaults', () => {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const videoModel: PricingModel = {
+    ...model,
+    billing_expr: `${[
+      ['480p', 0],
+      ['720p', 1.32],
+      ['1080p', 3],
+    ]
+      .flatMap(([resolution, price]) =>
+        ['false', 'true'].map(
+          (reference) =>
+            `u("resolution") == "${resolution}" && u("video_input") == ${reference} ? tier("${resolution}·${reference}", u("seconds") * ${price})`
+        )
+      )
+      .join(' : ')} : tier("base", u("seconds") * 3)`,
+    billing_usage_schema: {
+      seconds: {
+        type: 'number',
+        unit: 'second',
+        description: 'Video generation unit price',
+      },
+      resolution: {
+        enum: ['480p', '720p', '1080p', '4k'],
+        allowCustomValues: true,
+      },
+      video_input: { type: 'boolean' },
+    },
+    billing_usage_examples: [
+      {
+        label: '720p · 5s',
+        facts: { seconds: 5, resolution: '720p', video_input: 'false' },
+      },
+      {
+        label: '4k · 5s',
+        facts: { seconds: 5, resolution: '4k', video_input: 'false' },
+      },
+    ],
+  }
+  render(
+    <QueryClientProvider client={client}>
+      <ModelDetailsContent
+        model={videoModel}
+        groupRatio={{ default: 1 }}
+        usableGroup={{ default: { desc: '', ratio: 1 } }}
+        endpointMap={{}}
+        autoGroups={[]}
+        priceRate={1}
+        usdExchangeRate={1}
+        tokenUnit='M'
+      />
+    </QueryClientProvider>
+  )
+  expect(screen.getAllByRole('table')).toHaveLength(1)
+  expect(screen.getByRole('columnheader', { name: 'Resolution' })).toBeVisible()
+  expect(screen.getByText('480P')).toBeVisible()
+  expect(screen.getByText('720P')).toBeVisible()
+  expect(screen.getByText('1080P')).toBeVisible()
+  expect(screen.queryByText(/4k/i)).not.toBeInTheDocument()
+  expect(
+    screen.getByText('Reference videos have no additional charge.')
+  ).toBeVisible()
+  expect(screen.getByText('$0')).toBeVisible()
+  expect(screen.getByText('$1.32')).toBeVisible()
+  expect(screen.getByText('720p · 5s ≈ $6.6')).toBeVisible()
+})
+
 it('shows nested task conditions and prices in detail and group tables without ambiguous log matches', () => {
   vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
   const client = new QueryClient({

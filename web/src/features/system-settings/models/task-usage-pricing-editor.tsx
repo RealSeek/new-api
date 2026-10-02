@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, X } from 'lucide-react'
 import { memo, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -822,6 +822,53 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
             ) : null}
             {usageSchema.resolution?.allowCustomValues ? (
               <Field className='gap-2'>
+                <FieldLabel>{t('Supported resolutions')}</FieldLabel>
+                <div className='flex flex-wrap gap-2'>
+                  {usageSchema.resolution.enum?.map((resolution) => (
+                    <Badge
+                      key={resolution}
+                      variant='outline'
+                      className='gap-1 pr-0.5'
+                    >
+                      {resolution.toUpperCase()}
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon-xs'
+                        aria-label={t('Remove resolution: {{resolution}}', {
+                          resolution,
+                        })}
+                        disabled={usageSchema.resolution.enum?.length === 1}
+                        onClick={() => {
+                          const nextSchema = {
+                            ...usageSchema,
+                            resolution: {
+                              ...usageSchema.resolution,
+                              enum: usageSchema.resolution.enum?.filter(
+                                (value) => value !== resolution
+                              ),
+                            },
+                          }
+                          setUsageSchema(nextSchema)
+                          if (previewSample.resolution === resolution) {
+                            setPreviewSample({
+                              ...previewSample,
+                              resolution: nextSchema.resolution.enum?.[0] ?? '',
+                            })
+                          }
+                          publishRows(
+                            matrixRows.filter(
+                              (row) => row.combination.resolution !== resolution
+                            ),
+                            nextSchema
+                          )
+                        }}
+                      >
+                        <X aria-hidden='true' />
+                      </Button>
+                    </Badge>
+                  ))}
+                </div>
                 <FieldLabel>{t('Custom resolution')}</FieldLabel>
                 <div className='flex items-center gap-2'>
                   <Input

@@ -184,6 +184,67 @@ it('adds custom resolution rows, saves per-second prices and restores them when 
   ).toHaveValue('0')
 })
 
+it('removes an unsupported resolution and keeps remaining prices when reopened', async () => {
+  const schema: BillingUsageSchema = {
+    seconds: { type: 'number', unit: 'second' },
+    resolution: {
+      enum: ['480p', '720p', '1080p', '4k'],
+      allowCustomValues: true,
+    },
+    video_input: { type: 'boolean' },
+  }
+  const expression = `${[
+    ['480p', 0],
+    ['720p', 1.32],
+    ['1080p', 3],
+    ['4k', 0],
+  ]
+    .flatMap(([resolution, price]) =>
+      ['false', 'true'].map(
+        (reference) =>
+          `u("resolution") == "${resolution}" && u("video_input") == ${reference} ? tier("${resolution}·${reference}", u("seconds") * ${price})`
+      )
+    )
+    .join(' : ')} : tier("base", u("seconds") * 0)`
+  const editor = renderEditor(
+    { billingMode: 'tiered_expr', billingExpr: expression },
+    schema
+  )
+  await userEvent
+    .setup()
+    .click(screen.getByRole('button', { name: 'Remove resolution: 4k' }))
+  const saved = await commit(editor.ref)
+  expect(saved?.billingExpr).not.toContain('4k')
+  for (const [resolution, cost] of [
+    ['480p', 0],
+    ['720p', 6.6],
+    ['1080p', 15],
+  ] as const) {
+    for (const reference of [false, true]) {
+      expect(
+        evaluateBillingExpression(saved?.billingExpr ?? '', {
+          usage: { seconds: 5, resolution, video_input: reference },
+        })
+      ).toMatchObject({ status: 'success', cost: expect.closeTo(cost, 10) })
+    }
+  }
+  editor.unmount()
+  renderEditor(saved ?? {}, schema)
+  expect(
+    screen.queryByRole('textbox', { name: /resolution: 4k/ })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Unit price: seconds: resolution: 720p',
+    })
+  ).toHaveValue('1.32')
+  expect(
+    screen.getByRole('textbox', {
+      name: 'Unit price: seconds: resolution: 480p',
+    })
+  ).toHaveValue('0')
+})
+
 it('opens saved video token prices in the token billing unit without changing charges', async () => {
   const expression = 'tier("base", u("tokens") * 42 / 1000000)'
   const editor = renderEditor(

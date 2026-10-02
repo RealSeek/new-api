@@ -29,7 +29,7 @@ import { compileBillingExpression } from './billing-expression/parser'
 import { evaluateBillingExpression } from './billing-expression/runtime'
 import { visitExpression } from './billing-expression/types'
 
-/** Retain custom selectors declared in saved prices when reopening the table. */
+/** Restore configured resolutions from saved matrix rows rather than plugin defaults. */
 export function taskPricingSchema(
   schema: BillingUsageSchema,
   expression: string
@@ -67,6 +67,42 @@ export function taskPricingSchema(
       definition.enum.push(node.right.value)
     }
   })
+  if (result.resolution?.allowCustomValues) {
+    const tiers = parseTaskTiersFromExpr(expression, result, true)
+    const resolutionTiers = tiers.filter((tier) =>
+      tier.conditions.some((condition) => condition.field === 'resolution')
+    )
+    // Matrix-generated labels identify explicit configured rows. Leave custom
+    // expressions and their fallback meanings intact.
+    if (
+      resolutionTiers.length > 0 &&
+      resolutionTiers.every(
+        (tier) =>
+          tier.label ===
+          taskMatrixRowLabel(
+            Object.fromEntries(
+              tier.conditions.map(({ field, value }) => [field, value])
+            )
+          )
+      ) &&
+      tiers.every(
+        (tier) =>
+          resolutionTiers.includes(tier) ||
+          tier.label === 'base' ||
+          tier.label === 'base_without_reference'
+      )
+    ) {
+      result.resolution.enum = [
+        ...new Set(
+          resolutionTiers.flatMap((tier) =>
+            tier.conditions
+              .filter(({ field }) => field === 'resolution')
+              .map(({ value }) => value)
+          )
+        ),
+      ]
+    }
+  }
   return result
 }
 
@@ -360,10 +396,18 @@ export function evaluateTaskUsageExamples(
 ): { label: string; total: number }[] {
   if (!expression || !schema || !examples?.length) return []
   const { billingExpr } = splitBillingExprAndRequestRules(expression)
+  schema = taskPricingSchema(schema, billingExpr)
   const config = tryParseTaskVisualConfig(billingExpr, schema)
   if (!config) return []
   const rows: { label: string; total: number }[] = []
   for (const example of examples) {
+    if (
+      example.facts.resolution != null &&
+      schema.resolution?.enum &&
+      !schema.resolution.enum.includes(String(example.facts.resolution))
+    ) {
+      continue
+    }
     const result = evaluateTaskVisualConfig(config, example.facts, schema)
     if (!result) continue
     rows.push({ label: example.label, total: result.total })

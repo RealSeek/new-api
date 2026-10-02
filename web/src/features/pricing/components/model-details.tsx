@@ -68,7 +68,10 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import { DEFAULT_TOKEN_UNIT } from '../constants'
 import { useBillingTime } from '../hooks/use-billing-time'
 import { usePricingData } from '../hooks/use-pricing-data'
-import type { ParsedTaskTier } from '../lib/billing-expr'
+import {
+  splitBillingExprAndRequestRules,
+  type ParsedTaskTier,
+} from '../lib/billing-expr'
 import { formatBillingCondition } from '../lib/billing-expression/condition-display'
 import {
   formatTaskUsageUnitPrice,
@@ -101,6 +104,7 @@ import {
 } from '../lib/task-expr'
 import { getTaskPricingDisplayTiers } from '../lib/task-matrix-display'
 import {
+  getTaskResolutionPriceRows,
   hasSimpleTaskPricing,
   taskPriceLabel,
   taskUsageUnitLabel,
@@ -1324,12 +1328,31 @@ function ProviderGroupPricingSection(
   )
 
   if (isDynamicPricingModel(props.model)) {
-    const dynamicTiers = props.model.billing_usage_schema
-      ? getTaskPricingDisplayTiers(
-          props.model.billing_expr,
-          props.model.billing_usage_schema
-        )
-      : getDynamicPricingTiers(props.model)
+    const resolutionRows = getTaskResolutionPriceRows(props.model)
+    const resolutionOnly = resolutionRows?.every(
+      (row) => row.conditions.length === 0
+    )
+    let dynamicTiers: DynamicPricingTier[]
+    if (resolutionRows) {
+      dynamicTiers = resolutionRows.map((row) => ({
+        ...row,
+        conditions: [
+          { field: 'resolution', value: row.resolution },
+          ...row.conditions,
+        ],
+      }))
+    } else {
+      dynamicTiers = props.model.billing_usage_schema
+        ? getTaskPricingDisplayTiers(
+            props.model.billing_expr,
+            props.model.billing_usage_schema
+          )
+        : getDynamicPricingTiers(props.model)
+    }
+    let conditionHeader = props.model.billing_usage_schema
+      ? t('Applicable conditions')
+      : t('Tier')
+    if (resolutionOnly) conditionHeader = t('Resolution')
     const hasRequestPrice = dynamicTiers.some(
       (tier) => !('unitPrices' in tier) && tier.billingUnit === 'request'
     )
@@ -1403,6 +1426,11 @@ function ProviderGroupPricingSection(
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <div className='space-y-3'>
+          {resolutionOnly && props.model.billing_usage_schema?.video_input ? (
+            <p className='text-muted-foreground text-xs'>
+              {t('Reference videos have no additional charge.')}
+            </p>
+          ) : null}
           {availableGroups.map((group) => {
             const ratio = props.groupRatio[group] || 1
             const formattedPricesByTier =
@@ -1426,19 +1454,22 @@ function ProviderGroupPricingSection(
                     `${group}-${tier.label}-${tierIndex}`
                   }
                   columns={[
-                    ...(hasSimpleTaskPricing(props.model)
+                    ...(hasSimpleTaskPricing(props.model) && !resolutionRows
                       ? []
                       : [
                           {
                             id: 'tier',
-                            header: props.model.billing_usage_schema
-                              ? t('Applicable conditions')
-                              : t('Tier'),
+                            header: conditionHeader,
                             className: thClass,
                             cellClassName:
                               'text-muted-foreground py-2.5 whitespace-normal break-words',
                             cell: (tier: DynamicPricingTier) => {
                               if ('unitPrices' in tier) {
+                                if (resolutionOnly) {
+                                  return (tier as ParsedTaskTier).conditions
+                                    .find(({ field }) => field === 'resolution')
+                                    ?.value.toUpperCase()
+                                }
                                 return (
                                   taskTierConditions(
                                     tier as ParsedTaskTier,
@@ -1499,7 +1530,23 @@ function ProviderGroupPricingSection(
                     }),
                   ]}
                 />
-                {usageExampleRows.length > 0 ? (
+                {usageExampleRows.length > 0 && resolutionRows && (
+                  <div className='text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 border-t px-3 py-2 text-xs'>
+                    <span>{t('Price examples')}</span>
+                    {usageExampleRows.map((row) => (
+                      <span key={row.label} className='font-mono'>
+                        {`${row.label} ≈ ${formatTaskUsageUnitPrice(row.total, {
+                          tokenUnit: props.tokenUnit,
+                          showRechargePrice,
+                          priceRate: props.priceRate,
+                          usdExchangeRate: props.usdExchangeRate,
+                          groupRatioMultiplier: ratio,
+                        })}`}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {usageExampleRows.length > 0 && !resolutionRows && (
                   <div className='border-t'>
                     <div className='text-muted-foreground px-3 pt-2 text-[10px] font-medium tracking-wider uppercase'>
                       {t('Price examples')}
@@ -1538,7 +1585,7 @@ function ProviderGroupPricingSection(
                       {t('Approximate prices for common specs.')}
                     </p>
                   </div>
-                ) : null}
+                )}
               </div>
             )
           })}
@@ -1763,6 +1810,12 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
     Boolean(props.model.billing_expr)
 
   const simpleTaskPricing = hasSimpleTaskPricing(props.model)
+  const compactResolutionPricing = Boolean(
+    getTaskResolutionPriceRows(props.model) &&
+    !splitBillingExprAndRequestRules(props.model.billing_expr || '')
+      .requestRuleExpr &&
+    getAvailableGroups(props.model, props.usableGroup || {}).length > 0
+  )
   const taskTiers = getTaskPricingDisplayTiers(
     props.model.billing_expr,
     props.model.billing_usage_schema
@@ -1798,7 +1851,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
-            {showBasePrices && (
+            {showBasePrices && !compactResolutionPricing && (
               <PriceSection
                 model={props.model}
                 priceRate={props.priceRate}
@@ -1807,7 +1860,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 showRechargePrice={showRechargePrice}
               />
             )}
-            {isDynamic && !simpleTaskPricing && (
+            {isDynamic && !simpleTaskPricing && !compactResolutionPricing && (
               <DynamicPricingBreakdown
                 billingExpr={props.model.billing_expr}
                 usageSchema={props.model.billing_usage_schema}
