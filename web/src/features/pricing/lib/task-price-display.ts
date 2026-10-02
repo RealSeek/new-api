@@ -34,7 +34,73 @@ import {
 import { formatBillingCondition } from './billing-expression/condition-display'
 import { compileBillingExpression } from './billing-expression/parser'
 import { visitExpression } from './billing-expression/types'
-import { getTaskPricingDisplayTiers } from './task-matrix-display'
+import { withPluginPricing } from './plugin-pricing'
+import {
+  getTaskMatrixDisplayTiers,
+  getTaskPricingDisplayTiers,
+} from './task-matrix-display'
+
+/** Compact resolution rows share the expression prices used by the detail table. */
+export function getTaskResolutionPriceRows(
+  model: PricingModel
+): (ParsedTaskTier & { resolution: string })[] | null {
+  if (model.billing_plugin_variants?.length) {
+    if (model.billing_plugin_variants.length !== 1) return null
+    return getTaskResolutionPriceRows(
+      withPluginPricing(model, model.billing_plugin_variants[0])
+    )
+  }
+  const schema = model.billing_usage_schema
+  if (
+    model.billing_mode !== 'tiered_expr' ||
+    !schema?.resolution ||
+    !model.billing_expr
+  ) {
+    return null
+  }
+  const matrix = getTaskMatrixDisplayTiers(model.billing_expr, schema)
+  if (!matrix) return null
+  // Schema meters not read by the saved expression must not appear as free prices.
+  const fields = [
+    ...new Set(
+      getTaskPricingDisplayTiers(model.billing_expr, schema).flatMap((tier) =>
+        Object.keys(tier.unitPrices)
+      )
+    ),
+  ]
+  const resolutions = new Map<string, ParsedTaskTier[]>()
+  for (const tier of matrix) {
+    const resolution = tier.conditions.find(
+      (condition) => condition.field === 'resolution'
+    )?.value
+    if (resolution === undefined) return null
+    const rows = resolutions.get(resolution) ?? []
+    rows.push(tier)
+    resolutions.set(resolution, rows)
+  }
+  return [...resolutions].flatMap(([resolution, rows]) => {
+    const first = rows[0]
+    const uniform = rows.every(
+      (row) =>
+        row.constant === first.constant &&
+        fields.every(
+          (field) => row.unitPrices[field] === first.unitPrices[field]
+        )
+    )
+    return (uniform ? [first] : rows).map((row) => ({
+      ...row,
+      resolution,
+      conditions: uniform
+        ? []
+        : row.conditions.filter(
+            (condition) => condition.field !== 'resolution'
+          ),
+      unitPrices: Object.fromEntries(
+        fields.map((field) => [field, row.unitPrices[field]])
+      ),
+    }))
+  })
+}
 
 export function taskPriceLabel(
   description: LocalizedTextValue | undefined,

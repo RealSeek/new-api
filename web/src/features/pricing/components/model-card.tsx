@@ -32,6 +32,7 @@ import { useBillingTime } from '../hooks/use-billing-time'
 import {
   getCardExamplePrice,
   getDynamicDisplayGroupRatio,
+  getDynamicPriceEntries,
   getDynamicPriceUnitLabelKey,
   getDynamicPricingSummary,
   isUnconfiguredTaskUsageModel,
@@ -43,7 +44,12 @@ import {
   isTokenBasedModel,
 } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice, formatUnitPrice } from '../lib/price'
-import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
+import {
+  getTaskResolutionPriceRows,
+  taskPriceLabel,
+  taskPricingConditions,
+  taskUsageUnitLabel,
+} from '../lib/task-price-display'
 import type { PricingModel, PriceType, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -113,8 +119,108 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [props.model, dynamicPriceOptions, currency]
   )
+  const taskResolutionRows = useMemo(
+    () => getTaskResolutionPriceRows(props.model),
+    [props.model]
+  )
+  const taskSchema =
+    props.model.billing_plugin_variants?.[0]?.billing_usage_schema ??
+    props.model.billing_usage_schema
+  const resolutionRows =
+    taskResolutionRows?.map((row, index) => ({
+      key: `${row.resolution}:${index}`,
+      resolution: row.resolution,
+      conditions: taskPricingConditions(
+        row.conditions,
+        taskSchema,
+        i18n.language,
+        t
+      ),
+      prices: getDynamicPriceEntries(row, {
+        ...dynamicPriceOptions,
+        usageSchema: taskSchema,
+      }).map((entry) => ({
+        key: entry.key,
+        price: entry.formatted,
+        unit: taskUsageUnitLabel(
+          entry,
+          i18n.language,
+          t(
+            entry.unit === 'second'
+              ? 'second'
+              : (getDynamicPriceUnitLabelKey(entry) ?? 'unit')
+          )
+        ),
+        label: entry.unit === 'request' ? t('Additional charge') : '',
+      })),
+    })) ??
+    aliasPrices.map((row) => ({
+      key: row.resolution,
+      resolution: row.resolution,
+      conditions: '',
+      prices: [
+        {
+          key: row.unit,
+          price: formatUnitPrice(
+            props.model,
+            row.price,
+            showRechargePrice,
+            priceRate,
+            usdExchangeRate,
+            props.selectedGroup
+          ),
+          unit: row.unit === 'second' ? t('second') : t('request'),
+          label: '',
+        },
+      ],
+    }))
+  const resolutionPriceSummary = (
+    <div
+      role='list'
+      aria-label={t('Resolution prices')}
+      className='flex flex-col gap-y-0.5'
+    >
+      {resolutionRows.map((row) => (
+        <span
+          key={row.key}
+          role='listitem'
+          className='grid grid-cols-[3.5rem_auto] items-baseline gap-1'
+        >
+          <span className='text-foreground font-mono text-xs font-semibold'>
+            {row.resolution.toUpperCase()}
+          </span>
+          <span className='flex min-w-0 flex-col gap-0.5'>
+            {row.prices.map((price) => (
+              <span
+                key={price.key}
+                className='text-foreground font-mono font-semibold'
+              >
+                {price.label && (
+                  <span className='text-muted-foreground mr-1 font-sans text-xs font-normal'>
+                    {price.label}
+                  </span>
+                )}
+                {price.price}
+                <span className='text-muted-foreground ml-1 font-sans font-normal whitespace-nowrap'>
+                  {' '}
+                  / {price.unit}
+                </span>
+              </span>
+            ))}
+          </span>
+          {row.conditions && (
+            <span className='text-muted-foreground col-span-full text-xs break-words'>
+              {row.conditions}
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  )
   let priceSummary: ReactNode
-  if (dynamicSummary) {
+  if (taskResolutionRows?.length) {
+    priceSummary = resolutionPriceSummary
+  } else if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
       priceSummary = (
         <div className='col-span-full min-w-0'>
@@ -207,38 +313,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       )
     }
   } else if (aliasPrices.length > 0) {
-    priceSummary = (
-      <div
-        role='list'
-        aria-label={t('Resolution prices')}
-        className='flex flex-col gap-y-0.5'
-      >
-        {aliasPrices.map((row) => (
-          <span
-            key={row.resolution}
-            role='listitem'
-            className='grid grid-cols-[3.5rem_auto] items-baseline gap-1 whitespace-nowrap'
-          >
-            <span className='text-foreground font-mono text-xs font-semibold'>
-              {row.resolution.toUpperCase()}
-            </span>
-            <span className='text-foreground font-mono font-semibold'>
-              {formatUnitPrice(
-                props.model,
-                row.price,
-                showRechargePrice,
-                priceRate,
-                usdExchangeRate,
-                props.selectedGroup
-              )}
-              <span className='text-muted-foreground ml-1 font-sans font-normal'>
-                / {row.unit === 'second' ? t('second') : t('request')}
-              </span>
-            </span>
-          </span>
-        ))}
-      </div>
-    )
+    priceSummary = resolutionPriceSummary
   } else if (isPerSecond) {
     const prices = Object.entries(
       props.model.video_price?.resolution_prices || {}
