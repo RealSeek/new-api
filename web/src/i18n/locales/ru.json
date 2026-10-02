@@ -2377,6 +2377,7 @@
     "Extra visible": "Дополнительно видимая",
     "Extra visible to {{group}}": "Дополнительно видима для {{group}}",
     "extras": "доп. пункты",
+    "Face support": "Поддержка лиц",
     "Factory": "Встроенный",
     "Factory and custom plugin behavior": "Поведение встроенных и пользовательских плагинов",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Заводские и пользовательские плагины сразу перестают обслуживать запросы. Текущие задачи обработает очистка по таймауту.",

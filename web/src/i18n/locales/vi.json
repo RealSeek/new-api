@@ -2377,6 +2377,7 @@
     "Extra visible": "Hiển thị thêm",
     "Extra visible to {{group}}": "Hiển thị thêm cho {{group}}",
     "extras": "mục bổ sung",
+    "Face support": "Hỗ trợ khuôn mặt",
     "Factory": "Tích hợp",
     "Factory and custom plugin behavior": "Cách hoạt động của plugin tích hợp và tùy chỉnh",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Plugin gốc và plugin tùy chỉnh sẽ ngay lập tức ngừng phục vụ. Các tác vụ đang chạy sẽ được xử lý bằng dọn dẹp hết hạn.",

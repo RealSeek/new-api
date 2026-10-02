@@ -2377,6 +2377,7 @@
     "Extra visible": "Visible en plus",
     "Extra visible to {{group}}": "Visible en plus pour {{group}}",
     "extras": "suppléments",
+    "Face support": "Visages pris en charge",
     "Factory": "Intégré",
     "Factory and custom plugin behavior": "Comportement des plugins intégrés et personnalisés",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Les plugins d’usine et personnalisés cessent immédiatement de servir. Les tâches en cours seront traitées par le nettoyage des délais d’attente.",

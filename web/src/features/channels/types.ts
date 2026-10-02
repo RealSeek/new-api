@@ -118,6 +118,7 @@ export interface ChannelOtherSettings {
 }
 
 export interface VideoModelCapabilities {
+  face_supported?: boolean
   reference_images: number
   first_last_frames: number
   reference_videos: number

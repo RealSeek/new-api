@@ -45,7 +45,7 @@ export function ChannelVideoCapabilities(props: {
     ? selectedModel
     : props.models[0]
   const materials: {
-    key: keyof VideoModelCapabilities
+    key: Exclude<keyof VideoModelCapabilities, 'face_supported'>
     label: string
     inputLabel: string
     max?: number
@@ -163,6 +163,27 @@ export function ChannelVideoCapabilities(props: {
                     />
                   </div>
                 ))}
+                <div className='flex items-center gap-3'>
+                  <span className='min-w-0 flex-1 text-sm'>
+                    {t('Face support')}
+                  </span>
+                  {configured.face_supported === undefined && (
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Not configured')}
+                    </span>
+                  )}
+                  <Switch
+                    aria-label={t('Face support')}
+                    disabled={props.disabled}
+                    checked={configured.face_supported === true}
+                    onCheckedChange={(checked) =>
+                      field.onChange({
+                        ...field.value,
+                        [model]: { ...configured, face_supported: checked },
+                      })
+                    }
+                  />
+                </div>
               </div>
             ) : (
               <FormDescription>{t('Not configured')}</FormDescription>

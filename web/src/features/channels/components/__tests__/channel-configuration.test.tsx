@@ -55,56 +55,63 @@ import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
 const originalAuth = useAuthStore.getState().auth
 
-test('edits video capability limits per model without losing other channel settings', async () => {
-  editingChannel.models = 'seedance-2.0,seedance-2.5'
-  editingChannel.settings = JSON.stringify({
-    preserved_setting: 'keep',
-    video_model_capabilities: {
-      'seedance-2.0': {
-        reference_images: 9,
-        first_last_frames: 2,
-        reference_videos: 3,
-        reference_audios: 0,
+test.each([true, false])(
+  'edits video capability limits and face support=%s per model without losing other channel settings',
+  async (supportsFaces) => {
+    editingChannel.models = 'seedance-2.0,seedance-2.5'
+    editingChannel.settings = JSON.stringify({
+      preserved_setting: 'keep',
+      video_model_capabilities: {
+        'seedance-2.0': {
+          reference_images: 9,
+          first_last_frames: 2,
+          reference_videos: 3,
+          reference_audios: 0,
+        },
+        'seedance-2.5': {
+          reference_images: 4,
+          first_last_frames: 0,
+          reference_videos: 1,
+          reference_audios: 2,
+        },
       },
-      'seedance-2.5': {
-        reference_images: 4,
-        first_last_frames: 0,
-        reference_videos: 1,
-        reference_audios: 2,
+    })
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    const input = await screen.findByRole('spinbutton', {
+      name: 'Reference images material limit',
+    })
+    expect(input).toHaveValue(9)
+    fireEvent.change(input, { target: { value: '8' } })
+    const user = userEvent.setup()
+    const faceSupport = screen.getByRole('switch', { name: 'Face support' })
+    await user.click(faceSupport)
+    if (!supportsFaces) await user.click(faceSupport)
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const payload = put.mock.calls[0][1] as { settings: string }
+    expect(JSON.parse(payload.settings)).toMatchObject({
+      preserved_setting: 'keep',
+      video_model_capabilities: {
+        'seedance-2.0': {
+          reference_images: 8,
+          face_supported: supportsFaces,
+          first_last_frames: 2,
+          reference_videos: 3,
+          reference_audios: 0,
+        },
+        'seedance-2.5': {
+          reference_images: 4,
+          first_last_frames: 0,
+          reference_videos: 1,
+          reference_audios: 2,
+        },
       },
-    },
-  })
-  const put = vi
-    .spyOn(api, 'put')
-    .mockResolvedValue({ data: { success: true } })
-  render(<ConfigurationHarness currentRow={editingChannel} />)
-  const input = await screen.findByRole('spinbutton', {
-    name: 'Reference images material limit',
-  })
-  expect(input).toHaveValue(9)
-  fireEvent.change(input, { target: { value: '8' } })
-  const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
-  await waitFor(() => expect(put).toHaveBeenCalled())
-  const payload = put.mock.calls[0][1] as { settings: string }
-  expect(JSON.parse(payload.settings)).toMatchObject({
-    preserved_setting: 'keep',
-    video_model_capabilities: {
-      'seedance-2.0': {
-        reference_images: 8,
-        first_last_frames: 2,
-        reference_videos: 3,
-        reference_audios: 0,
-      },
-      'seedance-2.5': {
-        reference_images: 4,
-        first_last_frames: 0,
-        reference_videos: 1,
-        reference_audios: 2,
-      },
-    },
-  })
-})
+    })
+  }
+)
 let client: QueryClient
 let editingChannel: Channel
 let pluginOptions: Array<
@@ -1221,9 +1228,7 @@ test('model discovery discards a response for old credentials and retains manual
   expect(
     screen.getByRole('button', { name: 'current-upstream-model' })
   ).toBeVisible()
-  expect(
-    screen.getByRole('button', { name: 'custom-model', exact: true })
-  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
 })
 
 test('model discovery reports failures inline and allows an empty result to fall back to manual models', async () => {
@@ -1456,9 +1461,7 @@ test('editing legacy channels retains the full provider list and saves the origi
   const legacy = screen.getByRole('option', { name: 'Sora Built-in #55' })
   expect(legacy).toHaveAttribute('aria-current', 'true')
   await user.click(legacy)
-  expect(
-    screen.getByRole('button', { name: 'custom-model', exact: true })
-  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
   expect(screen.getByDisplayValue('https://saved.example')).toBeVisible()
   fireEvent.change(screen.getByLabelText('Name *'), {
     target: { value: 'Renamed legacy channel' },
@@ -1490,33 +1493,25 @@ test('opening and reselecting an existing plugin preserves its saved configurati
   render(<ConfigurationHarness currentRow={editingChannel} />)
   expect(await screen.findByDisplayValue('Existing channel')).toBeVisible()
   expect(screen.getByDisplayValue('https://saved.example')).toBeVisible()
-  expect(
-    screen.getByRole('button', { name: 'custom-model', exact: true })
-  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
   expect(screen.queryByLabelText('Task plugin *')).not.toBeInTheDocument()
   const providerControl = screen.getByRole('button', {
     name: 'Change provider',
   })
   await user.click(await within(providerControl).findByText('Video A'))
   await user.click(await screen.findByRole('option', { name: /Video A/ }))
-  expect(
-    screen.getByRole('button', { name: 'custom-model', exact: true })
-  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
   expect(screen.getByDisplayValue('https://saved.example')).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Change provider' }))
   await user.click(
     screen.getByRole('button', { name: 'Back to configuration' })
   )
-  expect(
-    screen.getByRole('button', { name: 'custom-model', exact: true })
-  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Change provider' }))
   await user.click(screen.getByRole('option', { name: /^Video B Plugin/ }))
   expect(screen.getByDisplayValue('Existing channel')).toBeVisible()
   expect(screen.getByDisplayValue('https://saved.example')).toBeVisible()
-  expect(
-    screen.getByRole('button', { name: 'video-b-1', exact: true })
-  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'video-b-1' })).toBeVisible()
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
   expect(screen.getByLabelText('Priority')).toHaveValue(7)
 })

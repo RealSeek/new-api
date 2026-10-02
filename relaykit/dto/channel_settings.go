@@ -136,10 +136,11 @@ type ChannelOtherSettings struct {
 // VideoModelCapabilities describes material limits for one model on one channel.
 // Zero means unsupported; an absent model entry means not configured.
 type VideoModelCapabilities struct {
-	ReferenceImages int `json:"reference_images"`
-	FirstLastFrames int `json:"first_last_frames"`
-	ReferenceVideos int `json:"reference_videos"`
-	ReferenceAudios int `json:"reference_audios"`
+	FaceSupported   *bool `json:"face_supported,omitempty"`
+	ReferenceImages int   `json:"reference_images"`
+	FirstLastFrames int   `json:"first_last_frames"`
+	ReferenceVideos int   `json:"reference_videos"`
+	ReferenceAudios int   `json:"reference_audios"`
 }
 
 func (s *ChannelOtherSettings) ValidateVideoModelCapabilities() error {

@@ -263,6 +263,7 @@ export const channelFormSchema = z
           first_last_frames: z.number().int().min(0).max(2),
           reference_videos: z.number().int().min(0),
           reference_audios: z.number().int().min(0),
+          face_supported: z.boolean().optional(),
         })
       )
       .optional(),

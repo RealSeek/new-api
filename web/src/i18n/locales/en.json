@@ -2377,6 +2377,7 @@
     "Extra visible": "Extra visible",
     "Extra visible to {{group}}": "Extra visible to {{group}}",
     "extras": "extras",
+    "Face support": "Face support",
     "Factory": "Factory",
     "Factory and custom plugin behavior": "Factory and custom plugin behavior",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.",

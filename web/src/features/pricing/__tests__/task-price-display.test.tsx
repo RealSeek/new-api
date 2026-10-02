@@ -100,60 +100,75 @@ const model: PricingModel = {
 }
 const clients: QueryClient[] = []
 
-it('lists video material support and limits separately for each channel', () => {
-  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  clients.push(client)
-  render(
-    <QueryClientProvider client={client}>
-      <ModelDetailsContent
-        model={{
-          ...model,
-          model_name: 'seedance-2.0',
-          channel_video_capabilities: [
-            {
-              channel_id: 136,
-              channel_name: 'Video supplier A',
-              groups: ['default'],
-              capabilities: {
-                reference_images: 9,
-                first_last_frames: 2,
-                reference_videos: 3,
-                reference_audios: 0,
+it.each([true, false, undefined])(
+  'lists video material support and face support=%s separately for each channel',
+  (supportsFaces) => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    clients.push(client)
+    render(
+      <QueryClientProvider client={client}>
+        <ModelDetailsContent
+          model={{
+            ...model,
+            model_name: 'seedance-2.0',
+            channel_video_capabilities: [
+              {
+                channel_id: 136,
+                channel_name: 'Video supplier A',
+                groups: ['default'],
+                capabilities: {
+                  reference_images: 9,
+                  first_last_frames: 2,
+                  reference_videos: 3,
+                  reference_audios: 0,
+                  face_supported: supportsFaces,
+                },
               },
-            },
-            {
-              channel_id: 137,
-              channel_name: 'Video supplier B',
-              groups: ['default'],
-              capabilities: null,
-            },
-          ],
-        }}
-        groupRatio={{ default: 1 }}
-        usableGroup={{ default: { desc: '', ratio: 1 } }}
-        endpointMap={{}}
-        autoGroups={[]}
-        priceRate={1}
-        usdExchangeRate={1}
-        tokenUnit='M'
-      />
-    </QueryClientProvider>
-  )
-  const configured = screen.getByRole('region', { name: 'Video supplier A' })
-  expect(within(configured).getByText('Reference images')).toBeVisible()
-  expect(within(configured).getByText('First and last frames')).toBeVisible()
-  expect(within(configured).getByText('Reference videos')).toBeVisible()
-  expect(within(configured).getByText('Reference audio')).toBeVisible()
-  expect(within(configured).getByText('Maximum materials: 9')).toBeVisible()
-  expect(within(configured).getByText('Maximum materials: 2')).toBeVisible()
-  expect(within(configured).getByText('Maximum materials: 3')).toBeVisible()
-  expect(within(configured).getByText('Not supported')).toBeVisible()
-  const unconfigured = screen.getByRole('region', { name: 'Video supplier B' })
-  expect(within(unconfigured).getAllByText('Not configured')).toHaveLength(4)
-})
+              {
+                channel_id: 137,
+                channel_name: 'Video supplier B',
+                groups: ['default'],
+                capabilities: null,
+              },
+            ],
+          }}
+          groupRatio={{ default: 1 }}
+          usableGroup={{ default: { desc: '', ratio: 1 } }}
+          endpointMap={{}}
+          autoGroups={[]}
+          priceRate={1}
+          usdExchangeRate={1}
+          tokenUnit='M'
+        />
+      </QueryClientProvider>
+    )
+    const configured = screen.getByRole('region', { name: 'Video supplier A' })
+    expect(within(configured).getByText('Reference images')).toBeVisible()
+    expect(within(configured).getByText('First and last frames')).toBeVisible()
+    expect(within(configured).getByText('Reference videos')).toBeVisible()
+    expect(within(configured).getByText('Reference audio')).toBeVisible()
+    expect(within(configured).getByText('Maximum materials: 9')).toBeVisible()
+    expect(within(configured).getByText('Maximum materials: 2')).toBeVisible()
+    expect(within(configured).getByText('Maximum materials: 3')).toBeVisible()
+    expect(within(configured).getByText('Face support')).toBeVisible()
+    if (supportsFaces === undefined) {
+      expect(within(configured).getByText('Not configured')).toBeVisible()
+    }
+    expect(within(configured).getAllByText('Supported')).toHaveLength(
+      supportsFaces === true ? 4 : 3
+    )
+    expect(within(configured).getAllByText('Not supported')).toHaveLength(
+      supportsFaces === false ? 2 : 1
+    )
+    const unconfigured = screen.getByRole('region', {
+      name: 'Video supplier B',
+    })
+    expect(within(unconfigured).getAllByText('Not configured')).toHaveLength(5)
+  }
+)
 
 it('shows nested task conditions and prices in detail and group tables without ambiguous log matches', () => {
   vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })

@@ -629,7 +629,7 @@ function ModelVideoCapabilitiesSection(props: { model: PricingModel }) {
               <h3 className='text-sm font-semibold'>{channel.channel_name}</h3>
               <CatalogPillList items={channel.groups} />
             </div>
-            <div className='bg-border/60 grid grid-cols-2 gap-px sm:grid-cols-4'>
+            <div className='bg-border/60 grid grid-cols-2 gap-px sm:grid-cols-5'>
               {materials.map((material) => {
                 const limit = channel.capabilities?.[material.key]
                 return (
@@ -664,6 +664,25 @@ function ModelVideoCapabilitiesSection(props: { model: PricingModel }) {
                   </CatalogInfoCell>
                 )
               })}
+              <CatalogInfoCell label={t('Face support')}>
+                {channel.capabilities?.face_supported === undefined && (
+                  <span className='text-muted-foreground text-xs'>
+                    {t('Not configured')}
+                  </span>
+                )}
+                {channel.capabilities?.face_supported === false && (
+                  <span className='text-muted-foreground flex items-center gap-1 text-xs'>
+                    <X className='size-3.5' aria-hidden='true' />
+                    {t('Not supported')}
+                  </span>
+                )}
+                {channel.capabilities?.face_supported === true && (
+                  <span className='text-success flex items-center gap-1 text-xs font-medium'>
+                    <Check className='size-3.5' aria-hidden='true' />
+                    {t('Supported')}
+                  </span>
+                )}
+              </CatalogInfoCell>
             </div>
           </section>
         ))}

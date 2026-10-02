@@ -54,7 +54,8 @@ func insertPricingEndpointChannel(t *testing.T, channelID int, channelType int, 
 
 func TestPricingVideoCapabilitiesByChannel(t *testing.T) {
 	resetPricingEndpointTestTables(t)
-	limits := dto.VideoModelCapabilities{ReferenceImages: 9, FirstLastFrames: 2, ReferenceVideos: 3}
+	faceSupported := true
+	limits := dto.VideoModelCapabilities{ReferenceImages: 9, FirstLastFrames: 2, ReferenceVideos: 3, FaceSupported: &faceSupported}
 	insertPricingEndpointChannel(t, 136, constant.ChannelTypeRSGateway, dto.ChannelOtherSettings{
 		SupportedEndpointTypes: []string{string(constant.EndpointTypeOpenAIVideo)},
 		VideoModelCapabilities: map[string]dto.VideoModelCapabilities{"seedance-2.0": limits},
@@ -85,6 +86,8 @@ func TestPricingVideoCapabilitiesByChannel(t *testing.T) {
 	require.NoError(t, DB.First(&channel, 136).Error)
 	settings := channel.GetOtherSettings()
 	limits.ReferenceImages = 8
+	faceUnsupported := false
+	limits.FaceSupported = &faceUnsupported
 	settings.VideoModelCapabilities["seedance-2.0"] = limits
 	channel.SetOtherSettings(settings)
 	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("settings", channel.OtherSettings).Error)
@@ -92,6 +95,11 @@ func TestPricingVideoCapabilitiesByChannel(t *testing.T) {
 	for _, pricing := range GetPricing() {
 		if pricing.ModelName == "seedance-2.0" {
 			assert.Equal(t, 8, pricing.ChannelVideoCapabilities[0].Capabilities.ReferenceImages)
+			require.NotNil(t, pricing.ChannelVideoCapabilities[0].Capabilities.FaceSupported)
+			assert.False(t, *pricing.ChannelVideoCapabilities[0].Capabilities.FaceSupported)
+			encoded, err := common.Marshal(pricing)
+			require.NoError(t, err)
+			assert.Contains(t, string(encoded), `"face_supported":false`)
 		}
 	}
 }
@@ -102,6 +110,7 @@ func TestVideoCapabilitySettingsValidationAndPersistence(t *testing.T) {
 		`{"video_model_capabilities":{"seedance-2.0":{"first_last_frames":3}}}`,
 		`{"video_model_capabilities":{"seedance-2.0":{"reference_videos":1.5}}}`,
 		`{"video_model_capabilities":{" ":{}}}`,
+		`{"video_model_capabilities":{"seedance-2.0":{"face_supported":1}}}`,
 	} {
 		channel := Channel{OtherSettings: raw}
 		require.Error(t, channel.ValidateSettings())
@@ -133,13 +142,16 @@ func TestVideoCapabilitySettingsValidationAndPersistence(t *testing.T) {
 			tableName := "video_capability_channels"
 			require.NoError(t, db.Table(tableName).AutoMigrate(&Channel{}))
 			t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(tableName)) })
-			channel := Channel{Type: constant.ChannelTypeRSGateway, Key: "private", Name: "video", OtherSettings: `{"preserved_setting":"keep","video_model_capabilities":{"seedance-2.0":{"reference_images":9,"first_last_frames":2,"reference_videos":3,"reference_audios":0},"seedance-2.5":{"reference_images":4}}}`}
+			channel := Channel{Type: constant.ChannelTypeRSGateway, Key: "private", Name: "video", OtherSettings: `{"preserved_setting":"keep","video_model_capabilities":{"seedance-2.0":{"reference_images":9,"first_last_frames":2,"reference_videos":3,"reference_audios":0,"face_supported":false},"seedance-2.5":{"reference_images":4,"face_supported":true}}}`}
 			require.NoError(t, channel.ValidateSettings())
 			require.NoError(t, db.Table(tableName).Create(&channel).Error)
 			var saved Channel
 			require.NoError(t, db.Table(tableName).First(&saved, channel.Id).Error)
 			assert.Equal(t, channel.OtherSettings, saved.OtherSettings)
-			assert.Equal(t, dto.VideoModelCapabilities{ReferenceImages: 9, FirstLastFrames: 2, ReferenceVideos: 3}, saved.GetOtherSettings().VideoModelCapabilities["seedance-2.0"])
+			faceUnsupported := false
+			assert.Equal(t, dto.VideoModelCapabilities{ReferenceImages: 9, FirstLastFrames: 2, ReferenceVideos: 3, FaceSupported: &faceUnsupported}, saved.GetOtherSettings().VideoModelCapabilities["seedance-2.0"])
+			require.NotNil(t, saved.GetOtherSettings().VideoModelCapabilities["seedance-2.5"].FaceSupported)
+			assert.True(t, *saved.GetOtherSettings().VideoModelCapabilities["seedance-2.5"].FaceSupported)
 			assert.Equal(t, 4, saved.GetOtherSettings().VideoModelCapabilities["seedance-2.5"].ReferenceImages)
 			var version string
 			if dialect == "sqlite" {

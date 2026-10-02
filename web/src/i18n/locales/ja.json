@@ -2377,6 +2377,7 @@
     "Extra visible": "追加表示",
     "Extra visible to {{group}}": "{{group}} に追加表示",
     "extras": "追加項目",
+    "Face support": "顔の対応",
     "Factory": "組み込み",
     "Factory and custom plugin behavior": "組み込み版とカスタム版の動作",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "ファクトリープラグインとカスタムプラグインは直ちに停止します。実行中のタスクはタイムアウトクリーンアップで処理されます。",

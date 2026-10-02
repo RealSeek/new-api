@@ -2377,6 +2377,7 @@
     "Extra visible": "额外可见",
     "Extra visible to {{group}}": "对 {{group}} 额外可见",
     "extras": "额外项",
+    "Face support": "支持人脸",
     "Factory": "出厂",
     "Factory and custom plugin behavior": "出厂与自定义插件行为",
     "Factory and custom plugins all stop serving immediately. In-flight tasks will be handled by timeout cleanup.": "出厂插件和自定义插件将立即停止服务。进行中的任务将由超时清理处理。",
