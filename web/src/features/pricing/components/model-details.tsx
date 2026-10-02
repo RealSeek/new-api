@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import {
   ArrowLeft,
+  Check,
   CalendarClock,
   Code2,
   FileText,
@@ -29,6 +30,7 @@ import {
   Maximize2,
   Sparkles,
   Timer,
+  X,
 } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -56,6 +58,8 @@ import {
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
@@ -595,7 +599,76 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
       <ModelBackendQuickStats model={props.model} />
       <ModelBackendSignalsSection model={props.model} />
       <ModelBackendProviderSection model={props.model} />
+      <ModelVideoCapabilitiesSection model={props.model} />
     </>
+  )
+}
+
+function ModelVideoCapabilitiesSection(props: { model: PricingModel }) {
+  const { t, i18n } = useTranslation()
+  const channels = props.model.channel_video_capabilities
+  if (!channels?.length) return null
+  const materials = [
+    { key: 'reference_images', label: t('Reference images') },
+    { key: 'first_last_frames', label: t('First and last frames') },
+    { key: 'reference_videos', label: t('Reference videos') },
+    { key: 'reference_audios', label: t('Reference audio') },
+  ] as const
+
+  return (
+    <section>
+      <SectionTitle>{t('Video input capabilities')}</SectionTitle>
+      <div className='space-y-3'>
+        {channels.map((channel) => (
+          <section
+            key={channel.channel_id}
+            aria-label={channel.channel_name}
+            className='border-border/60 overflow-hidden rounded-lg border'
+          >
+            <div className='bg-muted/30 flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2.5'>
+              <h3 className='text-sm font-semibold'>{channel.channel_name}</h3>
+              <CatalogPillList items={channel.groups} />
+            </div>
+            <div className='bg-border/60 grid grid-cols-2 gap-px sm:grid-cols-4'>
+              {materials.map((material) => {
+                const limit = channel.capabilities?.[material.key]
+                return (
+                  <CatalogInfoCell key={material.key} label={material.label}>
+                    {limit === undefined && (
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Not configured')}
+                      </span>
+                    )}
+                    {limit === 0 && (
+                      <span className='text-muted-foreground flex items-center gap-1 text-xs'>
+                        <X className='size-3.5' aria-hidden='true' />
+                        {t('Not supported')}
+                      </span>
+                    )}
+                    {limit !== undefined && limit > 0 && (
+                      <div className='space-y-1'>
+                        <span className='text-success flex items-center gap-1 text-xs font-medium'>
+                          <Check className='size-3.5' aria-hidden='true' />
+                          {t('Supported')}
+                        </span>
+                        <span className='text-muted-foreground block text-xs'>
+                          {t('Maximum materials: {{limit}}', {
+                            limit: formatNumber(
+                              limit,
+                              toIntlLocale(i18n.language)
+                            ),
+                          })}
+                        </span>
+                      </div>
+                    )}
+                  </CatalogInfoCell>
+                )
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    </section>
   )
 }
 

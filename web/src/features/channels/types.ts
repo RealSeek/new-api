@@ -94,6 +94,7 @@ export interface ChannelSettings {
 }
 
 export interface ChannelOtherSettings {
+  video_model_capabilities?: Record<string, VideoModelCapabilities>
   supported_endpoint_types?: string[]
   azure_responses_version?: string
   vertex_key_type?: 'json' | 'api_key'
@@ -114,6 +115,13 @@ export interface ChannelOtherSettings {
   upstream_model_update_last_check_time?: number
   upstream_model_update_last_detected_models?: string[]
   advanced_custom?: AdvancedCustomConfig
+}
+
+export interface VideoModelCapabilities {
+  reference_images: number
+  first_last_frames: number
+  reference_videos: number
+  reference_audios: number
 }
 
 export interface AdvancedCustomConfig {

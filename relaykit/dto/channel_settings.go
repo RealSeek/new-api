@@ -100,6 +100,7 @@ const (
 )
 
 type ChannelOtherSettings struct {
+	VideoModelCapabilities map[string]VideoModelCapabilities `json:"video_model_capabilities,omitempty"`
 	// SupportedEndpointTypes limits the downstream endpoint types exposed by a gateway channel.
 	// Empty means keep the legacy all-endpoints behavior.
 	SupportedEndpointTypes                []string              `json:"supported_endpoint_types,omitempty"`
@@ -130,6 +131,30 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+}
+
+// VideoModelCapabilities describes material limits for one model on one channel.
+// Zero means unsupported; an absent model entry means not configured.
+type VideoModelCapabilities struct {
+	ReferenceImages int `json:"reference_images"`
+	FirstLastFrames int `json:"first_last_frames"`
+	ReferenceVideos int `json:"reference_videos"`
+	ReferenceAudios int `json:"reference_audios"`
+}
+
+func (s *ChannelOtherSettings) ValidateVideoModelCapabilities() error {
+	for model, capabilities := range s.VideoModelCapabilities {
+		if strings.TrimSpace(model) == "" {
+			return fmt.Errorf("video_model_capabilities model name is required")
+		}
+		if capabilities.ReferenceImages < 0 || capabilities.FirstLastFrames < 0 || capabilities.ReferenceVideos < 0 || capabilities.ReferenceAudios < 0 {
+			return fmt.Errorf("video_model_capabilities[%s] material limits must be non-negative", model)
+		}
+		if capabilities.FirstLastFrames > 2 {
+			return fmt.Errorf("video_model_capabilities[%s].first_last_frames must not exceed 2", model)
+		}
+	}
+	return nil
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

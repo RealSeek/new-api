@@ -32,7 +32,7 @@ import {
   MODEL_FETCHABLE_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
-import type { Channel } from '../types'
+import type { Channel, VideoModelCapabilities } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
@@ -255,6 +255,17 @@ export const channelFormSchema = z
       .optional()
       .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
     advanced_custom: z.string().optional(),
+    video_model_capabilities: z
+      .record(
+        z.string().min(1),
+        z.object({
+          reference_images: z.number().int().min(0),
+          first_last_frames: z.number().int().min(0).max(2),
+          reference_videos: z.number().int().min(0),
+          reference_audios: z.number().int().min(0),
+        })
+      )
+      .optional(),
     other: z.string().optional(),
     // Multi-key options (not sent to backend directly)
     multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
@@ -557,10 +568,12 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
   let advancedCustom = ''
+  let videoModelCapabilities: Record<string, VideoModelCapabilities> = {}
 
   if (channel.settings) {
     try {
       const parsed = JSON.parse(channel.settings)
+      videoModelCapabilities = parsed.video_model_capabilities ?? {}
       vertexKeyType = parsed.vertex_key_type || 'json'
       azureResponsesVersion = parsed.azure_responses_version || ''
       isEnterpriseAccount = parsed.openrouter_enterprise === true
@@ -638,6 +651,7 @@ export function transformChannelToFormDefaults(
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
     advanced_custom: advancedCustom,
+    video_model_capabilities: videoModelCapabilities,
   }
 }
 
@@ -730,6 +744,14 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       formData.settings,
       formData.other
     )
+  }
+
+  if (formData.video_model_capabilities !== undefined) {
+    if (Object.keys(formData.video_model_capabilities).length > 0) {
+      settingsObj.video_model_capabilities = formData.video_model_capabilities
+    } else {
+      delete settingsObj.video_model_capabilities
+    }
   }
 
   // Add vertex_key_type for Vertex AI channels (type 41)

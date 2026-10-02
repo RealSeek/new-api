@@ -21,6 +21,22 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 
 	filtered := make([]model.Pricing, 0, len(pricing))
 	for _, item := range pricing {
+		if len(item.ChannelVideoCapabilities) > 0 {
+			visible := make([]model.PricingChannelVideoCapabilities, 0, len(item.ChannelVideoCapabilities))
+			for _, channel := range item.ChannelVideoCapabilities {
+				groups := make([]string, 0, len(channel.Groups))
+				for _, group := range channel.Groups {
+					if _, allowed := usableGroup[group]; allowed || group == "all" {
+						groups = append(groups, group)
+					}
+				}
+				if len(groups) > 0 {
+					channel.Groups = groups
+					visible = append(visible, channel)
+				}
+			}
+			item.ChannelVideoCapabilities = visible
+		}
 		if common.StringsContains(item.EnableGroup, "all") {
 			filtered = append(filtered, item)
 			continue

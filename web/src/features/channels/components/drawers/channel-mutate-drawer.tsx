@@ -251,6 +251,7 @@ import {
   ChannelEditorLoadingState,
   ChannelModelsSection,
 } from './sections'
+import { ChannelVideoCapabilities } from './sections/channel-video-capabilities'
 
 type ChannelMutateDrawerProps = {
   open: boolean
@@ -3533,6 +3534,11 @@ export function ChannelMutateDrawer({
             />
           </div>
         </div>
+        <ChannelVideoCapabilities
+          form={form}
+          models={currentModelsArray}
+          disabled={sensitiveLocked}
+        />
       </ChannelModelsSection>
     </div>
   )

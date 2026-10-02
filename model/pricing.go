@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,32 +28,40 @@ type PricingPluginVariant struct {
 }
 
 type Pricing struct {
-	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
-	ModelName              string                               `json:"model_name"`
-	Description            string                               `json:"description,omitempty"`
-	Icon                   string                               `json:"icon,omitempty"`
-	Tags                   string                               `json:"tags,omitempty"`
-	VendorID               int                                  `json:"vendor_id,omitempty"`
-	QuotaType              int                                  `json:"quota_type"`
-	ModelRatio             float64                              `json:"model_ratio"`
-	ModelPrice             float64                              `json:"model_price"`
-	OwnerBy                string                               `json:"owner_by"`
-	CompletionRatio        float64                              `json:"completion_ratio"`
-	CacheRatio             *float64                             `json:"cache_ratio,omitempty"`
-	CreateCacheRatio       *float64                             `json:"create_cache_ratio,omitempty"`
-	ImageRatio             *float64                             `json:"image_ratio,omitempty"`
-	AudioRatio             *float64                             `json:"audio_ratio,omitempty"`
-	AudioCompletionRatio   *float64                             `json:"audio_completion_ratio,omitempty"`
-	EnableGroup            []string                             `json:"enable_groups"`
-	SupportedEndpointTypes []constant.EndpointType              `json:"supported_endpoint_types"`
-	BillingMode            string                               `json:"billing_mode,omitempty"`
-	BillingExpr            string                               `json:"billing_expr,omitempty"`
-	BillingUsageSchema     map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema,omitempty"`
-	BillingUsageExamples   []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
-	PricingVersion         string                               `json:"pricing_version,omitempty"`
-	VideoPrice             *ratio_setting.VideoPriceConfig      `json:"video_price,omitempty"`
-	ImagePrice             ratio_setting.ImagePriceConfig       `json:"image_price,omitempty"`
-	ResolutionAliasPrices  []ResolutionAliasPrice               `json:"resolution_alias_prices,omitempty"`
+	ChannelVideoCapabilities []PricingChannelVideoCapabilities    `json:"channel_video_capabilities,omitempty"`
+	BillingPluginVariants    []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
+	ModelName                string                               `json:"model_name"`
+	Description              string                               `json:"description,omitempty"`
+	Icon                     string                               `json:"icon,omitempty"`
+	Tags                     string                               `json:"tags,omitempty"`
+	VendorID                 int                                  `json:"vendor_id,omitempty"`
+	QuotaType                int                                  `json:"quota_type"`
+	ModelRatio               float64                              `json:"model_ratio"`
+	ModelPrice               float64                              `json:"model_price"`
+	OwnerBy                  string                               `json:"owner_by"`
+	CompletionRatio          float64                              `json:"completion_ratio"`
+	CacheRatio               *float64                             `json:"cache_ratio,omitempty"`
+	CreateCacheRatio         *float64                             `json:"create_cache_ratio,omitempty"`
+	ImageRatio               *float64                             `json:"image_ratio,omitempty"`
+	AudioRatio               *float64                             `json:"audio_ratio,omitempty"`
+	AudioCompletionRatio     *float64                             `json:"audio_completion_ratio,omitempty"`
+	EnableGroup              []string                             `json:"enable_groups"`
+	SupportedEndpointTypes   []constant.EndpointType              `json:"supported_endpoint_types"`
+	BillingMode              string                               `json:"billing_mode,omitempty"`
+	BillingExpr              string                               `json:"billing_expr,omitempty"`
+	BillingUsageSchema       map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema,omitempty"`
+	BillingUsageExamples     []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
+	PricingVersion           string                               `json:"pricing_version,omitempty"`
+	VideoPrice               *ratio_setting.VideoPriceConfig      `json:"video_price,omitempty"`
+	ImagePrice               ratio_setting.ImagePriceConfig       `json:"image_price,omitempty"`
+	ResolutionAliasPrices    []ResolutionAliasPrice               `json:"resolution_alias_prices,omitempty"`
+}
+
+type PricingChannelVideoCapabilities struct {
+	ChannelID    int                         `json:"channel_id"`
+	ChannelName  string                      `json:"channel_name"`
+	Groups       []string                    `json:"groups"`
+	Capabilities *dto.VideoModelCapabilities `json:"capabilities"`
 }
 
 type ResolutionAliasPrice struct {
@@ -307,11 +316,18 @@ func updatePricing() {
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
 	modelSupportEndpointsStr := make(map[string][]string)
 	advancedCustomConfigs := loadPricingAdvancedCustomConfigs(enableAbilities)
+	videoAbilityChannels := make(map[string]map[int]bool)
 
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
 		endpoints := modelSupportEndpointsStr[ability.Model]
 		channelTypes := getPricingEndpointTypesForAbility(ability, advancedCustomConfigs)
+		if slices.Contains(channelTypes, constant.EndpointTypeOpenAIVideo) {
+			if videoAbilityChannels[ability.Model] == nil {
+				videoAbilityChannels[ability.Model] = make(map[int]bool)
+			}
+			videoAbilityChannels[ability.Model][ability.ChannelId] = true
+		}
 		for _, channelType := range channelTypes {
 			if !common.StringsContains(endpoints, string(channelType)) {
 				endpoints = append(endpoints, string(channelType))
@@ -348,6 +364,51 @@ func updatePricing() {
 			supportedEndpoints = append(supportedEndpoints, endpointType)
 		}
 		modelSupportEndpointTypes[model] = supportedEndpoints
+	}
+
+	videoChannels := make(map[int]*Channel)
+	videoSettings := make(map[int]dto.ChannelOtherSettings)
+	modelVideoCapabilities := make(map[string]map[int]PricingChannelVideoCapabilities)
+	for _, ability := range enableAbilities {
+		if !videoAbilityChannels[ability.Model][ability.ChannelId] {
+			continue
+		}
+		channel, loaded := videoChannels[ability.ChannelId]
+		if !loaded {
+			channel, err = CacheGetChannel(ability.ChannelId)
+			if err != nil {
+				common.SysLog(fmt.Sprintf("pricing video capabilities: channel_id=%d, error=%v", ability.ChannelId, err))
+				continue
+			}
+			videoChannels[channel.Id] = channel
+			var settings dto.ChannelOtherSettings
+			if channel.OtherSettings != "" {
+				if err := common.UnmarshalJsonStr(channel.OtherSettings, &settings); err != nil {
+					common.SysLog(fmt.Sprintf("pricing video capabilities: channel_id=%d, invalid settings: %v", channel.Id, err))
+				}
+			}
+			videoSettings[channel.Id] = settings
+		}
+		if channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		entries := modelVideoCapabilities[ability.Model]
+		if entries == nil {
+			entries = make(map[int]PricingChannelVideoCapabilities)
+			modelVideoCapabilities[ability.Model] = entries
+		}
+		entry, exists := entries[channel.Id]
+		if !exists {
+			entry = PricingChannelVideoCapabilities{ChannelID: channel.Id, ChannelName: channel.Name}
+			if capabilities, configured := videoSettings[channel.Id].VideoModelCapabilities[ability.Model]; configured {
+				entry.Capabilities = &capabilities
+			}
+		}
+		if !slices.Contains(entry.Groups, ability.Group) {
+			entry.Groups = append(entry.Groups, ability.Group)
+			slices.Sort(entry.Groups)
+		}
+		entries[channel.Id] = entry
 	}
 
 	// 构建全局 supportedEndpointMap（默认 + 自定义覆盖）
@@ -397,6 +458,13 @@ func updatePricing() {
 			EnableGroup:            groups.Items(),
 			SupportedEndpointTypes: modelSupportEndpointTypes[model],
 		}
+
+		for _, capabilities := range modelVideoCapabilities[model] {
+			pricing.ChannelVideoCapabilities = append(pricing.ChannelVideoCapabilities, capabilities)
+		}
+		slices.SortFunc(pricing.ChannelVideoCapabilities, func(a, b PricingChannelVideoCapabilities) int {
+			return a.ChannelID - b.ChannelID
+		})
 
 		// 补充模型元数据（描述、标签、供应商、状态）
 		if meta, ok := metaMap[model]; ok {

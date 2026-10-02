@@ -20,6 +20,8 @@ For commercial licensing, please contact support@quantumnous.com
 // Pricing Types
 // ----------------------------------------------------------------------------
 
+import type { VideoModelCapabilities } from '@/features/channels/types'
+
 export type PricingVendor = {
   id: number
   name: string
@@ -57,6 +59,12 @@ export type BillingPluginVariant = {
 }
 
 export type PricingModel = {
+  channel_video_capabilities?: {
+    channel_id: number
+    channel_name: string
+    groups: string[]
+    capabilities: VideoModelCapabilities | null
+  }[]
   billing_plugin_variants?: BillingPluginVariant[]
   id: number
   model_name: string
