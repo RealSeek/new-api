@@ -45,6 +45,7 @@ import {
 } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice, formatUnitPrice } from '../lib/price'
 import {
+  getImageResolutionPriceRows,
   getTaskResolutionPriceRows,
   taskPriceLabel,
   taskPricingConditions,
@@ -123,6 +124,10 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     () => getTaskResolutionPriceRows(props.model),
     [props.model]
   )
+  const imageResolutionRows = useMemo(
+    () => getImageResolutionPriceRows(props.model),
+    [props.model]
+  )
   const taskSchema =
     props.model.billing_plugin_variants?.[0]?.billing_usage_schema ??
     props.model.billing_usage_schema
@@ -153,6 +158,26 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         ),
         label: entry.unit === 'request' ? t('Additional charge') : '',
       })),
+    })) ??
+    imageResolutionRows?.map((row) => ({
+      key: row.resolution,
+      resolution: row.resolution,
+      conditions: '',
+      prices: [
+        {
+          key: 'image',
+          price: formatUnitPrice(
+            props.model,
+            row.price,
+            showRechargePrice,
+            priceRate,
+            usdExchangeRate,
+            props.selectedGroup
+          ),
+          unit: t('image'),
+          label: '',
+        },
+      ],
     })) ??
     aliasPrices.map((row) => ({
       key: row.resolution,
@@ -218,7 +243,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     </div>
   )
   let priceSummary: ReactNode
-  if (taskResolutionRows?.length) {
+  if (taskResolutionRows?.length || imageResolutionRows?.length) {
     priceSummary = resolutionPriceSummary
   } else if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {

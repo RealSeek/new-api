@@ -271,10 +271,28 @@ func PreviewModelPricingConversion(name string, draft PricingValues) (*ModelPric
 		price := effective["ModelPrice"].(float64)
 		expression = `tier("request", fixed(` + decimal.NewFromFloat(price).String() + `))`
 		if preview.BillingDetails.ImageCount {
-			expression = `tier("image", fixed(` + decimal.NewFromFloat(price).String() + `)) * image_count`
+			baseExpression := `tier("image", fixed(` + decimal.NewFromFloat(price).String() + `))`
 			for _, rule := range preview.BillingDetails.RequestRules {
-				expression += ` * (` + rule.Condition + ` ? ` + decimal.NewFromFloat(rule.Multiplier).String() + ` : 1)`
+				baseExpression += ` * (` + rule.Condition + ` ? ` + decimal.NewFromFloat(rule.Multiplier).String() + ` : 1)`
 			}
+			var imagePrices ratio_setting.ImagePriceConfig
+			if raw, exists := effective["ImagePrice"]; exists {
+				encoded, err := common.Marshal(raw)
+				if err != nil {
+					return nil, err
+				}
+				if err := common.Unmarshal(encoded, &imagePrices); err != nil {
+					return nil, err
+				}
+			}
+			for _, resolution := range []string{"4k", "2k", "1k"} {
+				resolutionPrice, exists := imagePrices[resolution]
+				if !exists {
+					continue
+				}
+				baseExpression = `param("image_tier") == "` + resolution + `" ? tier("` + resolution + `", fixed(` + decimal.NewFromFloat(resolutionPrice).String() + `)) : (` + baseExpression + `)`
+			}
+			expression = `(` + baseExpression + `) * image_count`
 		}
 	} else {
 		ratio, exists := effective["ModelRatio"].(float64)

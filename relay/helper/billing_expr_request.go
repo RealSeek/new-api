@@ -46,6 +46,9 @@ func ResolveImageBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo
 		return input, err
 	}
 	body := map[string]any{"model": request.Model, "n": count, "size": request.Size, "quality": request.Quality}
+	if imageTier := relaycommon.NormalizeImageResolution(request.GetTokenCountMeta().ImageSize); imageTier != "" {
+		body["image_tier"] = imageTier
+	}
 	if request.BillingParameters != nil {
 		body["parameters"] = request.BillingParameters
 	}

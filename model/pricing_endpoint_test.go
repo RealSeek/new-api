@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +22,7 @@ func resetPricingEndpointTestTables(t *testing.T) {
 	t.Helper()
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
-	require.NoError(t, DB.AutoMigrate(&Channel{}, &Ability{}, &Model{}, &Vendor{}))
+	require.NoError(t, DB.AutoMigrate(&Channel{}, &Ability{}, &Model{}, &Vendor{}, &Option{}))
 	for _, table := range []string{"abilities", "channels", "models", "vendors"} {
 		require.NoError(t, DB.Exec("DELETE FROM "+table).Error)
 	}
@@ -186,6 +187,39 @@ func TestPricingRSGatewayImageEndpointUsesConfiguredAlias(t *testing.T) {
 	endpoint, ok := common.GetDefaultEndpointInfo(constant.EndpointTypeImageGeneration)
 	require.True(t, ok)
 	assert.Equal(t, "/v1/images/generations", endpoint.Path)
+}
+
+func TestImagePricingConversionPreservesResolutionPrices(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	insertPricingEndpointChannel(t, 107, constant.ChannelTypeRSGateway, dto.ChannelOtherSettings{
+		SupportedEndpointTypes: []string{string(constant.EndpointTypeImageGeneration)},
+	})
+	insertPricingEndpointAbility(t, 107, "custom-image-model")
+	require.NoError(t, DB.Create(&Model{
+		ModelName: "custom-image-model",
+		Endpoints: `{"image-generation":"/v1/images/generations"}`,
+		Status:    1,
+		NameRule:  NameRuleExact,
+	}).Error)
+
+	preview, err := PreviewModelPricingConversion("custom-image-model", PricingValues{
+		"ModelPrice": 0.08,
+		"ImagePrice": map[string]any{"1k": 0.08, "2k": 0.1, "4k": 0.12},
+	})
+	require.NoError(t, err)
+	require.Empty(t, preview.UnsupportedReason)
+	require.Contains(t, preview.Expression, `param("image_tier") == "1k"`)
+	require.Contains(t, preview.Expression, `param("image_tier") == "2k"`)
+	require.Contains(t, preview.Expression, `param("image_tier") == "4k"`)
+
+	body, err := common.Marshal(map[string]any{"image_tier": "2k"})
+	require.NoError(t, err)
+	count := 2
+	cost, trace, err := billingexpr.RunExprWithRequest(preview.Expression, billingexpr.TokenParams{}, billingexpr.RequestInput{Body: body, ImageCount: &count})
+	require.NoError(t, err)
+	assert.Equal(t, 200000.0, cost)
+	assert.Equal(t, "2k", trace.MatchedTier)
+	assert.Equal(t, 0.1, *trace.FixedPrice)
 }
 
 func insertPricingEndpointAbility(t *testing.T, channelID int, modelName string) {

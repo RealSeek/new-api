@@ -104,6 +104,7 @@ import {
 } from '../lib/task-expr'
 import { getTaskPricingDisplayTiers } from '../lib/task-matrix-display'
 import {
+  getImageResolutionPriceRows,
   getTaskResolutionPriceRows,
   hasSimpleTaskPricing,
   taskPriceLabel,
@@ -1328,19 +1329,32 @@ function ProviderGroupPricingSection(
   )
 
   if (isDynamicPricingModel(props.model)) {
-    const resolutionRows = getTaskResolutionPriceRows(props.model)
+    const taskResolutionRows = getTaskResolutionPriceRows(props.model)
+    const imageResolutionRows = getImageResolutionPriceRows(props.model)
+    const resolutionRows =
+      taskResolutionRows ??
+      imageResolutionRows?.map((row) => ({
+        label: row.resolution,
+        conditions: [],
+        billingUnit: 'request' as const,
+        fixedPrice: row.price,
+        imageCount: true,
+        resolution: row.resolution,
+      }))
     const resolutionOnly = resolutionRows?.every(
       (row) => row.conditions.length === 0
     )
     let dynamicTiers: DynamicPricingTier[]
     if (resolutionRows) {
-      dynamicTiers = resolutionRows.map((row) => ({
-        ...row,
-        conditions: [
-          { field: 'resolution', value: row.resolution },
-          ...row.conditions,
-        ],
-      }))
+      dynamicTiers = taskResolutionRows
+        ? taskResolutionRows.map((row) => ({
+            ...row,
+            conditions: [
+              { field: 'resolution', value: row.resolution },
+              ...row.conditions,
+            ],
+          }))
+        : resolutionRows
     } else {
       dynamicTiers = props.model.billing_usage_schema
         ? getTaskPricingDisplayTiers(
@@ -1483,6 +1497,9 @@ function ProviderGroupPricingSection(
                                       : 'All requests'
                                   )
                                 )
+                              }
+                              if (resolutionOnly && 'resolution' in tier) {
+                                return String(tier.resolution).toUpperCase()
                               }
                               if (tier.conditionText) {
                                 return `${tier.label}: ${formatBillingCondition(tier.conditionText, t, i18n.language) ?? tier.conditionText}`
@@ -1811,7 +1828,8 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
   const simpleTaskPricing = hasSimpleTaskPricing(props.model)
   const compactResolutionPricing = Boolean(
-    getTaskResolutionPriceRows(props.model) &&
+    (getTaskResolutionPriceRows(props.model) ||
+      getImageResolutionPriceRows(props.model)) &&
     !splitBillingExprAndRequestRules(props.model.billing_expr || '')
       .requestRuleExpr &&
     getAvailableGroups(props.model, props.usableGroup || {}).length > 0

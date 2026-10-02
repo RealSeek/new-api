@@ -157,6 +157,33 @@ func TestImageBillingRequestValidatesProviderCountWithoutOverriding(t *testing.T
 	}
 }
 
+func TestImageBillingRequestNormalizesResolutionTier(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		tier string
+	}{
+		{`{"model":"gpt-image-2","prompt":"cat","size":"1024x1024"}`, "1k"},
+		{`{"model":"gpt-image-2","prompt":"cat","size":"1536x1024"}`, "2k"},
+		{`{"model":"gpt-image-2","prompt":"cat","size":"2048x2048"}`, "4k"},
+		{`{"model":"gpt-image-2","prompt":"cat","image_size":"2k"}`, "2k"},
+	} {
+		t.Run(tc.tier+tc.body, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			request, err := GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+			require.NoError(t, err)
+			input, err := ResolveImageBillingRequestInput(c, &relaycommon.RelayInfo{Request: request}, billingexpr.RequestInput{})
+			require.NoError(t, err)
+			var body map[string]any
+			require.NoError(t, common.Unmarshal(input.Body, &body))
+			assert.Equal(t, tc.tier, body["image_tier"])
+			assert.NotContains(t, body, "prompt")
+		})
+	}
+}
+
 // TestGetAndValidOpenAIImageRequestNBounds guards the billing invariant that
 // the image generation count can never reach quota calculation with a value
 // large enough to overflow int64 into a negative charge.

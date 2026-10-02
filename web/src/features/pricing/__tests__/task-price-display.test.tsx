@@ -34,6 +34,7 @@ import { ModelDetailsContent } from '../components/model-details'
 import { ModelPriceCell } from '../components/model-price-cell'
 import { getTaskPricingDisplayTiers } from '../lib/task-matrix-display'
 import {
+  getImageResolutionPriceRows,
   hasSimpleTaskPricing,
   taskPriceLabel,
   taskEnumLabel,
@@ -239,6 +240,50 @@ it('shows one resolution table without duplicate reference prices or unsupported
   expect(screen.getByText('$0')).toBeVisible()
   expect(screen.getByText('$1.32')).toBeVisible()
   expect(screen.getByText('720p · 5s ≈ $6.6')).toBeVisible()
+})
+
+it('shows migrated image resolution expressions as per-image prices', () => {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const migratedImage: PricingModel = {
+    ...model,
+    model_name: 'gpt-image-2',
+    billing_expr:
+      '(param("image_tier") == "1k" ? tier("1k", fixed(0.08)) : param("image_tier") == "2k" ? tier("2k", fixed(0.1)) : param("image_tier") == "4k" ? tier("4k", fixed(0.12)) : tier("image", fixed(0.08))) * image_count',
+    billing_usage_schema: undefined,
+  }
+  expect(getImageResolutionPriceRows(migratedImage)).toEqual([
+    { resolution: '1k', price: 0.08 },
+    { resolution: '2k', price: 0.1 },
+    { resolution: '4k', price: 0.12 },
+  ])
+  render(
+    <QueryClientProvider client={client}>
+      <ModelCard model={migratedImage} onClick={vi.fn()} />
+      <ModelPriceCell model={migratedImage} />
+      <ModelDetailsContent
+        model={migratedImage}
+        groupRatio={{ default: 1 }}
+        usableGroup={{ default: { desc: '', ratio: 1 } }}
+        endpointMap={{}}
+        autoGroups={[]}
+        priceRate={1}
+        usdExchangeRate={1}
+        tokenUnit='M'
+      />
+    </QueryClientProvider>
+  )
+  expect(
+    screen.queryByText('Special billing expression')
+  ).not.toBeInTheDocument()
+  expect(screen.getAllByText('1K').length).toBeGreaterThan(0)
+  expect(screen.getAllByText('2K').length).toBeGreaterThan(0)
+  expect(screen.getAllByText('4K').length).toBeGreaterThan(0)
+  expect(screen.getAllByText(/\/ image/).length).toBeGreaterThan(0)
+  expect(screen.getAllByRole('table')).toHaveLength(1)
 })
 
 it('shows nested task conditions and prices in detail and group tables without ambiguous log matches', () => {

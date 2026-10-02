@@ -36,7 +36,10 @@ import {
   hasImagePrices,
 } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice, formatUnitPrice } from '../lib/price'
-import { taskUsageUnitLabel } from '../lib/task-price-display'
+import {
+  getImageResolutionPriceRows,
+  taskUsageUnitLabel,
+} from '../lib/task-price-display'
 import type { PricingModel, TokenUnit } from '../types'
 
 export type ModelPriceCellOptions = {
@@ -60,6 +63,10 @@ export function ModelPriceCell(props: {
   const tokenUnit = options.tokenUnit ?? DEFAULT_TOKEN_UNIT
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const billingTime = useBillingTime(props.model.billing_expr)
+  const imageResolutionRows = useMemo(
+    () => getImageResolutionPriceRows(props.model),
+    [props.model]
+  )
   const dynamic = useMemo(
     () =>
       getDynamicPricingSummary(props.model, {
@@ -98,6 +105,27 @@ export function ModelPriceCell(props: {
     currency: currencyLabel,
     unit: tokenUnitLabel,
   })
+
+  if (imageResolutionRows?.length) {
+    return (
+      <div className='flex flex-col gap-1'>
+        {imageResolutionRows.map((entry) => (
+          <span key={entry.resolution} className='text-sm tabular-nums'>
+            {entry.resolution.toUpperCase()}{' '}
+            {formatUnitPrice(
+              props.model,
+              entry.price,
+              options.showRechargePrice,
+              options.priceRate,
+              options.usdExchangeRate,
+              options.selectedGroup
+            )}
+            <span className='text-muted-foreground ml-1'>/ {t('image')}</span>
+          </span>
+        ))}
+      </div>
+    )
+  }
 
   if (dynamic) {
     if (dynamic.isSpecialExpression) {
