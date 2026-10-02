@@ -79,6 +79,26 @@ func TestPinnedTaskPluginChannelTypesIncludesSharedEndpointProviders(t *testing.
 	assert.Equal(t, []string{"gemini-select", "vertex-select"}, filters[0].TaskPluginKeys)
 }
 
+func TestAppendVideoCapabilitiesFilter(t *testing.T) {
+	c, _ := gin.CreateTestContext(nil)
+	AppendVideoCapabilitiesFilter(c, map[string]any{
+		"content": []any{
+			map[string]any{"type": "image_url", "role": "reference_image"},
+			map[string]any{"type": "image_url", "role": "last_frame"},
+			map[string]any{"type": "video_url", "role": "reference_video"},
+			map[string]any{"type": "audio_url", "role": "reference_audio"},
+		},
+		"face_required": true,
+	})
+	filters := GetChannelConstraints(c).Filters
+	require.Len(t, filters, 1)
+	assert.Equal(t, 1, filters[0].ReferenceImages)
+	assert.Equal(t, 1, filters[0].FirstLastFrames)
+	assert.Equal(t, 1, filters[0].ReferenceVideos)
+	assert.Equal(t, 1, filters[0].ReferenceAudios)
+	assert.True(t, filters[0].FaceRequired)
+}
+
 func channelSelectTaskPluginSource(key string, channelType int) string {
 	return fmt.Sprintf(`
 export const meta = {

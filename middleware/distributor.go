@@ -50,6 +50,9 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		if taskRequest, exists := c.Get("task_request"); exists {
+			service.AppendVideoCapabilitiesFilter(c, taskRequest)
+		}
 		_, pinned, _ := constraints.ResolvedPin()
 		if !pinned {
 			// Select a channel for the user

@@ -41,6 +41,77 @@ func AppendTaskPluginIdentityFilter(c *gin.Context, pluginKey string) {
 	})
 }
 
+// AppendVideoCapabilitiesFilter turns the normalized video request into the
+// material limits configured for each candidate channel.
+func AppendVideoCapabilitiesFilter(c *gin.Context, request any) {
+	body, ok := request.(map[string]any)
+	if !ok {
+		return
+	}
+	filter := dto.ChannelFilter{Kind: dto.FilterVideoCapabilities}
+	countContent := func(items any) {
+		rows, _ := items.([]any)
+		for _, value := range rows {
+			item, _ := value.(map[string]any)
+			switch item["type"] {
+			case "image_url":
+				role, _ := item["role"].(string)
+				if role == "first_frame" || role == "last_frame" {
+					filter.FirstLastFrames++
+				} else {
+					filter.ReferenceImages++
+				}
+			case "video_url":
+				filter.ReferenceVideos++
+			case "audio_url":
+				filter.ReferenceAudios++
+			}
+		}
+	}
+	countContent(body["content"])
+	metadata, _ := body["metadata"].(map[string]any)
+	if body["content"] == nil {
+		countContent(metadata["content"])
+	}
+	if references, ok := body["references"].([]any); ok {
+		for _, value := range references {
+			item, _ := value.(map[string]any)
+			typeName, _ := item["type"].(string)
+			role, _ := item["role"].(string)
+			switch typeName {
+			case "image":
+				if role == "first_frame" || role == "last_frame" {
+					filter.FirstLastFrames++
+				} else {
+					filter.ReferenceImages++
+				}
+			case "video":
+				filter.ReferenceVideos++
+			case "audio":
+				filter.ReferenceAudios++
+			}
+		}
+	}
+	if filter.ReferenceImages == 0 && filter.FirstLastFrames == 0 {
+		if images, ok := body["images"].([]any); ok {
+			filter.FirstLastFrames = len(images)
+		}
+		if metadata["first_frame_image"] != nil {
+			filter.FirstLastFrames++
+		}
+		if metadata["last_frame_image"] != nil {
+			filter.FirstLastFrames++
+		}
+	}
+	filter.FaceRequired, _ = body["face_required"].(bool)
+	if !filter.FaceRequired {
+		filter.FaceRequired, _ = metadata["face_required"].(bool)
+	}
+	if filter.ReferenceImages+filter.FirstLastFrames+filter.ReferenceVideos+filter.ReferenceAudios > 0 || filter.FaceRequired {
+		GetChannelConstraints(c).AddFilter(filter)
+	}
+}
+
 type RetryParam struct {
 	Ctx          *gin.Context
 	TokenGroup   string

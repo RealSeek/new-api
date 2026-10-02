@@ -189,6 +189,11 @@ func TestChannelSatisfiesFilters(t *testing.T) {
 			}},
 		},
 	})
+	faceSupported := true
+	video := &Channel{Id: 4, Type: constant.ChannelTypeTaskPlugin}
+	video.SetOtherSettings(kitdto.ChannelOtherSettings{VideoModelCapabilities: map[string]kitdto.VideoModelCapabilities{
+		"MiniMax-H3": {ReferenceImages: 9, FirstLastFrames: 2, ReferenceVideos: 3, ReferenceAudios: 3, FaceSupported: &faceSupported},
+	}})
 
 	ok, kind := ChannelSatisfiesFilters(nil, "gpt-4", nil)
 	assert.False(t, ok)
@@ -215,4 +220,16 @@ func TestChannelSatisfiesFilters(t *testing.T) {
 	}})
 	assert.False(t, ok)
 	assert.Equal(t, dto.FilterRequestPath, kind)
+
+	ok, kind = ChannelSatisfiesFilters(video, "MiniMax-H3", []dto.ChannelFilter{{
+		Kind: dto.FilterVideoCapabilities, ReferenceImages: 9, ReferenceVideos: 3, ReferenceAudios: 3, FaceRequired: true,
+	}})
+	require.True(t, ok)
+	assert.Equal(t, dto.ChannelFilterKind(""), kind)
+
+	ok, kind = ChannelSatisfiesFilters(video, "MiniMax-H3", []dto.ChannelFilter{{
+		Kind: dto.FilterVideoCapabilities, FirstLastFrames: 3,
+	}})
+	assert.False(t, ok)
+	assert.Equal(t, dto.FilterVideoCapabilities, kind)
 }

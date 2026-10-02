@@ -8,11 +8,11 @@ const VIDEO_SECONDS_FIELD = {
 
 const RESOLUTION_DESCRIPTION = { en: "Output video resolution", zh: "输出视频分辨率" };
 
-// MiniMax-H3 allows duration 4 to 15 and renders 768P or 2K.
+// MiniMax-H3 allows duration 1 to 15 and renders 768P.
 const H3_USAGE_SCHEMA = {
   seconds: VIDEO_SECONDS_FIELD,
   resolution: {
-    enum: ["768P", "2K"],
+    enum: ["768P"],
     description: RESOLUTION_DESCRIPTION,
   },
   // Input image count (estimated at submit, actual on completion).
@@ -62,7 +62,7 @@ export const meta = {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",
     zh: "MiniMax 海螺视频生成（文生视频、图生视频、MiniMax-H3 多模态参考生视频）",
   },
-  version: "1.2.0",
+  version: "1.3.0",
   author: { name: "QuantumNous" },
   channelTypes: [35],
   models: [
@@ -82,7 +82,7 @@ export const meta = {
   // union of every family's fields and resolutions.
   usageSchema: Object.assign({}, H3_USAGE_SCHEMA, {
     resolution: {
-      enum: ["512P", "768P", "720P", "1080P", "2K"],
+      enum: ["512P", "768P", "720P", "1080P"],
       description: RESOLUTION_DESCRIPTION,
     },
   }),
@@ -94,8 +94,8 @@ export const meta = {
     { label: "02 512P 10s", facts: { seconds: 10, resolution: "512P", input_images: 0, input_video_seconds: 0 } },
     { label: "01-series 720P 6s", facts: { seconds: 6, resolution: "720P", input_images: 0, input_video_seconds: 0 } },
     { label: "H3 768P 5s", facts: { seconds: 5, resolution: "768P", input_images: 0, input_video_seconds: 0 } },
-    { label: "H3 2K 5s · 9 images", facts: { seconds: 5, resolution: "2K", input_images: 9, input_video_seconds: 0 } },
-    { label: "H3 2K 5s · input video", facts: { seconds: 5, resolution: "2K", input_images: 0, input_video_seconds: 15 } },
+    { label: "H3 768P 5s · 9 images", facts: { seconds: 5, resolution: "768P", input_images: 9, input_video_seconds: 0 } },
+    { label: "H3 768P 5s · input video", facts: { seconds: 5, resolution: "768P", input_images: 0, input_video_seconds: 15 } },
   ],
   usageProfiles: [
     {
@@ -103,9 +103,9 @@ export const meta = {
       schema: H3_USAGE_SCHEMA,
       examples: [
         { label: "H3 768P 5s", facts: { seconds: 5, resolution: "768P", input_images: 0, input_video_seconds: 0 } },
-        { label: "H3 2K 5s", facts: { seconds: 5, resolution: "2K", input_images: 0, input_video_seconds: 0 } },
-        { label: "H3 2K 5s · 9 images", facts: { seconds: 5, resolution: "2K", input_images: 9, input_video_seconds: 0 } },
-        { label: "H3 2K 5s · input video", facts: { seconds: 5, resolution: "2K", input_images: 0, input_video_seconds: 15 } },
+        { label: "H3 768P 1s", facts: { seconds: 1, resolution: "768P", input_images: 0, input_video_seconds: 0 } },
+        { label: "H3 768P 5s · 9 images", facts: { seconds: 5, resolution: "768P", input_images: 9, input_video_seconds: 0 } },
+        { label: "H3 768P 5s · input video", facts: { seconds: 5, resolution: "768P", input_images: 0, input_video_seconds: 15 } },
       ],
     },
     {
@@ -187,18 +187,19 @@ function hasHailuoImage(req, hasInputReferenceFile) {
 }
 
 const H3_MODEL = "MiniMax-H3";
-const H3_MIN_DURATION = 4;
+const H3_MIN_DURATION = 1;
 const H3_MAX_DURATION = 15;
 const H3_DEFAULT_DURATION = 5;
 const H3_MAX_FRAME_IMAGES = 2;
 const H3_MAX_REFERENCE_IMAGES = 9;
 const H3_MAX_REFERENCE_VIDEOS = 3;
 const H3_MAX_REFERENCE_AUDIOS = 3;
+const H3_MAX_MEDIA_ITEMS = 12;
 const H3_MAX_INPUT_VIDEO_SECONDS = 15;
 const H3_RATIOS = ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 
 // MiniMax-H3 speaks the /v2 video generation contract: a multimodal `content`
-// array instead of flat frame fields, an explicit `ratio`, 768P/2K resolutions,
+// array instead of flat frame fields, an explicit `ratio`, fixed 768P resolution,
 // a task id path parameter on query, and a `{task: {...}}` query envelope.
 function isH3(model) {
   return model === H3_MODEL;
@@ -219,9 +220,8 @@ function h3Resolution(req) {
   const raw = trimmed(metadata.resolution) || trimmed(req.resolution) || trimmed(req.size);
   if (!raw) return "768P";
   const value = raw.toUpperCase();
-  if (value.includes("2K")) return "2K";
   if (value.includes("768")) return "768P";
-  throw new Error(H3_MODEL + " resolution must be 768P or 2K");
+  throw new Error(H3_MODEL + " resolution must be 768P");
 }
 
 function h3MediaItem(type, url, role) {
@@ -264,6 +264,7 @@ function validateH3Content(items) {
   let referenceVideos = 0;
   let referenceAudios = 0;
   let inputImages = 0;
+  let mediaItems = 0;
   for (const item of items) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const role = trimmed(item.role);
@@ -272,6 +273,7 @@ function validateH3Content(items) {
       continue;
     }
     if (item.type === "image_url") {
+      mediaItems += 1;
       inputImages += 1;
       if (!role || role === "first_frame") {
         firstFrames += 1;
@@ -288,11 +290,13 @@ function validateH3Content(items) {
       continue;
     }
     if (item.type === "video_url") {
+      mediaItems += 1;
       referenceVideos += 1;
       hasReference = true;
       continue;
     }
     if (item.type === "audio_url") {
+      mediaItems += 1;
       referenceAudios += 1;
       hasReference = true;
     }
@@ -304,23 +308,26 @@ function validateH3Content(items) {
   if (inputImages > H3_MAX_REFERENCE_IMAGES) throw new Error(H3_MODEL + " accepts at most " + H3_MAX_REFERENCE_IMAGES + " input images");
   if (referenceVideos > H3_MAX_REFERENCE_VIDEOS) throw new Error(H3_MODEL + " accepts at most " + H3_MAX_REFERENCE_VIDEOS + " reference videos");
   if (referenceAudios > H3_MAX_REFERENCE_AUDIOS) throw new Error(H3_MODEL + " accepts at most " + H3_MAX_REFERENCE_AUDIOS + " reference audios");
+  if (mediaItems > H3_MAX_MEDIA_ITEMS) throw new Error(H3_MODEL + " accepts at most " + H3_MAX_MEDIA_ITEMS + " media items");
   if (hasFrame && hasReference) throw new Error(H3_MODEL + " cannot mix frame images with reference media");
   return items;
 }
 
-// metadata.content is the full multimodal passthrough; otherwise the content
+// content (or metadata.content for older clients) is the full multimodal
+// passthrough; otherwise the content
 // array is assembled from prompt, frame images, and reference media.
 function h3Content(req) {
   const metadata = req.metadata || {};
   const prompt = trimmed(req.prompt);
-  if (metadata.content !== undefined && metadata.content !== null) {
-    if (!Array.isArray(metadata.content)) throw new Error("metadata.content must be an array");
-    const items = metadata.content;
+  const suppliedContent = req.content !== undefined && req.content !== null ? req.content : metadata.content;
+  if (suppliedContent !== undefined && suppliedContent !== null) {
+    if (!Array.isArray(suppliedContent)) throw new Error("content must be an array");
+    const items = suppliedContent;
     const hasText = items.some(function (item) {
       return item && item.type === "text" && trimmed(item.text);
     });
     if (hasText) return validateH3Content(items);
-    if (!prompt) throw new Error(H3_MODEL + " metadata.content requires a text item or a prompt");
+    if (!prompt) throw new Error(H3_MODEL + " content requires a text item or a prompt");
     return validateH3Content([{ type: "text", text: prompt }].concat(items));
   }
   const content = prompt ? [{ type: "text", text: prompt }] : [];
@@ -345,7 +352,7 @@ function h3HasVisualContent(content) {
 // aspect ratio can be inherited from a visual input.
 function h3Ratio(req, content) {
   const metadata = req.metadata || {};
-  const ratio = trimmed(metadata.ratio);
+  const ratio = trimmed(req.ratio) || trimmed(metadata.ratio);
   if (!ratio) return h3HasVisualContent(content) ? "adaptive" : "16:9";
   if (!H3_RATIOS.includes(ratio)) throw new Error(H3_MODEL + " ratio must be one of " + H3_RATIOS.join(", "));
   if (ratio === "adaptive" && !h3HasVisualContent(content)) throw new Error(H3_MODEL + " ratio adaptive requires an image or video input");
@@ -612,7 +619,7 @@ export function extractUsageOnComplete(_task, _taskResult, body) {
   if (h3Task) {
     const resolution = trimmed(h3Task.resolution).toUpperCase();
     const facts = {};
-    if (resolution === "2K" || resolution === "768P") facts.resolution = resolution;
+    if (resolution === "768P") facts.resolution = resolution;
     const usage = h3Task.usage && typeof h3Task.usage === "object" && !Array.isArray(h3Task.usage) ? h3Task.usage : {};
     const fields = [
       { key: "seconds", value: usage.output_seconds, minimum: H3_MIN_DURATION, maximum: H3_MAX_DURATION, integer: false },

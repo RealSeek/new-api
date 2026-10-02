@@ -10,6 +10,7 @@ import (
 var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterRequestPath,
 	dto.FilterTaskPluginIdentity,
+	dto.FilterVideoCapabilities,
 	dto.FilterResponsesWebSocket,
 }
 
@@ -124,6 +125,16 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		default:
 			return false
 		}
+	case dto.FilterVideoCapabilities:
+		capabilities, configured := ch.GetOtherSettings().VideoModelCapabilities[modelName]
+		if !configured {
+			return true
+		}
+		if filter.ReferenceImages > capabilities.ReferenceImages || filter.FirstLastFrames > capabilities.FirstLastFrames ||
+			filter.ReferenceVideos > capabilities.ReferenceVideos || filter.ReferenceAudios > capabilities.ReferenceAudios {
+			return false
+		}
+		return !filter.FaceRequired || capabilities.FaceSupported != nil && *capabilities.FaceSupported
 	default:
 		return true
 	}

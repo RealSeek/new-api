@@ -187,9 +187,9 @@ func TestHailuoH3BuildSubmitRequest(t *testing.T) {
 			wantAction: "text_to_video",
 		},
 		{
-			name:       "2K resolution from size",
-			request:    map[string]any{"prompt": "p", "duration": 15, "size": "2K"},
-			wantBody:   `{"model":"MiniMax-H3","content":[{"type":"text","text":"p"}],"resolution":"2K","duration":15,"ratio":"16:9"}`,
+			name:       "one second duration",
+			request:    map[string]any{"prompt": "p", "duration": 1, "size": "768P"},
+			wantBody:   `{"model":"MiniMax-H3","content":[{"type":"text","text":"p"}],"resolution":"768P","duration":1,"ratio":"16:9"}`,
 			wantAction: "text_to_video",
 		},
 		{
@@ -246,9 +246,20 @@ func TestHailuoH3BuildSubmitRequest(t *testing.T) {
 			wantAction: "text_to_video",
 		},
 		{
+			name: "top-level content passthrough",
+			request: map[string]any{"content": []any{
+				map[string]any{"type": "text", "text": "kept"},
+				map[string]any{"type": "image_url", "role": "last_frame", "image_url": map[string]any{"url": "last.png"}},
+			}},
+			wantBody: `{"model":"MiniMax-H3","content":[
+				{"type":"text","text":"kept"},
+				{"type":"image_url","role":"last_frame","image_url":{"url":"last.png"}}],
+				"resolution":"768P","duration":5,"ratio":"adaptive"}`,
+			wantAction: "image_to_video",
+		},
+		{
 			name: "explicit ratio callback and watermark",
-			request: map[string]any{"prompt": "p", "duration": 4, "metadata": map[string]any{
-				"ratio":          "9:16",
+			request: map[string]any{"prompt": "p", "duration": 4, "ratio": "9:16", "metadata": map[string]any{
 				"callback_url":   "https://example.com/cb",
 				"aigc_watermark": true,
 			}},
@@ -284,15 +295,15 @@ func TestHailuoH3RejectsOutOfContractRequests(t *testing.T) {
 		request map[string]any
 		wantErr string
 	}{
-		{"duration below the minimum", map[string]any{"prompt": "p", "duration": 3}, "duration must be an integer between 4 and 15"},
-		{"duration above the maximum", map[string]any{"prompt": "p", "duration": 16}, "duration must be an integer between 4 and 15"},
-		{"fractional duration", map[string]any{"prompt": "p", "duration": 5.5}, "duration must be an integer between 4 and 15"},
-		{"unsupported resolution", map[string]any{"prompt": "p", "size": "1080P"}, "resolution must be 768P or 2K"},
+		{"duration below the minimum", map[string]any{"prompt": "p", "duration": 0}, "duration must be an integer between 1 and 15"},
+		{"duration above the maximum", map[string]any{"prompt": "p", "duration": 16}, "duration must be an integer between 1 and 15"},
+		{"fractional duration", map[string]any{"prompt": "p", "duration": 5.5}, "duration must be an integer between 1 and 15"},
+		{"unsupported resolution", map[string]any{"prompt": "p", "size": "2K"}, "resolution must be 768P"},
 		{"unknown ratio", map[string]any{"prompt": "p", "metadata": map[string]any{"ratio": "16:10"}}, "ratio must be one of"},
 		{"adaptive ratio without a visual input", map[string]any{"prompt": "p", "metadata": map[string]any{"ratio": "adaptive"}}, "ratio adaptive requires an image or video input"},
 		{"too many frame images", map[string]any{"prompt": "p", "images": []any{"a.png", "b.png", "c.png"}}, "at most 2 frame images"},
 		{"media without text", map[string]any{"images": []any{"a.png"}}, "requires a non-empty text item"},
-		{"content is not an array", map[string]any{"prompt": "p", "metadata": map[string]any{"content": "nope"}}, "metadata.content must be an array"},
+		{"content is not an array", map[string]any{"prompt": "p", "content": "nope"}, "content must be an array"},
 		{
 			name: "multiple first frame roles",
 			request: map[string]any{"prompt": "p", "metadata": map[string]any{"content": []any{
@@ -455,8 +466,8 @@ func TestHailuoExtractUsageFacts(t *testing.T) {
 		{"H3 defaults", "MiniMax-H3", map[string]any{"prompt": "p"}, map[string]any{
 			"seconds": float64(5), "resolution": "768P", "input_images": float64(0), "input_video_seconds": float64(0),
 		}},
-		{"H3 2K", "MiniMax-H3", map[string]any{"prompt": "p", "duration": 12, "size": "2K"}, map[string]any{
-			"seconds": float64(12), "resolution": "2K", "input_images": float64(0), "input_video_seconds": float64(0),
+		{"H3 one second", "MiniMax-H3", map[string]any{"prompt": "p", "duration": 1, "size": "768P"}, map[string]any{
+			"seconds": float64(1), "resolution": "768P", "input_images": float64(0), "input_video_seconds": float64(0),
 		}},
 		{"H3 reference images", "MiniMax-H3", map[string]any{"prompt": "p", "metadata": map[string]any{"content": nineReferenceImages}}, map[string]any{
 			"seconds": float64(5), "resolution": "768P", "input_images": float64(9), "input_video_seconds": float64(0),
@@ -489,8 +500,8 @@ func TestHailuoH3CompletionUsageFacts(t *testing.T) {
 	}{
 		{
 			name: "actual usage replaces submission estimates",
-			body: `{"task":{"id":"1","status":"succeeded","resolution":"2K","usage":{"output_seconds":5,"input_seconds":7.5,"input_image_count":6}}}`,
-			want: map[string]any{"seconds": float64(5), "resolution": "2K", "input_images": float64(6), "input_video_seconds": float64(7.5)},
+			body: `{"task":{"id":"1","status":"succeeded","resolution":"768P","usage":{"output_seconds":5,"input_seconds":7.5,"input_image_count":6}}}`,
+			want: map[string]any{"seconds": float64(5), "resolution": "768P", "input_images": float64(6), "input_video_seconds": float64(7.5)},
 		},
 		{
 			name: "zero actual usage is retained for settlement",
@@ -510,7 +521,7 @@ func TestHailuoH3CompletionUsageFacts(t *testing.T) {
 		{
 			name: "out of contract usage cannot become a billing multiplier",
 			body: `{"task":{"id":"1","status":"succeeded","resolution":"2K","usage":{"output_seconds":16,"input_seconds":16,"input_image_count":10}}}`,
-			want: map[string]any{"resolution": "2K"},
+			want: nil,
 		},
 	}
 	for _, testCase := range testCases {
@@ -524,11 +535,11 @@ func TestHailuoH3CompletionUsageFacts(t *testing.T) {
 	t.Run("polling adaptor carries actual facts into task settlement", func(t *testing.T) {
 		adaptor := taskplugin.New(plugin)
 		result, err := adaptor.ParseTaskResult(&model.Task{}, &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}, []byte(
-			`{"task":{"id":"1","status":"succeeded","resolution":"2K","usage":{"output_seconds":5,"input_seconds":7.5,"input_image_count":6}}}`,
+			`{"task":{"id":"1","status":"succeeded","resolution":"768P","usage":{"output_seconds":5,"input_seconds":7.5,"input_image_count":6}}}`,
 		))
 		require.NoError(t, err)
 		assert.Equal(t, map[string]any{
-			"seconds": float64(5), "resolution": "2K", "input_images": float64(6), "input_video_seconds": float64(7.5),
+			"seconds": float64(5), "resolution": "768P", "input_images": float64(6), "input_video_seconds": float64(7.5),
 		}, result.UsageFacts)
 	})
 }
@@ -610,7 +621,7 @@ func TestHailuoH3PassesOpenAIVideoDecode(t *testing.T) {
 	plugin := loadHailuoPlugin(t)
 	value, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"},
 		map[string]any{
-			"body":          map[string]any{"kind": "json", "value": map[string]any{"model": "MiniMax-H3", "prompt": "p", "seconds": 12, "size": "2K"}},
+			"body":          map[string]any{"kind": "json", "value": map[string]any{"model": "MiniMax-H3", "prompt": "p", "seconds": 12, "size": "768P"}},
 			"model":         "MiniMax-H3",
 			"upstreamModel": "MiniMax-H3",
 		})
