@@ -61,32 +61,34 @@ describe('shared model pricing', () => {
     ).toHaveProperty('ModelPrice', 0)
   })
 
-  it('stores task classification without changing the selected billing mode', () => {
+  it('stores task pricing only through billing expressions', () => {
     const request = pricingFromDraft({
       name: 'video-request',
-      billingMode: 'per-request',
-      price: '1.5',
+      billingMode: 'tiered_expr',
+      billingExpr: 'tier("base", u("requests") * 1.5)',
       taskPricingUnit: 'request',
     })
     const token = pricingFromDraft({
       name: 'video-token',
-      billingMode: 'per-token',
-      ratio: '37.5',
+      billingMode: 'tiered_expr',
+      billingExpr: 'tier("base", u("tokens") * 75 / 1000000)',
       taskPricingUnit: 'token',
     })
 
     expect(request).toEqual({
-      ModelPrice: 1.5,
-      'billing_setting.billing_mode': 'ratio',
+      'billing_setting.billing_expr':
+        'tier("base", u("requests") * 1.5)',
+      'billing_setting.billing_mode': 'tiered_expr',
       'billing_setting.task_pricing': 'request',
     })
     expect(token).toEqual({
-      ModelRatio: 37.5,
-      'billing_setting.billing_mode': 'ratio',
+      'billing_setting.billing_expr':
+        'tier("base", u("tokens") * 75 / 1000000)',
+      'billing_setting.billing_mode': 'tiered_expr',
       'billing_setting.task_pricing': 'token',
     })
     expect(pricingRow('video-request', request)).toMatchObject({
-      billingMode: 'per-request',
+      billingMode: 'tiered_expr',
       taskPricingUnit: 'request',
     })
   })

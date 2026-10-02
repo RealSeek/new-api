@@ -311,27 +311,49 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	useTiered := exists || billing_setting.GetBillingMode(pricingModelName) == billing_setting.BillingModeTieredExpr
 	if useTiered {
 		provider, supported := adaptor.(channel.TaskUsageFactsProvider)
+		manualUnit, manualPricing := billing_setting.GetTaskPricingUnit(pricingModelName)
 		if billingexpr.UsesFixedPricing(exprStr) {
 			return nil, service.TaskErrorWrapper(fmt.Errorf("fixed pricing is not supported for task usage expressions"), "model_price_error", http.StatusBadRequest)
 		}
-		if !exists || !supported {
+		if !exists || (!supported && !manualPricing) {
 			return nil, service.TaskErrorWrapper(fmt.Errorf("task model %s has no usage expression or meter", modelName), "model_price_error", http.StatusBadRequest)
 		}
 		sharedModel := pinnedPlugin.Generation.SharedModel(modelName) || pinnedPlugin.Generation.SharedModel(info.UpstreamModelName)
 		if sharedModel && pinnedPlugin.Plugin != nil {
 			schema, _ := pinnedPlugin.Plugin.Meta.UsageForModels(info.UpstreamModelName, modelName)
+			if manualPricing {
+				schema = billing_setting.TaskPricingUsageSchema(manualUnit, schema)
+			}
 			if !billing_setting.TaskExprCompatible(exprStr, schema) {
 				return nil, service.TaskErrorWrapper(fmt.Errorf("task model %s pricing is not configured for plugin %s", modelName, pluginKey), "model_price_error", http.StatusBadRequest)
 			}
 		}
-		var facts map[string]any
+		facts := make(map[string]any)
 		if validatedProvider, ok := adaptor.(channel.TaskValidatedUsageFactsProvider); ok {
-			facts, err = validatedProvider.ExtractUsageFactsValidated(c, info)
+			provided, factsErr := validatedProvider.ExtractUsageFactsValidated(c, info)
+			err = factsErr
 			if err != nil {
 				return nil, service.TaskErrorWrapperLocal(err, "plugin_usage_invalid", http.StatusBadRequest)
 			}
-		} else {
-			facts = provider.ExtractUsageFacts(c, info)
+			maps.Copy(facts, provided)
+		} else if supported {
+			maps.Copy(facts, provider.ExtractUsageFacts(c, info))
+		}
+		if manualPricing {
+			manualFacts, factsErr := manualVideoTaskUsageFacts(c, info, manualUnit, pricingResolution)
+			if factsErr != nil {
+				return nil, service.TaskErrorWrapperLocal(factsErr, "invalid_request", http.StatusBadRequest)
+			}
+			for key, value := range manualFacts {
+				if _, exists := facts[key]; !exists {
+					facts[key] = value
+				}
+			}
+		}
+		for key := range billingexpr.UsedUsageKeys(exprStr) {
+			if _, available := facts[key]; !available {
+				return nil, service.TaskErrorWrapper(fmt.Errorf("task model %s does not provide usage fact %s", modelName, key), "model_price_error", http.StatusBadRequest)
+			}
 		}
 		cost, trace, runErr := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
 		if runErr != nil || cost < 0 {
@@ -485,6 +507,70 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Immediate:      parsed.Immediate,
 		PluginState:    parsed.PluginState,
 	}, nil
+}
+
+func manualVideoTaskUsageFacts(c *gin.Context, info *relaycommon.RelayInfo, unit, pricingResolution string) (map[string]any, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	resolution := relaycommon.NormalizeVideoResolution(pricingResolution)
+	if resolution == "" {
+		resolution = relaycommon.NormalizeVideoResolution(req.Resolution)
+	}
+	if resolution == "" {
+		if value, ok := req.Metadata["resolution"].(string); ok {
+			resolution = relaycommon.NormalizeVideoResolution(value)
+		}
+	}
+	if resolution == "" {
+		resolution = relaycommon.NormalizeVideoResolution(req.Size)
+	}
+	if resolution == "" {
+		resolution = model_alias_setting.DefaultAliasResolution
+	}
+
+	facts := map[string]any{
+		"resolution":  resolution,
+		"video_input": (info.TaskRelayInfo != nil && info.Action == constant.TaskActionRemix) || taskMetadataHasReferenceVideo(req.Metadata),
+	}
+	switch unit {
+	case billing_setting.TaskPricingUnitRequest:
+		facts["requests"] = 1
+	case billing_setting.TaskPricingUnitSecond:
+		seconds := relaycommon.ResolveTaskDuration(req, 0)
+		if seconds <= 0 {
+			return nil, fmt.Errorf("video duration is required for per-second task pricing")
+		}
+		facts["seconds"] = seconds
+	}
+	return facts, nil
+}
+
+func taskMetadataHasReferenceVideo(metadata map[string]any) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	if values, ok := metadata["reference_videos"].([]any); ok && len(values) > 0 {
+		return true
+	}
+	for _, key := range []string{"references", "content"} {
+		values, ok := metadata[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, value := range values {
+			item, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			typeName, _ := item["type"].(string)
+			if typeName == "video" || typeName == "video_url" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // taskResolutionCandidates 汇总任务请求里可能携带分辨率的字段。

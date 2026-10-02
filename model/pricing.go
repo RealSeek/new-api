@@ -526,6 +526,7 @@ func updatePricing() {
 		}
 		if unit, ok := billing_setting.GetTaskPricingUnit(model); ok {
 			pricing.TaskPricingUnit = unit
+			pricing.BillingUsageSchema = billing_setting.TaskPricingUsageSchema(unit, pricing.BillingUsageSchema)
 		}
 		providers := pluginGeneration.PluginsByModel(model)
 		hasProviderOverride := false
@@ -540,6 +541,9 @@ func updatePricing() {
 				schema, examples := provider.Meta.UsageForModel(model)
 				if schema == nil {
 					schema = map[string]jsplugin.UsageFieldSchema{}
+				}
+				if unit, taskPricing := billing_setting.GetTaskPricingUnit(model); taskPricing {
+					schema = billing_setting.TaskPricingUsageSchema(unit, schema)
 				}
 				expression, hasExpression := billing_setting.ResolveTaskBillingExpr(provider.Meta.Key, model, "")
 				mode := billing_setting.BillingModeRatio

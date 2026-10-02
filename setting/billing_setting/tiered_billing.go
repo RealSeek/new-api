@@ -115,6 +115,62 @@ func GetTaskPricingUnit(model string) (string, bool) {
 	return unit, ok && ValidTaskPricingUnit(unit)
 }
 
+// TaskPricingUsageSchema adds the host-owned per-request fact to a provider
+// schema. Ordinary video models also receive resolution and duration facts.
+func TaskPricingUsageSchema(unit string, provider map[string]jsplugin.UsageFieldSchema) map[string]jsplugin.UsageFieldSchema {
+	if !ValidTaskPricingUnit(unit) {
+		return nil
+	}
+	schema := jsplugin.CloneUsageSchema(provider)
+	if schema == nil {
+		schema = map[string]jsplugin.UsageFieldSchema{
+			"resolution": {
+				Enum:              []string{"480p", "720p", "1080p", "4k"},
+				AllowCustomValues: true,
+				Description: jsplugin.LocalizedText{
+					"en": "Output video resolution",
+					"zh": "输出视频分辨率",
+				},
+			},
+			"seconds": {
+				Type: "number",
+				Unit: "second",
+				Description: jsplugin.LocalizedText{
+					"en": "Video generation unit price",
+					"zh": "视频生成单价",
+				},
+			},
+			"video_input": {
+				Type: "boolean",
+				Description: jsplugin.LocalizedText{
+					"en": "Reference video present",
+					"zh": "存在参考视频",
+				},
+			},
+		}
+		if unit == TaskPricingUnitToken {
+			schema["tokens"] = jsplugin.UsageFieldSchema{
+				Type: "number",
+				Unit: "token",
+				Description: jsplugin.LocalizedText{
+					"en": "Video generation token unit price",
+					"zh": "视频生成 Token 单价",
+				},
+			}
+		}
+	}
+	schema["requests"] = jsplugin.UsageFieldSchema{
+		Type:      "number",
+		Unit:      "count",
+		UnitLabel: jsplugin.LocalizedText{"en": "request", "zh": "次"},
+		Description: jsplugin.LocalizedText{
+			"en": "Video generation unit price",
+			"zh": "视频生成单价",
+		},
+	}
+	return schema
+}
+
 func GetPluginBillingExpr(pluginKey, model string) (string, bool) {
 	expression, ok := billingSetting.PluginBillingExpr[PluginBillingExprKey(pluginKey, model)]
 	return expression, ok

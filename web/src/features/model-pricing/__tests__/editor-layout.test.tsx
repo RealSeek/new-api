@@ -382,7 +382,12 @@ it.each(['default', 'unset'] as const)(
     await user.click(await screen.findByRole('button', { name: 'Edit' }))
     await user.click(screen.getByRole('tab', { name: 'Per-request' }))
     await user.click(screen.getByRole('checkbox', { name: 'Task billing' }))
-    const price = screen.getByRole('textbox', { name: 'Fixed price' })
+    expect(
+      screen.queryByRole('tab', { name: 'Per-request' })
+    ).not.toBeInTheDocument()
+    const price = screen.getByLabelText(
+      /Video generation unit price:.*480p/
+    )
     await user.clear(price)
     await user.type(price, '0.25')
     const region = screen.getByRole('region', { name: 'Edit model pricing' })
@@ -393,7 +398,12 @@ it.each(['default', 'unset'] as const)(
     await waitFor(() => expect(save).toHaveBeenCalledOnce())
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
+        BillingExpr: expect.stringContaining(
+          'u(\\"requests\\") * 0.25'
+        ),
+        BillingMode: '{"example-model":"tiered_expr"}',
         ExposeRatioEnabled: variant === 'default',
+        ModelPrice: '{}',
         TaskPricing: '{"example-model":"request"}',
       }),
       undefined

@@ -76,6 +76,7 @@ import {
 import type {
   BillingUsageExample,
   BillingUsageSchema,
+  TaskPricingUnit,
 } from '@/features/pricing/types'
 
 import { formatPricingNumber } from './pricing-format'
@@ -88,8 +89,10 @@ type TaskUsagePricingEditorProps = {
   requestRuleExpr: string
   usageSchema: BillingUsageSchema
   usageExamples?: BillingUsageExample[]
+  billingUnit?: TaskPricingUnit
   onBillingExprChange: (next: string) => void
   onRequestRuleExprChange: (next: string) => void
+  onBillingUnitChange?: (next: TaskPricingUnit) => void
 }
 
 type EditorMode = 'visual' | 'raw'
@@ -154,13 +157,14 @@ function taskVideoBillingConfig(
   referenceCharge: boolean
 ) {
   const meters = getTaskNumberFields(schema).filter(
-    ([, definition]) =>
-      definition.unit === 'second' || definition.unit === 'token'
+    ([field, definition]) =>
+      definition.unit === 'second' ||
+      definition.unit === 'token' ||
+      (field === 'requests' && definition.unit === 'count')
   )
   const selectedSchema =
     schema.resolution &&
-    meters.some(([, definition]) => definition.unit === 'second') &&
-    meters.some(([, definition]) => definition.unit === 'token') &&
+    meters.length > 1 &&
     billingUnit !== 'mixed'
       ? Object.fromEntries(
           Object.entries(schema).filter(
@@ -412,14 +416,18 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   })
   const [confirmVisualSwitch, setConfirmVisualSwitch] = useState(false)
   const videoMeters = getTaskNumberFields(usageSchema).filter(
-    ([, definition]) =>
-      definition.unit === 'second' || definition.unit === 'token'
+    ([field, definition]) =>
+      definition.unit === 'second' ||
+      definition.unit === 'token' ||
+      (field === 'requests' && definition.unit === 'count')
   )
-  const hasVideoUnits =
-    Boolean(usageSchema.resolution) &&
-    videoMeters.some(([, definition]) => definition.unit === 'second') &&
-    videoMeters.some(([, definition]) => definition.unit === 'token')
+  const hasVideoUnits = Boolean(usageSchema.resolution) && videoMeters.length > 1
   const [billingUnit, setBillingUnit] = useState(() => {
+    const requestedField = videoMeters.find(([field, definition]) => {
+      if (props.billingUnit === 'request') return field === 'requests'
+      return definition.unit === props.billingUnit
+    })?.[0]
+    if (requestedField) return requestedField
     const priced = videoMeters.filter(([field]) =>
       matrixRows.some((row) => row.unitPrices[field] > 0)
     )
@@ -774,14 +782,24 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
                     const value = values[0]
                     if (!value || value === billingUnit) return
                     setBillingUnit(value)
+                    const definition = usageSchema[value]
+                    props.onBillingUnitChange?.(
+                      value === 'requests'
+                        ? 'request'
+                        : definition?.unit === 'token'
+                          ? 'token'
+                          : 'second'
+                    )
                     publishRows(matrixRows, usageSchema, value)
                   }}
                 >
                   {videoMeters.map(([field, definition]) => (
                     <ToggleGroupItem key={field} value={field}>
-                      {definition.unit === 'second'
-                        ? t('Per-second')
-                        : t('Per-token')}
+                      {field === 'requests'
+                        ? t('Per-request')
+                        : definition.unit === 'second'
+                          ? t('Per-second')
+                          : t('Per-token')}
                     </ToggleGroupItem>
                   ))}
                   {billingUnit === 'mixed' ? (

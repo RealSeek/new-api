@@ -59,13 +59,6 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -95,8 +88,12 @@ import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { parseImageResolutionPricing } from '@/features/pricing/lib/image-resolution-pricing'
 import { pluginExpressionsEqual } from '@/features/pricing/lib/plugin-pricing'
 import {
+  createDefaultTaskMatrixConfig,
   createDefaultTaskVisualConfig,
   generateTaskExprFromConfig,
+  taskMatrixToTiers,
+  taskPricingSchema,
+  tryParseTaskMatrixConfig,
 } from '@/features/pricing/lib/task-expr'
 import type {
   BillingUsageSchema,
@@ -166,6 +163,119 @@ export type ModelPricingEditorPanelHandle = {
 const numericDraftRegex = /^\d*(?:\.\d*)?$/
 
 const DEFAULT_TOKEN_BILLING_EXPR = 'tier("base", p * 0 + c * 0)'
+
+const MANUAL_VIDEO_RESOLUTIONS = ['480p', '720p', '1080p', '4k']
+
+function taskPricingUsageSchema(
+  unit: TaskPricingUnit,
+  provider?: BillingUsageSchema
+): BillingUsageSchema {
+  const schema: BillingUsageSchema = provider
+    ? Object.fromEntries(
+        Object.entries(provider).map(([field, definition]) => [
+          field,
+          {
+            ...definition,
+            enum: definition.enum ? [...definition.enum] : undefined,
+          },
+        ])
+      )
+    : {
+        resolution: {
+          enum: MANUAL_VIDEO_RESOLUTIONS,
+          allowCustomValues: true,
+          description: {
+            en: 'Output video resolution',
+            zh: '输出视频分辨率',
+          },
+        },
+        seconds: {
+          type: 'number',
+          unit: 'second',
+          description: {
+            en: 'Video generation unit price',
+            zh: '视频生成单价',
+          },
+        },
+        video_input: {
+          type: 'boolean',
+          description: {
+            en: 'Reference video present',
+            zh: '存在参考视频',
+          },
+        },
+      }
+  schema.requests = {
+    type: 'number',
+    unit: 'count',
+    unitLabel: { en: 'request', zh: '次' },
+    description: {
+      en: 'Video generation unit price',
+      zh: '视频生成单价',
+    },
+  }
+  if (!provider && unit === 'token') {
+    schema.tokens = {
+      type: 'number',
+      unit: 'token',
+      description: {
+        en: 'Video generation token unit price',
+        zh: '视频生成 Token 单价',
+      },
+    }
+  }
+  return schema
+}
+
+function taskPricingField(unit: TaskPricingUnit) {
+  if (unit === 'request') return 'requests'
+  if (unit === 'second') return 'seconds'
+  return 'tokens'
+}
+
+function taskPricingExpression(
+  unit: TaskPricingUnit,
+  schema: BillingUsageSchema,
+  source?: ModelRatioData | null,
+  currentExpression?: string
+) {
+  const restoredSchema = taskPricingSchema(schema, currentExpression ?? '')
+  const parsed = tryParseTaskMatrixConfig(currentExpression, restoredSchema)
+  const rows = (parsed ?? createDefaultTaskMatrixConfig(restoredSchema)).rows
+  const sourceField = parsed
+    ? Object.keys(rows[0]?.unitPrices ?? {}).find((field) =>
+        rows.some((row) => (row.unitPrices[field] ?? 0) > 0)
+      )
+    : undefined
+  const targetField = taskPricingField(unit)
+  const selectedSchema = Object.fromEntries(
+    Object.entries(restoredSchema).filter(
+      ([field, definition]) =>
+        definition.type !== 'number' || field === targetField
+    )
+  )
+  const nextRows = rows.map((row) => {
+    let price = sourceField ? (row.unitPrices[sourceField] ?? 0) : 0
+    if (!parsed && unit === 'request') {
+      price = Number(source?.price) || 0
+    }
+    if (!parsed && unit === 'second') {
+      const resolution = row.combination.resolution
+      price =
+        source?.videoPrice?.resolution_prices?.[resolution] ??
+        source?.videoPrice?.default_price ??
+        0
+    }
+    return {
+      ...row,
+      unitPrices: { [targetField]: price },
+    }
+  })
+  return generateTaskExprFromConfig(
+    { tiers: taskMatrixToTiers({ rows: nextRows }, selectedSchema) },
+    selectedSchema
+  )
+}
 
 export const ModelPricingSheet = forwardRef<
   ModelPricingEditorPanelHandle,
@@ -294,14 +404,13 @@ export const ModelPricingEditorPanel = forwardRef<
       editData.audioCompletionRatio,
     ].some(hasValue)
   let initialPricingMode: PricingMode = 'tiered_expr'
-  if (editData?.billingMode === 'per-second') {
+  if (editData?.taskPricingUnit) {
+    initialPricingMode = 'tiered_expr'
+  } else if (editData?.billingMode === 'per-second') {
     initialPricingMode = 'per-second'
   } else if (editData?.billingMode !== 'tiered_expr' && hasLegacyPricing) {
     initialPricingMode = hasValue(editData?.price) ? 'per-request' : 'per-token'
   }
-  const initialBillingExpr =
-    editData?.billingExpr ||
-    (initialPricingMode === 'tiered_expr' ? DEFAULT_TOKEN_BILLING_EXPR : '')
   const { models: pricingModels } = usePricingData()
 
   const form = useForm<ModelPricingFormValues>({
@@ -366,23 +475,45 @@ export const ModelPricingEditorPanel = forwardRef<
       ),
     [pricingModels]
   )
-  const taskUsageSchema =
+  const configuredTaskUsageSchema =
     usageSchema ??
     pluginVariants?.find((variant) => !variant.stale)?.usage_schema ??
     usageSchemaByModel.get(watchedValues.name.trim())
+  const taskUsageSchema = taskPricingUnit
+    ? taskPricingUsageSchema(taskPricingUnit, configuredTaskUsageSchema)
+    : configuredTaskUsageSchema
   const taskUsageExamples =
     usageExamplesByModel.get(watchedValues.name.trim()) ??
     pluginVariants?.find((variant) => !variant.stale)?.usage_examples
   const defaultTaskBillingExpr = useMemo(
-    () =>
-      taskUsageSchema
-        ? generateTaskExprFromConfig(
-            createDefaultTaskVisualConfig(taskUsageSchema),
-            taskUsageSchema
-          )
-        : '',
-    [taskUsageSchema]
+    () => {
+      if (!taskUsageSchema) return ''
+      if (taskPricingUnit) {
+        return taskPricingExpression(
+          taskPricingUnit,
+          taskUsageSchema,
+          editData,
+          billingExpr === DEFAULT_TOKEN_BILLING_EXPR ? '' : billingExpr
+        )
+      }
+      return generateTaskExprFromConfig(
+        createDefaultTaskVisualConfig(taskUsageSchema),
+        taskUsageSchema
+      )
+    },
+    [billingExpr, editData, taskPricingUnit, taskUsageSchema]
   )
+  const initialBillingExpr =
+    editData?.billingExpr ||
+    (editData?.taskPricingUnit && taskUsageSchema
+      ? taskPricingExpression(
+          editData.taskPricingUnit,
+          taskUsageSchema,
+          editData
+        )
+      : initialPricingMode === 'tiered_expr'
+        ? DEFAULT_TOKEN_BILLING_EXPR
+        : '')
   const resolvedBillingExpr =
     taskUsageSchema &&
     (!billingExpr || billingExpr === DEFAULT_TOKEN_BILLING_EXPR)
@@ -641,16 +772,44 @@ export const ModelPricingEditorPanel = forwardRef<
     setConversionReason('')
     const nextMode = value as PricingMode
     setPricingMode(nextMode)
-    if (taskPricingUnit) {
-      if (nextMode === 'tiered_expr') setTaskPricingUnit(null)
-      if (nextMode === 'per-token') setTaskPricingUnit('token')
-      if (nextMode === 'per-request') setTaskPricingUnit('request')
-      if (nextMode === 'per-second') setTaskPricingUnit('second')
-    }
     form.clearErrors('price')
     if (nextMode === 'tiered_expr' && !billingExpr) {
       setBillingExpr(defaultTaskBillingExpr || DEFAULT_TOKEN_BILLING_EXPR)
     }
+  }
+
+  const handleTaskPricingUnitChange = (unit: TaskPricingUnit) => {
+    const schema = taskPricingUsageSchema(unit, configuredTaskUsageSchema)
+    const source: ModelRatioData = {
+      ...watchedValues,
+      name: watchedValues.name.trim(),
+      price: watchedValues.price || '',
+      videoPrice: {
+        default_price: Number(videoDefaultPrice) || 0,
+        default_duration: Math.max(1, Number(videoDefaultDuration) || 5),
+        billing_step: Math.max(1, Number(videoBillingStep) || 1),
+        minimum_duration: Math.max(1, Number(videoMinimumDuration) || 1),
+        resolution_prices: Object.fromEntries(
+          videoResolutionPrices
+            .filter((row) => row.resolution.trim() && row.price)
+            .map((row) => [
+              row.resolution.trim().toLowerCase(),
+              Number(row.price),
+            ])
+        ),
+      },
+    }
+    const currentExpression =
+      pricingMode === 'tiered_expr' &&
+      billingExpr !== DEFAULT_TOKEN_BILLING_EXPR
+        ? billingExpr
+        : ''
+    setTaskPricingUnit(unit)
+    setPricingMode('tiered_expr')
+    setBillingExpr(
+      taskPricingExpression(unit, schema, source, currentExpression)
+    )
+    setEditorReloadToken((token) => token + 1)
   }
 
   const previewRows = useMemo<PreviewRow[]>(() => {
@@ -1084,8 +1243,12 @@ export const ModelPricingEditorPanel = forwardRef<
         requestRuleExpr={requestRuleExpr}
         usageSchema={taskUsageSchema}
         usageExamples={taskUsageExamples}
+        billingUnit={taskPricingUnit ?? undefined}
         onBillingExprChange={setBillingExpr}
         onRequestRuleExprChange={setRequestRuleExpr}
+        onBillingUnitChange={
+          taskPricingUnit ? setTaskPricingUnit : undefined
+        }
       />
     )
   } else if (imageResolutionPricing) {
@@ -1205,29 +1368,29 @@ export const ModelPricingEditorPanel = forwardRef<
                   }
                   currency={currency}
                 >
-                  {!taskUsageSchema && !imageResolutionPricing && (
-                    <div className='grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_180px] sm:items-end'>
+                  {(!configuredTaskUsageSchema || taskPricingUnit) &&
+                    !imageResolutionPricing && (
+                    <div className='rounded-lg border p-3'>
                       <div className='flex items-start gap-2'>
                         <Checkbox
                           id={taskPricingToggleId}
                           checked={taskPricingUnit !== null}
                           onCheckedChange={(checked) => {
                             if (checked !== true) {
+                              const previousUnit = taskPricingUnit
                               setTaskPricingUnit(null)
+                              setPricingMode(
+                                previousUnit === 'second'
+                                  ? 'per-second'
+                                  : 'per-request'
+                              )
                               return
                             }
-                            if (pricingMode === 'per-request') {
-                              setTaskPricingUnit('request')
-                              return
-                            }
-                            if (pricingMode === 'per-second') {
-                              setTaskPricingUnit('second')
-                              return
-                            }
-                            setTaskPricingUnit('token')
-                            if (pricingMode === 'tiered_expr') {
-                              handleModeChange('per-token')
-                            }
+                            handleTaskPricingUnitChange(
+                              pricingMode === 'per-second'
+                                ? 'second'
+                                : 'request'
+                            )
                           }}
                         />
                         <div className='grid gap-1'>
@@ -1239,39 +1402,11 @@ export const ModelPricingEditorPanel = forwardRef<
                           </label>
                         </div>
                       </div>
-                      {taskPricingUnit && (
-                        <Field>
-                          <FieldLabel>{t('Billing unit')}</FieldLabel>
-                          <Select
-                            value={taskPricingUnit}
-                            onValueChange={(value) => {
-                              const unit = value as TaskPricingUnit
-                              let nextMode: PricingMode = 'per-token'
-                              if (unit === 'request') nextMode = 'per-request'
-                              if (unit === 'second') nextMode = 'per-second'
-                              setTaskPricingUnit(unit)
-                              handleModeChange(nextMode)
-                            }}
-                          >
-                            <SelectTrigger aria-label={t('Billing unit')}>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value='token'>
-                                {t('Per-token')}
-                              </SelectItem>
-                              <SelectItem value='request'>
-                                {t('Per-request')}
-                              </SelectItem>
-                              <SelectItem value='second'>
-                                {t('Per-second')}
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                      )}
                     </div>
                   )}
+                  {taskPricingUnit ? (
+                    <FieldGroup className='gap-5'>{expressionEditor}</FieldGroup>
+                  ) : (
                   <Tabs
                     key={editorReloadToken}
                     value={pricingMode}
@@ -1691,6 +1826,7 @@ export const ModelPricingEditorPanel = forwardRef<
                       </FieldGroup>
                     </TabsContent>
                   </Tabs>
+                  )}
                 </TaskPluginPricingEditor>
               </FieldGroup>
 

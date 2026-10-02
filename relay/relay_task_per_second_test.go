@@ -206,3 +206,34 @@ func TestApplyTaskOtherRatiosKeepsVideoPriceForPerSecondModel(t *testing.T) {
 	assert.Nil(t, clamp)
 	assert.Equal(t, 2_500_000, quota)
 }
+
+func TestManualVideoTaskUsageFactsUseRequestDurationAndResolution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Duration: 6,
+		Size:     "1920x1080",
+		Metadata: map[string]any{"reference_videos": []any{"video"}},
+	})
+	info := &relaycommon.RelayInfo{}
+
+	requestFacts, err := manualVideoTaskUsageFacts(c, info, "request", "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, requestFacts["requests"])
+	assert.Equal(t, "1080p", requestFacts["resolution"])
+	assert.Equal(t, true, requestFacts["video_input"])
+
+	secondFacts, err := manualVideoTaskUsageFacts(c, info, "second", "720p")
+	require.NoError(t, err)
+	assert.EqualValues(t, 6, secondFacts["seconds"])
+	assert.Equal(t, "720p", secondFacts["resolution"])
+}
+
+func TestManualVideoTaskUsageFactsRequireDurationForPerSecondPricing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{})
+
+	_, err := manualVideoTaskUsageFacts(c, &relaycommon.RelayInfo{}, "second", "")
+	require.ErrorContains(t, err, "video duration is required")
+}

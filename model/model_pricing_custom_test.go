@@ -17,6 +17,11 @@ func TestCustomModelPricingPersistsAtomicallyAndRejectsInvalidPrices(t *testing.
 	require.NoError(t, validateOptionValue(billing_setting.TaskPricingOption, `{"video":"request"}`))
 	require.Error(t, validateOptionValue(billing_setting.TaskPricingOption, `{"video":"invalid"}`))
 	require.Error(t, validateOptionValue(billing_setting.TaskPricingOption, `null`))
+	require.NoError(t, validateModelPricing("video-expression", PricingValues{
+		"billing_setting.billing_mode":    billing_setting.BillingModeTieredExpr,
+		"billing_setting.billing_expr":    `u("resolution") == "720p" ? tier("720p", u("requests") * 1.5) : tier("base", u("requests") * 1)`,
+		billing_setting.TaskPricingOption: billing_setting.TaskPricingUnitRequest,
+	}, PricingValues{}))
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

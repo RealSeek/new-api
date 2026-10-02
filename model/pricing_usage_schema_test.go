@@ -56,7 +56,9 @@ func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testin
 	assert.Equal(t, "second", initialPricing["pricing-usage-model"].BillingUsageSchema["seconds"].Unit)
 	assert.Equal(t, "Estimated duration.", initialPricing["pricing-usage-model"].BillingUsageSchema["seconds"].Description["en"])
 	assert.Equal(t, "生成视频", initialPricing["pricing-usage-model"].BillingUsageSchema["action"].EnumLabels["video"]["zh"])
-	assert.Nil(t, initialPricing["ordinary-model"].BillingUsageSchema)
+	assert.Equal(t, "token", initialPricing["ordinary-model"].BillingUsageSchema["tokens"].Unit)
+	assert.Equal(t, "count", initialPricing["ordinary-model"].BillingUsageSchema["requests"].Unit)
+	assert.True(t, initialPricing["ordinary-model"].BillingUsageSchema["resolution"].AllowCustomValues)
 	assert.Equal(t, billing_setting.TaskPricingUnitToken, initialPricing["ordinary-model"].TaskPricingUnit)
 
 	updatedSource := pricingUsagePluginSource("1.1.0", `{

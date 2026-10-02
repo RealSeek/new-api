@@ -223,9 +223,10 @@ export function pricingRow(
 }
 
 export function pricingFromDraft(data: ModelRatioData): PricingValues {
+  const billingMode = data.taskPricingUnit ? 'tiered_expr' : data.billingMode
   let mode = 'ratio'
-  if (data.billingMode === 'per-second') mode = 'per_second'
-  else if (data.billingMode === 'tiered_expr') mode = 'tiered_expr'
+  if (billingMode === 'per-second') mode = 'per_second'
+  else if (billingMode === 'tiered_expr') mode = 'tiered_expr'
   const values: PricingValues = {
     ...(data.pluginBillingExpr === undefined
       ? {}
@@ -235,11 +236,18 @@ export function pricingFromDraft(data: ModelRatioData): PricingValues {
       : {}),
     'billing_setting.billing_mode': mode,
   }
-  if (data.billingMode === 'per-second') {
+  if (data.taskPricingUnit) {
+    values['billing_setting.billing_expr'] = combineBillingExpr(
+      data.billingExpr || '',
+      data.requestRuleExpr || ''
+    )
+    return values
+  }
+  if (billingMode === 'per-second') {
     if (data.videoPrice) values.VideoPrice = data.videoPrice
     return values
   }
-  if (data.billingMode === 'per-request' && data.imagePrice) {
+  if (billingMode === 'per-request' && data.imagePrice) {
     values.ImagePrice = data.imagePrice
   }
   for (const [field, key] of Object.entries(pricingFieldMap)) {
@@ -250,15 +258,15 @@ export function pricingFromDraft(data: ModelRatioData): PricingValues {
       throw new Error(t('Enter a finite, non-negative price'))
     }
     if (
-      data.billingMode === 'tiered_expr' ||
-      (data.billingMode === 'per-request'
+      billingMode === 'tiered_expr' ||
+      (billingMode === 'per-request'
         ? key === 'ModelPrice'
         : key !== 'ModelPrice')
     ) {
       values[key] = number
     }
   }
-  if (data.billingMode === 'tiered_expr') {
+  if (billingMode === 'tiered_expr') {
     values['billing_setting.billing_expr'] = combineBillingExpr(
       data.billingExpr || '',
       data.requestRuleExpr || ''

@@ -275,7 +275,11 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 		if plugin, usageModel, ok := ResolveTaskUsagePlugin(generation, name); ok {
 			entry.UsageSchema, _ = plugin.Meta.UsageForModel(usageModel)
 		}
+		if unit, ok := billing_setting.GetTaskPricingUnit(name); ok {
+			entry.UsageSchema = billing_setting.TaskPricingUsageSchema(unit, entry.UsageSchema)
+		}
 		plugins := generation.PluginsByModel(name)
+		taskUnit, taskPricing := billing_setting.GetTaskPricingUnit(name)
 		configuredVariants, _ := configured[billing_setting.PluginBillingExprOption].(map[string]any)
 		if len(plugins) >= 2 || len(configuredVariants) > 0 {
 			keys := make(map[string]bool, len(plugins)+len(configuredVariants))
@@ -303,6 +307,9 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 				schema, examples := plugin.Meta.UsageForModel(name)
 				if schema == nil {
 					schema = map[string]jsplugin.UsageFieldSchema{}
+				}
+				if taskPricing {
+					schema = billing_setting.TaskPricingUsageSchema(taskUnit, schema)
 				}
 				expression := configuredExpr
 				if !overridden && entry.Effective["billing_setting.billing_mode"] == billing_setting.BillingModeTieredExpr {
@@ -362,6 +369,7 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 		return errors.New("model name is required")
 	}
 	generation := jsplugin.DefaultRegistry.Generation()
+	taskUnit, taskPricing := values[billing_setting.TaskPricingOption].(string)
 	previousVariants, _ := previous[billing_setting.PluginBillingExprOption].(map[string]any)
 	variants := map[string]any{}
 	if value, exists := values[billing_setting.PluginBillingExprOption]; exists {
@@ -388,6 +396,9 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 				return fmt.Errorf("model %s: plugin %s does not declare this model", name, key)
 			}
 			schema, _ := plugin.Meta.UsageForModel(name)
+			if taskPricing {
+				schema = billing_setting.TaskPricingUsageSchema(taskUnit, schema)
+			}
 			if err := billing_setting.SmokeTestTaskExpr(expression, schema); err != nil {
 				return fmt.Errorf("model %s: plugin %s: %w", name, key, err)
 			}
@@ -451,6 +462,9 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 						continue
 					}
 					schema, _ := plugin.Meta.UsageForModel(name)
+					if taskPricing {
+						schema = billing_setting.TaskPricingUsageSchema(taskUnit, schema)
+					}
 					if err = billing_setting.SmokeTestTaskExpr(expression, schema); err != nil {
 						return fmt.Errorf("model %s: plugin %s: %w", name, plugin.Meta.Key, err)
 					}
@@ -458,8 +472,13 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 			} else if plugin, usageModel, ok := ResolveTaskUsagePlugin(generation, name); ok {
 				if !unchanged || generation.SharedModel(usageModel) {
 					schema, _ := plugin.Meta.UsageForModel(usageModel)
+					if taskPricing {
+						schema = billing_setting.TaskPricingUsageSchema(taskUnit, schema)
+					}
 					err = billing_setting.SmokeTestTaskExpr(expression, schema)
 				}
+			} else if taskPricing {
+				err = billing_setting.SmokeTestTaskExpr(expression, billing_setting.TaskPricingUsageSchema(taskUnit, nil))
 			} else if !unchanged || len(billingexpr.UsedUsageKeys(expression)) == 0 {
 				err = billing_setting.SmokeTestExpr(expression)
 			}
