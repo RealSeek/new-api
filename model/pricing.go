@@ -51,6 +51,7 @@ type Pricing struct {
 	BillingExpr              string                               `json:"billing_expr,omitempty"`
 	BillingUsageSchema       map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema,omitempty"`
 	BillingUsageExamples     []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
+	TaskPricingUnit          string                               `json:"task_pricing_unit,omitempty"`
 	PricingVersion           string                               `json:"pricing_version,omitempty"`
 	VideoPrice               *ratio_setting.VideoPriceConfig      `json:"video_price,omitempty"`
 	ImagePrice               ratio_setting.ImagePriceConfig       `json:"image_price,omitempty"`
@@ -522,6 +523,9 @@ func updatePricing() {
 			usageSchema, usageExamples := plugin.Meta.UsageForModel(usageModel)
 			pricing.BillingUsageSchema = jsplugin.CloneUsageSchema(usageSchema)
 			pricing.BillingUsageExamples = jsplugin.CloneUsageExamples(usageExamples)
+		}
+		if unit, ok := billing_setting.GetTaskPricingUnit(model); ok {
+			pricing.TaskPricingUnit = unit
 		}
 		providers := pluginGeneration.PluginsByModel(model)
 		hasProviderOverride := false

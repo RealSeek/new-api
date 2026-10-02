@@ -86,14 +86,18 @@ export function buildModelRatioColumns({
         <DataTableColumnHeader column={column} title={t('Model name')} />
       ),
       cell: ({ row }) => {
-        const isTaskModel = Boolean(taskModelNames?.has(row.original.name))
+        const isTaskModel =
+          Boolean(row.original.taskPricingUnit) ||
+          Boolean(taskModelNames?.has(row.original.name))
         const hasConfiguredTaskPricing =
-          row.original.billingMode === 'tiered_expr' &&
-          Boolean(row.original.billingExpr)
+          Boolean(row.original.taskPricingUnit) ||
+          (row.original.billingMode === 'tiered_expr' &&
+            Boolean(row.original.billingExpr))
         const showTaskPricingBadge = isTaskModel && hasConfiguredTaskPricing
         const showTieredBadge =
           row.original.billingMode === 'tiered_expr' && !isTaskModel
-        const showUnconfiguredTaskBadge = isTaskModel && !hasConfiguredTaskPricing
+        const showUnconfiguredTaskBadge =
+          isTaskModel && !hasConfiguredTaskPricing
 
         return (
           <div className='flex min-w-0 items-center gap-2 font-medium'>
@@ -151,13 +155,17 @@ export function buildModelRatioColumns({
       ),
       filterFn: (row, id, value) => {
         if (filterBySelectedValues(row.getValue(id), value)) return true
-        if (!Array.isArray(value) || !value.includes(TASK_PRICING_MODE_FILTER)) {
+        if (
+          !Array.isArray(value) ||
+          !value.includes(TASK_PRICING_MODE_FILTER)
+        ) {
           return false
         }
         return (
-          Boolean(taskModelNames?.has(row.original.name)) &&
-          row.original.billingMode === 'tiered_expr' &&
-          Boolean(row.original.billingExpr)
+          Boolean(row.original.taskPricingUnit) ||
+          (Boolean(taskModelNames?.has(row.original.name)) &&
+            row.original.billingMode === 'tiered_expr' &&
+            Boolean(row.original.billingExpr))
         )
       },
       meta: { label: t('Mode') },

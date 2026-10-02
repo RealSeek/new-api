@@ -67,6 +67,7 @@ var modelPricingOptionKeys = []string{
 	"AudioCompletionRatio", "AudioRatio", "CacheRatio", "CompletionRatio",
 	"CreateCacheRatio", "ImageRatio", "ModelPrice", "ModelRatio", "VideoPrice", "ImagePrice",
 	"billing_setting.billing_expr", "billing_setting.billing_mode", billing_setting.PluginBillingExprOption,
+	billing_setting.TaskPricingOption,
 }
 
 var modelPricingMutationMu sync.Mutex
@@ -402,6 +403,13 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 		if key == "billing_setting.billing_mode" {
 			if value != "ratio" && value != "tiered_expr" && value != billing_setting.BillingModePerSecond {
 				return errors.New("invalid billing mode")
+			}
+			continue
+		}
+		if key == billing_setting.TaskPricingOption {
+			unit, ok := value.(string)
+			if !ok || !billing_setting.ValidTaskPricingUnit(unit) {
+				return errors.New("invalid task pricing unit")
 			}
 			continue
 		}

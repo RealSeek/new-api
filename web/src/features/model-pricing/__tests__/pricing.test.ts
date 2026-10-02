@@ -61,6 +61,36 @@ describe('shared model pricing', () => {
     ).toHaveProperty('ModelPrice', 0)
   })
 
+  it('stores task classification without changing the selected billing mode', () => {
+    const request = pricingFromDraft({
+      name: 'video-request',
+      billingMode: 'per-request',
+      price: '1.5',
+      taskPricingUnit: 'request',
+    })
+    const token = pricingFromDraft({
+      name: 'video-token',
+      billingMode: 'per-token',
+      ratio: '37.5',
+      taskPricingUnit: 'token',
+    })
+
+    expect(request).toEqual({
+      ModelPrice: 1.5,
+      'billing_setting.billing_mode': 'ratio',
+      'billing_setting.task_pricing': 'request',
+    })
+    expect(token).toEqual({
+      ModelRatio: 37.5,
+      'billing_setting.billing_mode': 'ratio',
+      'billing_setting.task_pricing': 'token',
+    })
+    expect(pricingRow('video-request', request)).toMatchObject({
+      billingMode: 'per-request',
+      taskPricingUnit: 'request',
+    })
+  })
+
   it('keeps token and task expressions intact through both editing and sync', () => {
     for (const expression of [
       'len <= 200000 ? tier("short", p * 2 + cr * 0.2 + cc * 2.5) : tier("long", p * 4)',

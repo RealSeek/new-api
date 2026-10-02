@@ -32,6 +32,11 @@ export function parseTaskResult() { return {}; }
 
 func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testing.T) {
 	resetPricingEndpointTestTables(t)
+	savedConfig := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(savedConfig)) })
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.TaskPricingOption: `{"ordinary-model":"token"}`,
+	}))
 	const pluginKey = "pricing-usage-probe"
 	initialSource := pricingUsagePluginSource("1.0.0", `{
   seconds: {type: "number", unit: "second", description: "Estimated duration."},
@@ -52,6 +57,7 @@ func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testin
 	assert.Equal(t, "Estimated duration.", initialPricing["pricing-usage-model"].BillingUsageSchema["seconds"].Description["en"])
 	assert.Equal(t, "生成视频", initialPricing["pricing-usage-model"].BillingUsageSchema["action"].EnumLabels["video"]["zh"])
 	assert.Nil(t, initialPricing["ordinary-model"].BillingUsageSchema)
+	assert.Equal(t, billing_setting.TaskPricingUnitToken, initialPricing["ordinary-model"].TaskPricingUnit)
 
 	updatedSource := pricingUsagePluginSource("1.1.0", `{
   seconds: {type: "number", unit: "second", description: "Measured duration."},

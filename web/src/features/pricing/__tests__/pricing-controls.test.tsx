@@ -91,7 +91,7 @@ describe('pricing controls', () => {
         vendor_name: 'Vendor B',
         tags: 'Video',
         supported_endpoint_types: ['openai-video'],
-        billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+        task_pricing_unit: 'token',
       },
     ]
     const sidebarProps = {

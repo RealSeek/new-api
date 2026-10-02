@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/model_alias_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -243,6 +245,21 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "ModelAliases" {
 		return model_alias_setting.ValidateModelAliasesJSONString(value)
+	}
+	if key == billing_setting.TaskPricingOption {
+		var units map[string]string
+		if err := common.UnmarshalJsonStr(value, &units); err != nil {
+			return err
+		}
+		if units == nil {
+			return fmt.Errorf("%s must be a JSON object", key)
+		}
+		for model, unit := range units {
+			if strings.TrimSpace(model) == "" || !billing_setting.ValidTaskPricingUnit(unit) {
+				return fmt.Errorf("invalid task pricing configuration for %q", model)
+			}
+		}
+		return nil
 	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly

@@ -59,6 +59,13 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -91,7 +98,10 @@ import {
   createDefaultTaskVisualConfig,
   generateTaskExprFromConfig,
 } from '@/features/pricing/lib/task-expr'
-import type { BillingUsageSchema } from '@/features/pricing/types'
+import type {
+  BillingUsageSchema,
+  TaskPricingUnit,
+} from '@/features/pricing/types'
 import { useDebounce } from '@/hooks/use-debounce'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
@@ -221,6 +231,7 @@ export const ModelPricingEditorPanel = forwardRef<
 ) {
   const { t } = useTranslation()
   const promptPriceId = useId()
+  const taskPricingToggleId = useId()
   const formElementRef = useRef<HTMLFormElement>(null)
   const currencyConfig = useSystemConfigStore((state) => state.config.currency)
   const preference = usePricingPreferencesStore((state) => state.currency)
@@ -233,6 +244,8 @@ export const ModelPricingEditorPanel = forwardRef<
       ? siteCurrency
       : USD_PRICING_CURRENCY
   const [pricingMode, setPricingMode] = useState<PricingMode>('tiered_expr')
+  const [taskPricingUnit, setTaskPricingUnit] =
+    useState<TaskPricingUnit | null>(null)
   const [promptPrice, setPromptPrice] = useState('')
   const [lanePrices, setLanePrices] = useState<Record<LaneKey, string>>({
     ...EMPTY_LANE_PRICES,
@@ -401,6 +414,7 @@ export const ModelPricingEditorPanel = forwardRef<
         audioCompletionRatio: editData.audioCompletionRatio || '',
       })
       setPricingMode(initialPricingMode)
+      setTaskPricingUnit(editData.taskPricingUnit ?? null)
       setBillingExpr(initialBillingExpr)
       setRequestRuleExpr(editData.requestRuleExpr || '')
       const videoPrice = editData.videoPrice
@@ -437,6 +451,7 @@ export const ModelPricingEditorPanel = forwardRef<
         audioCompletionRatio: '',
       })
       setPricingMode('tiered_expr')
+      setTaskPricingUnit(null)
       setBillingExpr(DEFAULT_TOKEN_BILLING_EXPR)
       setRequestRuleExpr('')
       setVideoDefaultPrice('')
@@ -492,6 +507,7 @@ export const ModelPricingEditorPanel = forwardRef<
       form.formState.isDirty ||
         videoPricingChanged ||
         pricingMode !== initialPricingMode ||
+        taskPricingUnit !== (editData?.taskPricingUnit ?? null) ||
         billingExpr !== initialBillingExpr ||
         requestRuleExpr !== (editData?.requestRuleExpr ?? '') ||
         !pluginExpressionsEqual(pluginExpressions, editData?.pluginBillingExpr)
@@ -500,6 +516,7 @@ export const ModelPricingEditorPanel = forwardRef<
     onDirtyChange,
     form.formState.isDirty,
     pricingMode,
+    taskPricingUnit,
     billingExpr,
     requestRuleExpr,
     editData,
@@ -624,6 +641,12 @@ export const ModelPricingEditorPanel = forwardRef<
     setConversionReason('')
     const nextMode = value as PricingMode
     setPricingMode(nextMode)
+    if (taskPricingUnit) {
+      if (nextMode === 'tiered_expr') setTaskPricingUnit(null)
+      if (nextMode === 'per-token') setTaskPricingUnit('token')
+      if (nextMode === 'per-request') setTaskPricingUnit('request')
+      if (nextMode === 'per-second') setTaskPricingUnit('second')
+    }
     form.clearErrors('price')
     if (nextMode === 'tiered_expr' && !billingExpr) {
       setBillingExpr(defaultTaskBillingExpr || DEFAULT_TOKEN_BILLING_EXPR)
@@ -887,6 +910,7 @@ export const ModelPricingEditorPanel = forwardRef<
           ? { pluginBillingExpr: pluginExpressions }
           : {}),
         billingMode: pricingMode,
+        ...(taskPricingUnit ? { taskPricingUnit } : {}),
         price: values.price || '',
         ratio: values.ratio || '',
         cacheRatio: values.cacheRatio || '',
@@ -940,6 +964,7 @@ export const ModelPricingEditorPanel = forwardRef<
     },
     [
       pricingMode,
+      taskPricingUnit,
       requestRuleExpr,
       resolvedBillingExpr,
       pluginExpressions,
@@ -1180,6 +1205,73 @@ export const ModelPricingEditorPanel = forwardRef<
                   }
                   currency={currency}
                 >
+                  {!taskUsageSchema && !imageResolutionPricing && (
+                    <div className='grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_180px] sm:items-end'>
+                      <div className='flex items-start gap-2'>
+                        <Checkbox
+                          id={taskPricingToggleId}
+                          checked={taskPricingUnit !== null}
+                          onCheckedChange={(checked) => {
+                            if (checked !== true) {
+                              setTaskPricingUnit(null)
+                              return
+                            }
+                            if (pricingMode === 'per-request') {
+                              setTaskPricingUnit('request')
+                              return
+                            }
+                            if (pricingMode === 'per-second') {
+                              setTaskPricingUnit('second')
+                              return
+                            }
+                            setTaskPricingUnit('token')
+                            if (pricingMode === 'tiered_expr') {
+                              handleModeChange('per-token')
+                            }
+                          }}
+                        />
+                        <div className='grid gap-1'>
+                          <label
+                            htmlFor={taskPricingToggleId}
+                            className='text-sm font-medium'
+                          >
+                            {t('Task billing')}
+                          </label>
+                        </div>
+                      </div>
+                      {taskPricingUnit && (
+                        <Field>
+                          <FieldLabel>{t('Billing unit')}</FieldLabel>
+                          <Select
+                            value={taskPricingUnit}
+                            onValueChange={(value) => {
+                              const unit = value as TaskPricingUnit
+                              let nextMode: PricingMode = 'per-token'
+                              if (unit === 'request') nextMode = 'per-request'
+                              if (unit === 'second') nextMode = 'per-second'
+                              setTaskPricingUnit(unit)
+                              handleModeChange(nextMode)
+                            }}
+                          >
+                            <SelectTrigger aria-label={t('Billing unit')}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='token'>
+                                {t('Per-token')}
+                              </SelectItem>
+                              <SelectItem value='request'>
+                                {t('Per-request')}
+                              </SelectItem>
+                              <SelectItem value='second'>
+                                {t('Per-second')}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                      )}
+                    </div>
+                  )}
                   <Tabs
                     key={editorReloadToken}
                     value={pricingMode}

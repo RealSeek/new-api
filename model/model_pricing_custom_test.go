@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/glebarez/sqlite"
@@ -13,6 +14,10 @@ import (
 )
 
 func TestCustomModelPricingPersistsAtomicallyAndRejectsInvalidPrices(t *testing.T) {
+	require.NoError(t, validateOptionValue(billing_setting.TaskPricingOption, `{"video":"request"}`))
+	require.Error(t, validateOptionValue(billing_setting.TaskPricingOption, `{"video":"invalid"}`))
+	require.Error(t, validateOptionValue(billing_setting.TaskPricingOption, `null`))
+
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&Option{}))
@@ -45,8 +50,8 @@ func TestCustomModelPricingPersistsAtomicallyAndRejectsInvalidPrices(t *testing.
 	require.NoError(t, common.UnmarshalJsonStr(`{"1k":0.05,"2k":0.1,"4k":0.2}`, &image))
 	empty := ModelPricingVersion(PricingValues{})
 	require.NoError(t, UpdateModelPricing([]ModelPricingChange{
-		{ModelName: "custom-video", ExpectedVersion: empty, Pricing: PricingValues{"VideoPrice": video, "billing_setting.billing_mode": "per_second"}},
-		{ModelName: "custom-image", ExpectedVersion: empty, Pricing: PricingValues{"ImagePrice": image, "ModelPrice": 0.05}},
+		{ModelName: "custom-video", ExpectedVersion: empty, Pricing: PricingValues{"VideoPrice": video, "billing_setting.billing_mode": "per_second", billing_setting.TaskPricingOption: billing_setting.TaskPricingUnitSecond}},
+		{ModelName: "custom-image", ExpectedVersion: empty, Pricing: PricingValues{"ImagePrice": image, "ModelPrice": 0.05, billing_setting.TaskPricingOption: billing_setting.TaskPricingUnitRequest}},
 	}))
 	snapshot, err := GetModelPricingSnapshot([]string{"custom-video", "custom-image"})
 	require.NoError(t, err)
@@ -56,6 +61,11 @@ func TestCustomModelPricingPersistsAtomicallyAndRejectsInvalidPrices(t *testing.
 	}
 	assert.Equal(t, video, entries["custom-video"].Configured["VideoPrice"])
 	assert.Equal(t, image, entries["custom-image"].Configured["ImagePrice"])
+	assert.Equal(t, billing_setting.TaskPricingUnitSecond, entries["custom-video"].Configured[billing_setting.TaskPricingOption])
+	assert.Equal(t, billing_setting.TaskPricingUnitRequest, entries["custom-image"].Configured[billing_setting.TaskPricingOption])
+	assert.Error(t, UpdateModelPricing([]ModelPricingChange{
+		{ModelName: "custom-image", ExpectedVersion: entries["custom-image"].Version, Pricing: PricingValues{billing_setting.TaskPricingOption: "invalid"}},
+	}))
 	assert.Error(t, UpdateModelPricing([]ModelPricingChange{
 		{ModelName: "custom-image", ExpectedVersion: entries["custom-image"].Version, Pricing: PricingValues{"ImagePrice": map[string]any{"1k": -1.0}}},
 	}))
@@ -70,6 +80,7 @@ func TestCustomModelPricingPersistsAtomicallyAndRejectsInvalidPrices(t *testing.
 	for _, entry := range snapshot.Entries {
 		if entry.ModelName == "custom-video" {
 			assert.NotContains(t, entry.Configured, "VideoPrice")
+			assert.NotContains(t, entry.Configured, billing_setting.TaskPricingOption)
 		}
 		if entry.ModelName == "custom-image" {
 			assert.Equal(t, image, entry.Configured["ImagePrice"])

@@ -24,7 +24,7 @@ import {
   ENDPOINT_TYPES,
 } from '../constants'
 import type { PricingModel } from '../types'
-import { hasTaskUsageSchema } from './dynamic-price'
+import { isTaskPricingCategory } from './dynamic-price'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -81,7 +81,7 @@ export function filterByQuotaType(
   if (quotaType === QUOTA_TYPES.ALL) return models
   // Task-usage models form their own bucket, disjoint from token/request.
   if (quotaType === QUOTA_TYPES.TASK) {
-    return models.filter((m) => hasTaskUsageSchema(m))
+    return models.filter((m) => isTaskPricingCategory(m))
   }
   if (quotaType === QUOTA_TYPES.SECOND) {
     return models.filter((m) => m.quota_type === QUOTA_TYPE_VALUES.SECOND)
@@ -91,7 +91,7 @@ export function filterByQuotaType(
       ? QUOTA_TYPE_VALUES.TOKEN
       : QUOTA_TYPE_VALUES.REQUEST
   return models.filter(
-    (m) => m.quota_type === targetType && !hasTaskUsageSchema(m)
+    (m) => m.quota_type === targetType && !isTaskPricingCategory(m)
   )
 }
 

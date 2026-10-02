@@ -290,6 +290,7 @@ function PricingFormFixture(props: {
     BillingMode: '{}',
     BillingExpr: '{}',
     PluginBillingExpr: '{}',
+    TaskPricing: '{}',
     ExposeRatioEnabled: false,
   }
   const [actionsContainer, setActionsContainer] =
@@ -380,6 +381,7 @@ it.each(['default', 'unset'] as const)(
     }
     await user.click(await screen.findByRole('button', { name: 'Edit' }))
     await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Task billing' }))
     const price = screen.getByRole('textbox', { name: 'Fixed price' })
     await user.clear(price)
     await user.type(price, '0.25')
@@ -390,7 +392,10 @@ it.each(['default', 'unset'] as const)(
     await user.click(button)
     await waitFor(() => expect(save).toHaveBeenCalledOnce())
     expect(save).toHaveBeenCalledWith(
-      expect.objectContaining({ ExposeRatioEnabled: variant === 'default' }),
+      expect.objectContaining({
+        ExposeRatioEnabled: variant === 'default',
+        TaskPricing: '{"example-model":"request"}',
+      }),
       undefined
     )
   }

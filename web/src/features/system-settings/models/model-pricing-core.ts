@@ -30,6 +30,7 @@ import type {
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { formatBillingCondition } from '@/features/pricing/lib/billing-expression/condition-display'
 import { parseImageResolutionPricing } from '@/features/pricing/lib/image-resolution-pricing'
+import type { TaskPricingUnit } from '@/features/pricing/types'
 
 import { formatPricingNumber } from './pricing-format'
 
@@ -110,6 +111,7 @@ export type ModelRatioData = {
   requestRuleExpr?: string
   videoPrice?: VideoPriceConfig
   imagePrice?: ImagePriceConfig
+  taskPricingUnit?: TaskPricingUnit
 }
 
 export type PreviewRow = {

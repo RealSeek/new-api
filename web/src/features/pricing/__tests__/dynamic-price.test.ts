@@ -29,6 +29,7 @@ import {
   getDynamicPricingTiers,
   getTaskUsagePriceUnitLabelKey,
   hasTaskUsageSchema,
+  isTaskPricingCategory,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
@@ -410,6 +411,19 @@ describe('task dynamic pricing', () => {
     assert.equal(hasTaskUsageSchema(model), false)
     assert.equal(isUnconfiguredTaskUsageModel(model), false)
     assert.equal(getBillingModeLabelKey(model), 'Token-based')
+  })
+
+  test('classifies manually selected token and request models as task billing', () => {
+    const tokenModel = pricingModel({ task_pricing_unit: 'token' })
+    const requestModel = pricingModel({
+      quota_type: 1,
+      task_pricing_unit: 'request',
+    })
+
+    assert.equal(isTaskPricingCategory(tokenModel), true)
+    assert.equal(isTaskPricingCategory(requestModel), true)
+    assert.equal(getBillingModeLabelKey(tokenModel), 'Task billing')
+    assert.equal(getBillingModeLabelKey(requestModel), 'Task billing')
   })
 
   test('preserves all billing-mode badge states', () => {

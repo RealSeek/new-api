@@ -20,7 +20,7 @@ import { t } from 'i18next'
 
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { splitPluginBillingExprKey } from '@/features/pricing/lib/plugin-pricing'
-import type { PricingModel } from '@/features/pricing/types'
+import type { PricingModel, TaskPricingUnit } from '@/features/pricing/types'
 import type {
   ModelRatioData,
   VideoPriceConfig,
@@ -47,13 +47,17 @@ export const PRICING_KEYS = [
   'billing_setting.billing_mode',
   'billing_setting.billing_expr',
   'billing_setting.plugin_billing_expr',
+  'billing_setting.task_pricing',
 ] as const
 export type PricingKey = (typeof PRICING_KEYS)[number]
 export type PricingValues = Partial<
   Record<
     Exclude<
       PricingKey,
-      'billing_setting.plugin_billing_expr' | 'VideoPrice' | 'ImagePrice'
+      | 'billing_setting.plugin_billing_expr'
+      | 'billing_setting.task_pricing'
+      | 'VideoPrice'
+      | 'ImagePrice'
     >,
     number | string
   >
@@ -61,6 +65,7 @@ export type PricingValues = Partial<
   VideoPrice?: VideoPriceConfig
   ImagePrice?: ImagePriceConfig
   'billing_setting.plugin_billing_expr'?: Record<string, string>
+  'billing_setting.task_pricing'?: TaskPricingUnit
 }
 export type PricingOptions = Record<PricingKey, string>
 
@@ -124,6 +129,7 @@ export function modelPricingDisplay(
         ? values['billing_setting.billing_expr']
         : undefined,
     billing_usage_schema: entry.usage_schema,
+    task_pricing_unit: values['billing_setting.task_pricing'],
     video_price: values.VideoPrice,
     image_price: values.ImagePrice,
   }
@@ -169,6 +175,7 @@ export function pricingRows(options: PricingOptions): ModelPricingSnapshot[] {
     billingMode: options['billing_setting.billing_mode'],
     billingExpr: options['billing_setting.billing_expr'],
     pluginBillingExpr: options['billing_setting.plugin_billing_expr'],
+    taskPricing: options['billing_setting.task_pricing'],
     videoPrice: options.VideoPrice,
     imagePrice: options.ImagePrice,
   })
@@ -211,6 +218,7 @@ export function pricingRow(
     name,
     billingMode,
     pluginBillingExpr: values['billing_setting.plugin_billing_expr'],
+    taskPricingUnit: values['billing_setting.task_pricing'],
   }
 }
 
@@ -222,6 +230,9 @@ export function pricingFromDraft(data: ModelRatioData): PricingValues {
     ...(data.pluginBillingExpr === undefined
       ? {}
       : { 'billing_setting.plugin_billing_expr': data.pluginBillingExpr }),
+    ...(data.taskPricingUnit
+      ? { 'billing_setting.task_pricing': data.taskPricingUnit }
+      : {}),
     'billing_setting.billing_mode': mode,
   }
   if (data.billingMode === 'per-second') {
@@ -345,6 +356,15 @@ export function pricingValuesByModel(
         models.set(modelName, model)
         continue
       }
+      if (key === 'billing_setting.task_pricing') {
+        if (value !== 'token' && value !== 'request' && value !== 'second') {
+          throw new Error(t('Invalid pricing value'))
+        }
+        const model = models.get(name) ?? {}
+        model[key] = value
+        models.set(name, model)
+        continue
+      }
       const model = models.get(name) ?? {}
       model[key] = value
       models.set(name, model)
@@ -379,6 +399,7 @@ export function applyPriceSyncSelections(
         if (
           PRICING_KEYS.includes(key) &&
           key !== 'billing_setting.plugin_billing_expr' &&
+          key !== 'billing_setting.task_pricing' &&
           key !== 'VideoPrice' &&
           key !== 'ImagePrice'
         ) {

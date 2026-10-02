@@ -30,6 +30,7 @@ export type PricingVendor = {
 }
 
 export type BillingUsageUnit = 'second' | 'count' | 'token' | 'credit'
+export type TaskPricingUnit = 'token' | 'request' | 'second'
 
 export type BillingUsageFieldSchema = {
   type?: 'number' | 'boolean'
@@ -111,6 +112,8 @@ export type PricingModel = {
   billing_usage_schema?: BillingUsageSchema
   /** Display-only labeled usage vectors for pricing examples. */
   billing_usage_examples?: BillingUsageExample[]
+  /** Administrator-selected task category for ordinary pricing modes. */
+  task_pricing_unit?: TaskPricingUnit
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**

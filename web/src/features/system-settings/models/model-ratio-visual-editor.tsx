@@ -93,6 +93,7 @@ type ModelRatioVisualEditorProps = {
   savedBillingMode: string
   savedBillingExpr: string
   savedPluginBillingExpr?: string
+  savedTaskPricing?: string
   modelPrice: string
   videoPrice: string
   imagePrice: string
@@ -107,6 +108,7 @@ type ModelRatioVisualEditorProps = {
   billingMode: string
   billingExpr: string
   pluginBillingExpr?: string
+  taskPricing?: string
   candidateModelNames?: string[]
   candidateModelsLoading?: boolean
   filterMode?: 'all' | 'unset'
@@ -139,6 +141,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedBillingMode,
     savedBillingExpr,
     savedPluginBillingExpr = '{}',
+    savedTaskPricing = '{}',
     modelPrice,
     videoPrice,
     imagePrice,
@@ -153,6 +156,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     billingMode,
     billingExpr,
     pluginBillingExpr = '{}',
+    taskPricing = '{}',
     candidateModelNames,
     candidateModelsLoading,
     filterMode = 'all',
@@ -257,6 +261,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode: savedBillingMode,
       billingExpr: savedBillingExpr,
       pluginBillingExpr: savedPluginBillingExpr,
+      taskPricing: savedTaskPricing,
     })
     const draftRows = buildModelSnapshots({
       modelPrice,
@@ -272,6 +277,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       pluginBillingExpr,
+      taskPricing,
     })
 
     const savedByName = new Map(savedRows.map((row) => [row.name, row]))
@@ -318,6 +324,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedBillingMode,
     savedBillingExpr,
     savedPluginBillingExpr,
+    savedTaskPricing,
     modelPrice,
     videoPrice,
     imagePrice,
@@ -331,6 +338,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     billingMode,
     billingExpr,
     pluginBillingExpr,
+    taskPricing,
   ])
 
   const modeCounts = useMemo(() => {
@@ -350,9 +358,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
           : 'per-token'
       counts[mode] += 1
       if (
-        taskModelNames.has(model.name) &&
-        model.billingMode === 'tiered_expr' &&
-        Boolean(model.billingExpr)
+        model.taskPricingUnit ||
+        (taskModelNames.has(model.name) &&
+          model.billingMode === 'tiered_expr' &&
+          Boolean(model.billingExpr))
       ) {
         counts[TASK_PRICING_MODE_FILTER] += 1
       }
@@ -387,6 +396,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         requestRuleExpr: editableModel.requestRuleExpr,
         videoPrice: editableModel.videoPrice,
         imagePrice: editableModel.imagePrice,
+        taskPricingUnit: editableModel.taskPricingUnit,
       })
       setEditorOpen(true)
       if (isMobile) setSheetOpen(true)
@@ -465,6 +475,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         imagePrice,
         { fallback: {}, silent: true }
       )
+      const taskPricingMap = safeJsonParse<Record<string, string>>(
+        taskPricing,
+        { fallback: {}, silent: true }
+      )
 
       delete priceMap[name]
       delete ratioMap[name]
@@ -478,6 +492,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       delete billingExprMap[name]
       delete videoPriceMap[name]
       delete imagePriceMap[name]
+      delete taskPricingMap[name]
       const pluginExprMap = safeJsonParse<Record<string, string>>(
         pluginBillingExpr,
         { fallback: {} }
@@ -513,6 +528,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
       )
       onChange('VideoPrice', JSON.stringify(videoPriceMap, null, 2))
       onChange('ImagePrice', JSON.stringify(imagePriceMap, null, 2))
+      onChange(
+        'billing_setting.task_pricing',
+        JSON.stringify(taskPricingMap, null, 2)
+      )
 
       if (editingModelNameRef.current === name) {
         setEditData(null)
@@ -534,6 +553,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       videoPrice,
       imagePrice,
       pluginBillingExpr,
+      taskPricing,
       onChange,
     ]
   )
@@ -624,6 +644,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         BillingMode: billingMode,
         BillingExpr: billingExpr,
         PluginBillingExpr: pluginBillingExpr,
+        'billing_setting.task_pricing': taskPricing,
       })
       const updated = applyPricingDraft(options, data, targetNames)
       for (const [key, value] of Object.entries(updated)) onChange(key, value)
@@ -642,6 +663,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       videoPrice,
       imagePrice,
       pluginBillingExpr,
+      taskPricing,
       onChange,
     ]
   )
@@ -926,6 +948,7 @@ export const ModelRatioVisualEditor = memo(
       prevProps.savedBillingMode === nextProps.savedBillingMode &&
       prevProps.savedBillingExpr === nextProps.savedBillingExpr &&
       prevProps.savedPluginBillingExpr === nextProps.savedPluginBillingExpr &&
+      prevProps.savedTaskPricing === nextProps.savedTaskPricing &&
       prevProps.modelPrice === nextProps.modelPrice &&
       prevProps.videoPrice === nextProps.videoPrice &&
       prevProps.imagePrice === nextProps.imagePrice &&
@@ -940,6 +963,7 @@ export const ModelRatioVisualEditor = memo(
       prevProps.billingMode === nextProps.billingMode &&
       prevProps.billingExpr === nextProps.billingExpr &&
       prevProps.pluginBillingExpr === nextProps.pluginBillingExpr &&
+      prevProps.taskPricing === nextProps.taskPricing &&
       prevProps.candidateModelNames === nextProps.candidateModelNames &&
       prevProps.candidateModelsLoading === nextProps.candidateModelsLoading &&
       prevProps.filterMode === nextProps.filterMode &&

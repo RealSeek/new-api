@@ -23,23 +23,29 @@ const (
 	BillingModeField        = "billing_mode"
 	BillingExprField        = "billing_expr"
 	PluginBillingExprOption = "billing_setting.plugin_billing_expr"
+	TaskPricingOption       = "billing_setting.task_pricing"
 	maxTaskExprSmokeTests   = 64
 	BillingModePerSecond    = "per_second"
+	TaskPricingUnitToken    = "token"
+	TaskPricingUnitRequest  = "request"
+	TaskPricingUnitSecond   = "second"
 )
 
 // BillingSetting is managed by config.GlobalConfig.Register.
 // DB keys: billing_setting.billing_mode, billing_setting.billing_expr,
-// billing_setting.plugin_billing_expr
+// billing_setting.plugin_billing_expr, billing_setting.task_pricing
 type BillingSetting struct {
 	BillingMode       map[string]string `json:"billing_mode"`
 	BillingExpr       map[string]string `json:"billing_expr"`
 	PluginBillingExpr map[string]string `json:"plugin_billing_expr"`
+	TaskPricing       map[string]string `json:"task_pricing"`
 }
 
 var billingSetting = BillingSetting{
 	BillingMode:       make(map[string]string),
 	BillingExpr:       make(map[string]string),
 	PluginBillingExpr: make(map[string]string),
+	TaskPricing:       make(map[string]string),
 }
 
 func init() {
@@ -98,6 +104,15 @@ func SplitPluginBillingExprKey(key string) (plugin, model string, ok bool) {
 
 func GetPluginBillingExprCopy() map[string]string {
 	return maps.Clone(billingSetting.PluginBillingExpr)
+}
+
+func ValidTaskPricingUnit(unit string) bool {
+	return unit == TaskPricingUnitToken || unit == TaskPricingUnitRequest || unit == TaskPricingUnitSecond
+}
+
+func GetTaskPricingUnit(model string) (string, bool) {
+	unit, ok := billingSetting.TaskPricing[model]
+	return unit, ok && ValidTaskPricingUnit(unit)
 }
 
 func GetPluginBillingExpr(pluginKey, model string) (string, bool) {

@@ -36,6 +36,7 @@ import {
   type ParsedTier,
 } from './billing-expr'
 import { compileBillingExpression } from './billing-expression/parser'
+import { parseImageResolutionPricing } from './image-resolution-pricing'
 import { getDisplayGroupRatio } from './model-helpers'
 import { withPluginPricing } from './plugin-pricing'
 import {
@@ -152,6 +153,14 @@ export function isDynamicPricingModel(model: PricingModel): boolean {
 
 export function hasTaskUsageSchema(model: PricingModel): boolean {
   return Object.keys(model.billing_usage_schema ?? {}).length > 0
+}
+
+export function isTaskPricingCategory(model: PricingModel): boolean {
+  return (
+    hasTaskUsageSchema(model) ||
+    Boolean(model.task_pricing_unit) ||
+    Boolean(parseImageResolutionPricing(model.billing_expr))
+  )
 }
 
 export function isTaskUsagePricingModel(model: PricingModel): boolean {

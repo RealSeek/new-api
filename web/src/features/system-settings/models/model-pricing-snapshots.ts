@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { splitBillingExprAndRequestRules } from '@/features/pricing/lib/billing-expr'
 import { splitPluginBillingExprKey } from '@/features/pricing/lib/plugin-pricing'
+import type { TaskPricingUnit } from '@/features/pricing/types'
 
 import { safeJsonParse } from '../utils/json-parser'
 import {
@@ -41,6 +42,7 @@ export type ModelPricingSnapshotInput = {
   videoPrice: string
   imagePrice: string
   pluginBillingExpr?: string
+  taskPricing?: string
 }
 
 export type ModelPricingSnapshot = {
@@ -59,6 +61,7 @@ export type ModelPricingSnapshot = {
   requestRuleExpr?: string
   videoPrice?: VideoPriceConfig
   imagePrice?: ImagePriceConfig
+  taskPricingUnit?: TaskPricingUnit
   hasConflict: boolean
 }
 
@@ -209,6 +212,7 @@ export const buildModelSnapshots = ({
   videoPrice,
   imagePrice,
   pluginBillingExpr = '{}',
+  taskPricing = '{}',
 }: ModelPricingSnapshotInput): ModelPricingSnapshot[] => {
   const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
     fallback: {},
@@ -250,6 +254,13 @@ export const buildModelSnapshots = ({
     fallback: {},
     context: 'billing expression',
   })
+  const taskPricingMap = safeJsonParse<Record<string, TaskPricingUnit>>(
+    taskPricing,
+    {
+      fallback: {},
+      context: 'task pricing',
+    }
+  )
   const videoPriceMap = safeJsonParse<Record<string, VideoPriceConfig>>(
     videoPrice,
     {
@@ -293,6 +304,7 @@ export const buildModelSnapshots = ({
     ...Object.keys(billingExprMap),
     ...Object.keys(videoPriceMap),
     ...Object.keys(imagePriceMap),
+    ...Object.keys(taskPricingMap),
   ])
 
   return [...modelNames].map((name) => {
@@ -318,6 +330,7 @@ export const buildModelSnapshots = ({
         requestRuleExpr,
         videoPrice: videoPriceMap[name],
         imagePrice: imagePriceMap[name],
+        taskPricingUnit: taskPricingMap[name],
         price,
         ratio,
         cacheRatio: cache,
@@ -344,6 +357,7 @@ export const buildModelSnapshots = ({
         billingMode: 'per-second',
         videoPrice: videoPriceMap[name],
         imagePrice: imagePriceMap[name],
+        taskPricingUnit: taskPricingMap[name],
         hasConflict: false,
       }
     }
@@ -362,6 +376,7 @@ export const buildModelSnapshots = ({
       billingMode: price !== '' ? 'per-request' : 'per-token',
       videoPrice: videoPriceMap[name],
       imagePrice: imagePriceMap[name],
+      taskPricingUnit: taskPricingMap[name],
       hasConflict:
         price !== '' &&
         (ratio !== '' ||
@@ -394,5 +409,6 @@ export const getSnapshotSignature = (snapshot?: ModelPricingSnapshot) => {
     pluginBillingExpr: Object.entries(snapshot.pluginBillingExpr ?? {}).sort(
       ([a], [b]) => a.localeCompare(b)
     ),
+    taskPricingUnit: snapshot.taskPricingUnit || null,
   })
 }

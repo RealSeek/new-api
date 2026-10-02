@@ -37,7 +37,7 @@ import {
   getEndpointTypeLabels,
   getQuotaTypeLabels,
 } from '../constants'
-import { hasTaskUsageSchema } from '../lib/dynamic-price'
+import { isTaskPricingCategory } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
 import type { PricingModel, PricingVendor } from '../types'
 
@@ -172,7 +172,7 @@ export const PricingSidebar = memo(function PricingSidebar(
       for (const endpoint of new Set(model.supported_endpoint_types ?? [])) {
         endpoints.set(endpoint, (endpoints.get(endpoint) ?? 0) + 1)
       }
-      if (hasTaskUsageSchema(model)) {
+      if (isTaskPricingCategory(model)) {
         quotas.task++
       } else if (model.quota_type === 0) {
         quotas.token++
