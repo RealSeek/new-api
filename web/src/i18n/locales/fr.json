@@ -3255,6 +3255,7 @@
     "Legacy format must be a JSON object": "L'ancien format doit être un objet JSON",
     "Legacy Format Template": "Modèle ancien format",
     "Legacy full-URL integration; use Advanced Custom for new channels": "Ancienne intégration par URL complète ; utilisez Personnalisé avancé pour les nouveaux canaux",
+    "Legacy prices remain editable. Conversion to an expression is optional.": "Les anciens tarifs restent modifiables. La conversion en expression est facultative.",
     "Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.": "L’ancien mode tarifaire est obsolète. Convertissez les prix actuels en brouillon d’expression, puis enregistrez pour l’appliquer.",
     "Legacy token": "Ancien jeton",
     "Legal": "Juridique",

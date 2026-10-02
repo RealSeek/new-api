@@ -279,7 +279,9 @@ export const ModelPricingEditorPanel = forwardRef<
       editData.audioCompletionRatio,
     ].some(hasValue)
   let initialPricingMode: PricingMode = 'tiered_expr'
-  if (editData?.billingMode !== 'tiered_expr' && hasLegacyPricing) {
+  if (editData?.billingMode === 'per-second') {
+    initialPricingMode = 'per-second'
+  } else if (editData?.billingMode !== 'tiered_expr' && hasLegacyPricing) {
     initialPricingMode = hasValue(editData?.price) ? 'per-request' : 'per-token'
   }
   const initialBillingExpr =
@@ -392,11 +394,7 @@ export const ModelPricingEditorPanel = forwardRef<
         audioRatio: editData.audioRatio || '',
         audioCompletionRatio: editData.audioCompletionRatio || '',
       })
-      setPricingMode(
-        editData.billingMode === 'per-second'
-          ? 'per-second'
-          : initialPricingMode
-      )
+      setPricingMode(initialPricingMode)
       setBillingExpr(initialBillingExpr)
       setRequestRuleExpr(editData.requestRuleExpr || '')
       const videoPrice = editData.videoPrice
@@ -454,6 +452,7 @@ export const ModelPricingEditorPanel = forwardRef<
   useEffect(() => {
     if (!editData) return
     if (editData.billingMode === 'tiered_expr') return
+    if (editData.billingMode === 'per-second') return
     if (editData.price || editData.ratio) return
 
     const schema = taskUsageSchema
@@ -464,9 +463,28 @@ export const ModelPricingEditorPanel = forwardRef<
     autoSwitchedForRef.current = editData.name
   }, [editData, taskUsageSchema])
 
+  const videoPricingChanged =
+    pricingMode === 'per-second' &&
+    (videoDefaultPrice !==
+      (editData?.videoPrice?.default_price?.toString() ?? '') ||
+      videoDefaultDuration !==
+        (editData?.videoPrice?.default_duration?.toString() ?? '5') ||
+      videoBillingStep !==
+        (editData?.videoPrice?.billing_step?.toString() ?? '1') ||
+      videoMinimumDuration !==
+        (editData?.videoPrice?.minimum_duration?.toString() ?? '1') ||
+      videoResolutionPrices.length !==
+        Object.keys(editData?.videoPrice?.resolution_prices ?? {}).length ||
+      videoResolutionPrices.some(
+        (row) =>
+          Number(row.price) !==
+          editData?.videoPrice?.resolution_prices?.[row.resolution]
+      ))
+
   useEffect(() => {
     onDirtyChange?.(
       form.formState.isDirty ||
+        videoPricingChanged ||
         pricingMode !== initialPricingMode ||
         billingExpr !== initialBillingExpr ||
         requestRuleExpr !== (editData?.requestRuleExpr ?? '') ||
@@ -482,6 +500,7 @@ export const ModelPricingEditorPanel = forwardRef<
     initialPricingMode,
     initialBillingExpr,
     pluginExpressions,
+    videoPricingChanged,
   ])
 
   const setFormValue = (field: keyof ModelPricingFormValues, value: string) => {
@@ -1155,20 +1174,20 @@ export const ModelPricingEditorPanel = forwardRef<
                         {t('Per-second')}
                       </TabsTrigger>
                       <TabsTrigger value='per-token'>
-                        {t('Per-token (deprecated)')}
+                        {t('Per-token')}
                       </TabsTrigger>
                       <TabsTrigger value='per-request'>
-                        {t('Per-request (deprecated)')}
+                        {t('Per-request')}
                       </TabsTrigger>
                     </TabsList>
 
-                    {pricingMode !== 'tiered_expr' && (
-                      <Alert className='border-amber-500/40 bg-amber-500/10 p-4 text-amber-900 dark:text-amber-100'>
-                        <AlertTriangle aria-hidden='true' className='size-5' />
+                    {(pricingMode === 'per-token' ||
+                      pricingMode === 'per-request') && (
+                      <Alert className='p-4'>
                         <AlertDescription className='space-y-3 text-sm text-inherit'>
                           <p className='font-medium'>
                             {t(
-                              'Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.'
+                              'Legacy prices remain editable. Conversion to an expression is optional.'
                             )}
                           </p>
                           <Button
@@ -1197,7 +1216,7 @@ export const ModelPricingEditorPanel = forwardRef<
                         </AlertDescription>
                       </Alert>
                     )}
-                    {(pricingMode !== 'tiered_expr' || wasConverted) && (
+                    {wasConverted && (
                       <p className='text-muted-foreground text-xs'>
                         {t(
                           'After conversion, expression reservation and rounding rules apply. Effective unit prices are preserved; individual rounded charges may differ.'

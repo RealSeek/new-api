@@ -346,9 +346,10 @@ it('shows and removes a single provider override while retaining the per-call de
       },
     ]
   )
-  expect(
-    screen.getByRole('tab', { name: 'Per-request (deprecated)' })
-  ).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('tab', { name: 'Per-request' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
   const user = userEvent.setup()
   await user.click(screen.getByRole('tab', { name: 'Alpha' }))
   await user.click(

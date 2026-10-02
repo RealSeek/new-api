@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -234,13 +235,15 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 	pricingModelName := info.OriginModelName
+	pricingResolution := ""
 	if alias, ok := model_alias_setting.GetResolutionAlias(info.OriginModelName); ok {
 		explicit, fallback := taskResolutionCandidates(c)
-		variant, _, aliasErr := model_alias_setting.ResolveAliasVariant(alias, explicit, fallback)
+		variant, resolution, aliasErr := model_alias_setting.ResolveAliasVariant(alias, explicit, fallback)
 		if aliasErr != nil {
 			return nil, service.TaskErrorWrapperLocal(aliasErr, "invalid_resolution", http.StatusBadRequest)
 		}
-		pricingModelName = variant
+		pricingModelName = model_alias_setting.ResolutionPricingModel(info.OriginModelName, resolution, variant)
+		pricingResolution = resolution
 		info.UpstreamModelName = variant
 	}
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
@@ -290,6 +293,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 		if value, ok := req.Metadata["resolution"].(string); ok && value != "" {
 			resolution = relaycommon.NormalizeVideoResolution(value)
+		}
+		if pricingResolution != "" {
+			resolution = pricingResolution
 		}
 		if resolution == "" {
 			resolution = model_alias_setting.DefaultAliasResolution
@@ -356,6 +362,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			req, reqErr := relaycommon.GetTaskRequest(c)
 			if reqErr != nil {
 				return nil, service.TaskErrorWrapperLocal(reqErr, "invalid_request", http.StatusBadRequest)
+			}
+			if pricingResolution != "" {
+				req.Resolution = pricingResolution
+				req.Metadata = maps.Clone(req.Metadata)
+				delete(req.Metadata, "resolution")
 			}
 			applyPerSecondBilling(info, req)
 		} else if !info.PriceData.UsePrice {

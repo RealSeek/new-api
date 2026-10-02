@@ -3255,6 +3255,7 @@
     "Legacy format must be a JSON object": "Legacy format must be a JSON object",
     "Legacy Format Template": "Legacy Format Template",
     "Legacy full-URL integration; use Advanced Custom for new channels": "Legacy full-URL integration; use Advanced Custom for new channels",
+    "Legacy prices remain editable. Conversion to an expression is optional.": "Legacy prices remain editable. Conversion to an expression is optional.",
     "Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.": "Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.",
     "Legacy token": "Legacy token",
     "Legal": "Legal",

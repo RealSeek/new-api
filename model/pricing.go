@@ -219,11 +219,20 @@ func appendPricingEndpoint(endpoints []string, endpoint string) []string {
 
 // buildResolutionAliasPrices 汇总合并模型各分辨率变体的展示单价。
 // 变体的计费方式不一致时以第一档为准（单位取首个有价档位）。
-func buildResolutionAliasPrices(alias model_alias_setting.ResolutionAlias) []ResolutionAliasPrice {
+func buildResolutionAliasPrices(modelName string, alias model_alias_setting.ResolutionAlias) []ResolutionAliasPrice {
 	rows := make([]ResolutionAliasPrice, 0, len(alias.Resolutions))
 	for _, resolution := range alias.ResolutionLabels() {
 		variant := alias.Resolutions[resolution]
-		price, unit, ok := resolutionVariantPrice(variant)
+		pricingModel := model_alias_setting.ResolutionPricingModel(modelName, resolution, variant)
+		var price float64
+		var unit string
+		var ok bool
+		if pricingModel == modelName && billing_setting.GetBillingMode(modelName) == billing_setting.BillingModePerSecond {
+			price, ok = ratio_setting.GetVideoPrice(modelName, resolution)
+			unit = "second"
+		} else if pricingModel == variant {
+			price, unit, ok = resolutionVariantPrice(variant)
+		}
 		if !ok {
 			continue
 		}
@@ -494,7 +503,7 @@ func updatePricing() {
 			pricing.ImagePrice = imagePrice
 		}
 		if alias, ok := model_alias_setting.GetResolutionAlias(model); ok {
-			pricing.ResolutionAliasPrices = buildResolutionAliasPrices(alias)
+			pricing.ResolutionAliasPrices = buildResolutionAliasPrices(model, alias)
 			if len(pricing.ResolutionAliasPrices) > 0 {
 				if pricing.ResolutionAliasPrices[0].Unit == "second" {
 					pricing.QuotaType = 2

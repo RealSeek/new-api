@@ -3255,6 +3255,7 @@
     "Legacy format must be a JSON object": "Старый формат должен быть JSON-объектом",
     "Legacy Format Template": "Шаблон старого формата",
     "Legacy full-URL integration; use Advanced Custom for new channels": "Устаревшее подключение по полному URL; для новых каналов используйте «Расширенный пользовательский»",
+    "Legacy prices remain editable. Conversion to an expression is optional.": "Прежние цены можно редактировать. Преобразование в выражение необязательно.",
     "Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.": "Старый режим тарификации устарел. Преобразуйте текущие цены в черновик выражения и сохраните для применения.",
     "Legacy token": "Устаревший токен",
     "Legal": "Юриспруденция",

@@ -3255,6 +3255,7 @@
     "Legacy format must be a JSON object": "旧格式必须是 JSON 对象",
     "Legacy Format Template": "旧格式模板",
     "Legacy full-URL integration; use Advanced Custom for new channels": "旧版完整请求地址接入方式，新渠道建议使用高级自定义",
+    "Legacy prices remain editable. Conversion to an expression is optional.": "旧定价仍可直接编辑，也可选择转换为计费表达式。",
     "Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.": "旧定价模式已弃用。可将当前价格转换为计费表达式草稿，保存后生效。",
     "Legacy token": "旧版令牌",
     "Legal": "法律",

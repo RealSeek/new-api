@@ -3255,6 +3255,7 @@
     "Legacy format must be a JSON object": "旧形式はJSONオブジェクトである必要があります",
     "Legacy Format Template": "旧フォーマットテンプレート",
     "Legacy full-URL integration; use Advanced Custom for new channels": "完全なリクエスト URL を使う旧方式です。新しいチャネルには「高度なカスタム」を推奨",
+    "Legacy prices remain editable. Conversion to an expression is optional.": "従来の料金は引き続き編集できます。式への変換は任意です。",
     "Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.": "旧料金設定は非推奨です。現在の価格を式の下書きに変換し、保存すると適用されます。",
     "Legacy token": "旧形式のトークン",
     "Legal": "法務",

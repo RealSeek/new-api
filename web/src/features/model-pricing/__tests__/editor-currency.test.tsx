@@ -145,6 +145,56 @@ async function commit(
   return result as ModelRatioData | null
 }
 
+it('keeps configured per-second prices editable when a task usage schema is available', async () => {
+  const editor = renderEditor(
+    {
+      name: 'seedance-2.0',
+      billingMode: 'per-second',
+      ratio: '',
+      completionRatio: '',
+      videoPrice: {
+        default_price: 0,
+        default_duration: 5,
+        minimum_duration: 1,
+        billing_step: 1,
+        resolution_prices: {
+          '480p': 0.57,
+          '720p': 0.95,
+          '1080p': 2.2,
+          '4k': 4.3,
+        },
+      },
+    },
+    { seconds: { type: 'number', unit: 'second' } }
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('tab', { name: 'Per-second' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  )
+  expect(
+    screen.queryByRole('button', { name: 'Convert to expression' })
+  ).not.toBeInTheDocument()
+  expect(editor.dirty).toHaveBeenLastCalledWith(false)
+  const user = userEvent.setup()
+  const price = screen.getByDisplayValue('0.57')
+  await user.clear(price)
+  await user.type(price, '0.58')
+  expect(editor.dirty).toHaveBeenLastCalledWith(true)
+  expect(await commit(editor.ref)).toMatchObject({
+    billingMode: 'per-second',
+    videoPrice: {
+      resolution_prices: {
+        '480p': 0.58,
+        '720p': 0.95,
+        '1080p': 2.2,
+        '4k': 4.3,
+      },
+    },
+  })
+})
+
 it('previews legacy conversion in the selected currency and applies only after confirmation', async () => {
   const expression = 'tier("base", p * 2 + c * 4 + cr * 0)'
   const effective = {
@@ -239,9 +289,7 @@ it('previews legacy conversion in the selected currency and applies only after c
     ratio: '1',
     cacheRatio: '0',
   })
-  await userEvent
-    .setup()
-    .click(screen.getByRole('tab', { name: 'Per-token (deprecated)' }))
+  await userEvent.setup().click(screen.getByRole('tab', { name: 'Per-token' }))
   expect(
     screen.getByRole('button', { name: 'Convert to expression' })
   ).toBeDisabled()

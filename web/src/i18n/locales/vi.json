@@ -3255,6 +3255,7 @@
     "Legacy format must be a JSON object": "Định dạng cũ phải là đối tượng JSON",
     "Legacy Format Template": "Mẫu định dạng cũ",
     "Legacy full-URL integration; use Advanced Custom for new channels": "Cách kết nối cũ bằng URL yêu cầu đầy đủ; nên dùng Tùy chỉnh nâng cao cho kênh mới",
+    "Legacy prices remain editable. Conversion to an expression is optional.": "Vẫn có thể chỉnh sửa giá cũ. Việc chuyển sang biểu thức là tùy chọn.",
     "Legacy pricing is deprecated. Convert the current prices to an expression draft, then save to apply it.": "Chế độ giá cũ không còn được khuyến nghị. Chuyển giá hiện tại sang bản nháp biểu thức rồi lưu để áp dụng.",
     "Legacy token": "Token cũ",
     "Legal": "Pháp lý",

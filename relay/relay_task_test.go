@@ -474,6 +474,13 @@ export function parseTaskResult() { return {status:"SUCCESS"}; }
 }
 
 func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
+	database := setupRelayChannelDB(t)
+	require.NoError(t, database.AutoMigrate(&model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, database.Create(&model.Channel{Id: 136, Name: "seedance", Type: constant.ChannelTypeRSGateway, Status: common.ChannelStatusEnabled}).Error)
+	for _, name := range []string{"seedance-2.0", "seedance-2.5"} {
+		require.NoError(t, database.Create(&model.Ability{Group: "default", Model: name, ChannelId: 136, Enabled: true}).Error)
+	}
+	t.Cleanup(model.InvalidatePricingCache)
 	saveBillingConfig(t)
 	savedPrices := ratio_setting.VideoPrice2JSONString()
 	savedAliases := model_alias_setting.ModelAliasesJSONString()
@@ -492,7 +499,7 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 		"seedance-2.5-720p":{"default_price":0.5,"default_duration":5,"billing_step":1,"minimum_duration":1}
 	}`
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-		"billing_setting.billing_mode": `{"seedance-2.0-480p":"per_second","seedance-2.0-720p":"per_second","seedance-2.5-480p":"per_second","seedance-2.5-720p":"per_second"}`,
+		"billing_setting.billing_mode": `{"seedance-2.0":"per_second","seedance-2.5":"per_second","seedance-2.0-480p":"per_second","seedance-2.0-720p":"per_second","seedance-2.5-480p":"per_second","seedance-2.5-720p":"per_second"}`,
 		"billing_setting.billing_expr": `{}`, billing_setting.PluginBillingExprOption: `{}`,
 	}))
 	source, err := plugins.Source("rs-gateway")
@@ -502,12 +509,16 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 	require.NoError(t, err)
 	service.InitHttpClient()
 	automaticDuration, fixedDuration := -1, 6
+	aliasPrice := &ratio_setting.VideoPriceConfig{DefaultDuration: 5, BillingStep: 1, MinimumDuration: 1, ResolutionPrices: map[string]float64{"480p": 0.57, "720p": 0.95, "1080p": 2.2, "4k": 4.3}}
 	for _, tc := range []struct {
 		name, model, resolution string
 		duration                *int
 		videoInput              bool
 		reservedSeconds         float64
 		price                   float64
+		aliasPrice              *ratio_setting.VideoPriceConfig
+		aliasExpression         string
+		metadataResolution      string
 	}{
 		{name: "2.0 automatic 480p", model: "seedance-2.0", resolution: "480p", duration: &automaticDuration, reservedSeconds: 15, price: 0.4},
 		{name: "2.5 automatic 480p", model: "seedance-2.5", resolution: "480p", duration: &automaticDuration, reservedSeconds: 30, price: 0.35},
@@ -515,9 +526,45 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 		{name: "omitted duration and resolution", model: "seedance-2.5", reservedSeconds: 30, price: 0.5},
 		{name: "fixed duration with reference video", model: "seedance-2.0", duration: &fixedDuration, videoInput: true, reservedSeconds: 6, price: 0.43},
 		{name: "unpriced high resolution", model: "seedance-2.0", resolution: "1080p", duration: &automaticDuration},
+		{name: "alias resolution replaces stale variant price", model: "seedance-2.0", resolution: "480p", duration: &automaticDuration, reservedSeconds: 15, price: 0.57, aliasPrice: aliasPrice},
+		{name: "alias prices previously unpriced 1080p", model: "seedance-2.0", resolution: "1080p", duration: &automaticDuration, reservedSeconds: 15, price: 2.2, aliasPrice: aliasPrice},
+		{name: "alias prices previously unpriced 4k", model: "seedance-2.0", resolution: "4k", duration: &automaticDuration, reservedSeconds: 15, price: 4.3, aliasPrice: aliasPrice},
+		{name: "partial alias configuration retains variant price", model: "seedance-2.0", resolution: "720p", duration: &automaticDuration, reservedSeconds: 15, price: 0.43, aliasPrice: &ratio_setting.VideoPriceConfig{DefaultDuration: 5, BillingStep: 1, MinimumDuration: 1, ResolutionPrices: map[string]float64{"480p": 0.57}}},
+		{name: "billing follows the routed resolution", model: "seedance-2.0", resolution: "480p", duration: &automaticDuration, reservedSeconds: 15, price: 0.57, aliasPrice: aliasPrice, metadataResolution: "720p"},
+		{name: "alias expression replaces legacy variant tariff", model: "seedance-2.0", resolution: "720p", duration: &automaticDuration, reservedSeconds: 15, price: 0.9, aliasExpression: `tier("video", u("seconds") * 0.9)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(prices))
+			if tc.aliasPrice != nil {
+				var configured map[string]ratio_setting.VideoPriceConfig
+				require.NoError(t, common.UnmarshalJsonStr(prices, &configured))
+				configured[tc.model] = *tc.aliasPrice
+				encoded, err := common.Marshal(configured)
+				require.NoError(t, err)
+				require.NoError(t, ratio_setting.UpdateVideoPriceByJSONString(string(encoded)))
+			}
+			model.InvalidatePricingCache()
+			if tc.aliasExpression != "" {
+				require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+					"billing_setting.billing_mode": `{"seedance-2.0":"tiered_expr"}`,
+					"billing_setting.billing_expr": `{"seedance-2.0":"tier(\"video\", u(\"seconds\") * 0.9)"}`,
+				}))
+			}
+			if tc.aliasPrice == aliasPrice || tc.aliasExpression != "" {
+				var publicPricing model.Pricing
+				for _, pricing := range model.GetPricing() {
+					if pricing.ModelName == tc.model {
+						publicPricing = pricing
+						break
+					}
+				}
+				if tc.aliasExpression != "" {
+					assert.Equal(t, tc.aliasExpression, publicPricing.BillingExpr)
+					assert.Empty(t, publicPricing.ResolutionAliasPrices)
+				} else {
+					assert.Equal(t, []model.ResolutionAliasPrice{{Resolution: "480p", Price: 0.57, Unit: "second"}, {Resolution: "720p", Price: 0.95, Unit: "second"}, {Resolution: "1080p", Price: 2.2, Unit: "second"}, {Resolution: "4k", Price: 4.3, Unit: "second"}}, publicPricing.ResolutionAliasPrices)
+				}
+			}
 			content := []any{map[string]any{"type": "text", "text": "a wave"}}
 			if tc.videoInput {
 				content = append(content, map[string]any{"type": "video_url", "video_url": map[string]any{"url": "https://example.com/reference.mp4"}, "role": "reference_video"})
@@ -528,6 +575,9 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 			}
 			if tc.resolution != "" {
 				body["resolution"] = tc.resolution
+			}
+			if tc.metadataResolution != "" {
+				body["metadata"] = map[string]any{"resolution": tc.metadataResolution}
 			}
 			encoded, err := common.Marshal(body)
 			require.NoError(t, err)

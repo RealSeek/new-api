@@ -727,12 +727,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
                 title: t('Mode'),
                 options: [
                   {
-                    label: 'Per-token (deprecated)',
+                    label: 'Per-token',
                     value: 'per-token',
                     count: modeCounts['per-token'],
                   },
                   {
-                    label: 'Per-request (deprecated)',
+                    label: 'Per-request',
                     value: 'per-request',
                     count: modeCounts['per-request'],
                   },

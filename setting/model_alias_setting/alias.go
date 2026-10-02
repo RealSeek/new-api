@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -68,6 +70,25 @@ func GetResolutionAlias(model string) (ResolutionAlias, bool) {
 
 func GetModelAliasesCopy() map[string]ResolutionAlias {
 	return resolutionAliasMap.ReadAll()
+}
+
+// ResolutionPricingModel selects an alias's explicit tariff before its variant.
+// A per-second default alone does not price otherwise unconfigured resolutions.
+func ResolutionPricingModel(aliasName, resolution, variant string) string {
+	mode := billing_setting.GetBillingMode(aliasName)
+	if mode == billing_setting.BillingModeTieredExpr {
+		return aliasName
+	}
+	if mode == billing_setting.BillingModePerSecond {
+		if config, ok := ratio_setting.GetVideoPriceConfig(aliasName); ok {
+			for label, price := range config.ResolutionPrices {
+				if strings.EqualFold(strings.TrimSpace(label), resolution) && price > 0 {
+					return aliasName
+				}
+			}
+		}
+	}
+	return variant
 }
 
 // ResolveAliasVariant 解析别名模型在本次请求下的变体模型名。
