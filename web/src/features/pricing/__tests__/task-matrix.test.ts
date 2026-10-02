@@ -25,10 +25,10 @@ import { evaluateBillingExpression } from '../lib/billing-expression/runtime'
 import {
   createDefaultTaskMatrixConfig,
   createDefaultTaskVisualConfig,
+  editableTaskPricingSchema,
   evaluateTaskVisualConfig,
   generateTaskExprFromConfig,
   getTaskEnumCombinations,
-  taskPricingSchema,
   taskMatrixRowLabel,
   taskMatrixToTiers,
   tryParseTaskMatrixConfig,
@@ -45,7 +45,7 @@ test('round-trips custom resolution and reference-video prices in dollars per se
   }
   const expression =
     'u("resolution") == "1440p" && u("video_input") == true ? tier("1440p-video", u("seconds") * 2.2) : tier("base", u("seconds") * 0.57)'
-  const effectiveSchema = taskPricingSchema(schema, expression)
+  const effectiveSchema = editableTaskPricingSchema(schema, expression)
   assert.deepEqual(effectiveSchema.resolution.enum, ['480p', '720p', '1440p'])
   const matrix = tryParseTaskMatrixConfig(expression, effectiveSchema)
   assert.ok(matrix)
@@ -71,6 +71,20 @@ test('round-trips custom resolution and reference-video prices in dollars per se
       assert.equal(result.cost, expected)
     }
   }
+})
+
+test('makes provider resolutions editable and keeps only configured matrix rows', () => {
+  const schema: BillingUsageSchema = {
+    resolution: { enum: ['768P', '2K'] },
+    seconds: { type: 'number', unit: 'second' },
+  }
+  const expression =
+    'u("resolution") == "768P" ? tier("768P", u("seconds") * 0.12) : tier("base", u("seconds") * 0.12)'
+
+  const effectiveSchema = editableTaskPricingSchema(schema, expression)
+
+  assert.equal(effectiveSchema.resolution.allowCustomValues, true)
+  assert.deepEqual(effectiveSchema.resolution.enum, ['768P'])
 })
 
 const singleEnumSchema: BillingUsageSchema = {

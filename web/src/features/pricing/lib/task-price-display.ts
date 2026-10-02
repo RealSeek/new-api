@@ -43,6 +43,7 @@ import {
   getTaskMatrixDisplayTiers,
   getTaskPricingDisplayTiers,
 } from './task-matrix-display'
+import { editableTaskPricingSchema } from './task-expr'
 
 /** Compact resolution rows share the expression prices used by the detail table. */
 export function getTaskResolutionPriceRows(
@@ -62,16 +63,21 @@ export function getTaskResolutionPriceRows(
   ) {
     return null
   }
-  const matrix = getTaskMatrixDisplayTiers(model.billing_expr, schema)
+  const effectiveSchema = editableTaskPricingSchema(schema, model.billing_expr)
+  const matrix = getTaskMatrixDisplayTiers(model.billing_expr, effectiveSchema)
   if (!matrix) return null
   // Schema meters not read by the saved expression must not appear as free prices.
-  const fields = [
+  const usedFields = [
     ...new Set(
-      getTaskPricingDisplayTiers(model.billing_expr, schema).flatMap((tier) =>
-        Object.keys(tier.unitPrices)
+      getTaskPricingDisplayTiers(model.billing_expr, effectiveSchema).flatMap(
+        (tier) => Object.keys(tier.unitPrices)
       )
     ),
   ]
+  const pricedFields = usedFields.filter((field) =>
+    matrix.some((tier) => (tier.unitPrices[field] ?? 0) > 0)
+  )
+  const fields = pricedFields.length > 0 ? pricedFields : usedFields
   const resolutions = new Map<string, ParsedTaskTier[]>()
   for (const tier of matrix) {
     const resolution = tier.conditions.find(

@@ -55,13 +55,13 @@ import {
 } from '@/features/pricing/lib/dynamic-price'
 import {
   createDefaultTaskMatrixConfig,
+  editableTaskPricingSchema,
   evaluateTaskVisualConfig,
   generateTaskExprFromConfig,
   getTaskEnumCombinations,
   getTaskEnumFields,
   getTaskNumberFields,
   taskMatrixToTiers,
-  taskPricingSchema,
   tryParseTaskMatrixConfig,
   tryParseTaskVisualConfig,
   type TaskMatrixRow,
@@ -401,7 +401,7 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   const { t, i18n } = useTranslation()
   const referenceChargeId = useId()
   const [usageSchema, setUsageSchema] = useState(() =>
-    taskPricingSchema(props.usageSchema, props.billingExpr)
+    editableTaskPricingSchema(props.usageSchema, props.billingExpr)
   )
   const [customResolution, setCustomResolution] = useState('')
   const [editorMode, setEditorMode] = useState<EditorMode>(() =>
@@ -659,7 +659,7 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   }
 
   const handleConfirmVisualSwitch = () => {
-    const nextSchema = taskPricingSchema(
+    const nextSchema = editableTaskPricingSchema(
       props.usageSchema,
       rawSplit.billingExpr
     )

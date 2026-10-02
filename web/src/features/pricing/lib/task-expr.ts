@@ -106,6 +106,21 @@ export function taskPricingSchema(
   return result
 }
 
+export function editableTaskPricingSchema(
+  schema: BillingUsageSchema,
+  expression: string
+): BillingUsageSchema {
+  const editable = Object.fromEntries(
+    Object.entries(schema).map(([field, definition]) => [
+      field,
+      field === 'resolution' && definition.enum
+        ? { ...definition, enum: [...definition.enum], allowCustomValues: true }
+        : { ...definition, enum: definition.enum ? [...definition.enum] : undefined },
+    ])
+  )
+  return taskPricingSchema(editable, expression)
+}
+
 export const TASK_TOKEN_PRICE_SCALE = 1_000_000
 
 export type TaskVisualCondition = {

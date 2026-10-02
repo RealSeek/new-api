@@ -53,6 +53,36 @@ describe('模型广场模型卡片', () => {
     expect(screen.queryByText(/1M token|video_input/)).not.toBeInTheDocument()
   })
 
+  test('任务卡片只显示表达式配置的分辨率和非零计费单位', () => {
+    const model: PricingModel = {
+      id: 6,
+      model_name: 'MiniMax-H3',
+      quota_type: 0,
+      model_ratio: 1,
+      completion_ratio: 1,
+      enable_groups: [],
+      billing_mode: 'tiered_expr',
+      billing_expr:
+        'u("resolution") == "768P" ? tier("768P", u("input_images") * 0 + u("seconds") * 0.12) : tier("base", u("input_images") * 0 + u("seconds") * 0.12)',
+      billing_usage_schema: {
+        resolution: { enum: ['768P', '2K'] },
+        input_images: { type: 'number', unit: 'count' },
+        seconds: { type: 'number', unit: 'second' },
+      },
+    }
+
+    render(<ModelCard model={model} onClick={vi.fn()} />)
+
+    const rows = within(
+      screen.getByRole('list', { name: 'Resolution prices' })
+    ).getAllByRole('listitem')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toHaveTextContent('768P')
+    expect(rows[0]).toHaveTextContent('$0.12 / second')
+    expect(rows[0]).not.toHaveTextContent('/ request')
+    expect(screen.queryByText('2K')).not.toBeInTheDocument()
+  })
+
   test('任务 Token 定价显示自定义分辨率，并保留百万 Token 单位和分组倍率', () => {
     const model: PricingModel = {
       id: 4,
