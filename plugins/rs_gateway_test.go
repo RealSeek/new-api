@@ -65,3 +65,49 @@ func TestRSGatewayReportsOneRequestForPerVideoPricing(t *testing.T) {
 	require.NotEmpty(t, examples)
 	assert.EqualValues(t, 1, examples[0].Facts["requests"])
 }
+
+func TestRSGatewayOfficialSeedanceAndMiniMaxRequestsKeepRequestUsage(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, model string
+		body        map[string]any
+		wantSeconds float64
+	}{
+		{
+			name: "official Seedance model name",
+			model: "doubao-seedance-2-5-260628",
+			body: map[string]any{"model": "doubao-seedance-2-5-260628", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": -1, "resolution": "720p", "ratio": "16:9"},
+			wantSeconds: 30,
+		},
+		{
+			name: "official MiniMax H3 body",
+			model: "MiniMax-H3",
+			body: map[string]any{"model": "MiniMax-H3", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": 5, "resolution": "768P", "ratio": "16:9"},
+			wantSeconds: 5,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := map[string]any{"upstreamModel": tc.model, "requestBody": tc.body, "baseUrl": "https://gateway.example"}
+			value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
+			require.NoError(t, err)
+			request := value.(map[string]any)
+			forwarded := request["body"].(map[string]any)
+			assert.Equal(t, tc.model, forwarded["model"])
+			assert.Equal(t, tc.body["content"], forwarded["content"])
+			assert.EqualValues(t, tc.body["duration"], forwarded["duration"])
+			assert.Equal(t, tc.body["resolution"], forwarded["resolution"])
+			assert.Equal(t, tc.body["ratio"], forwarded["ratio"])
+			value, err = plugin.Engine.Call(t.Context(), "extractUsage", ctx)
+			require.NoError(t, err)
+			usage := value.(map[string]any)
+			assert.EqualValues(t, 1, usage["requests"])
+			assert.EqualValues(t, tc.wantSeconds, usage["seconds"])
+			value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", ctx, map[string]any{"status": "SUCCESS"}, map[string]any{"usage": map[string]any{"output_seconds": tc.wantSeconds}})
+			require.NoError(t, err)
+			assert.EqualValues(t, tc.wantSeconds, value.(map[string]any)["seconds"])
+		})
+	}
+}

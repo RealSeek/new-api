@@ -20,8 +20,12 @@ export const meta = {
 };
 
 function seedanceModel(ctx) {
-  const model = /^(?:\[c\])?(seedance-2\.[05])(?:-(480p|720p|1080p|4k))?$/.exec(ctx.upstreamModel || ctx.model || "");
-  return model && !(model[1] === "seedance-2.5" && model[2] === "4k") ? model : null;
+  const match = /^(?:\[c\])?(?:doubao-)?seedance-2[._-]([05])(?:-?\d{6})?(?:-(?:fast|mini))?(?:-(480p|720p|1080p|4k))?$/i.exec(ctx.upstreamModel || ctx.model || "");
+  return match ? [match[0], "seedance-2." + match[1], match[2]] : null;
+}
+
+function minimaxH3Model(ctx) {
+  return /minimax[-_ ]?h3/i.test(ctx.upstreamModel || ctx.model || "");
 }
 
 export function buildSubmitRequest(ctx) {
@@ -67,12 +71,24 @@ export function extractUsage(ctx) {
   // Legacy prices already apply their own seconds multiplier.
   if (ctx.usagePurpose === "billing_ratios") return null;
   const model = seedanceModel(ctx);
-  if (!model) return null;
   const body = ctx.requestBody || {};
   const metadata = typeof body.metadata === "string" ? JSON.parse(body.metadata) : body.metadata || {};
   const content = typeof body.content === "string" ? JSON.parse(body.content) : body.content || metadata.content || [];
+  const videoInput = content.some(item => item.type === "video_url") || (ctx.files || []).some(file => file.field === "video");
+  if (!model && minimaxH3Model(ctx)) {
+    const requested = Number(body.duration);
+    const duration = Number.isInteger(requested) && requested > 0 && requested <= 15 ? requested : 15;
+    return {
+      resolution: String(body.resolution || "768P").trim().toLowerCase(),
+      requests: 1,
+      seconds: duration,
+      video_input: videoInput,
+      web_search_calls: 0,
+    };
+  }
+  if (!model) return null;
   const references = typeof body.references === "string" ? JSON.parse(body.references) : body.references || [];
-  const videoInput = content.some(item => item.type === "video_url") || references.some(item => item.type === "video") || (metadata.reference_videos || []).length > 0 || (ctx.files || []).some(file => file.field === "video");
+  const hasVideoInput = videoInput || references.some(item => item.type === "video") || (metadata.reference_videos || []).length > 0;
   // Budget estimate only: the existing Ark formula uses pixels * 24 FPS / 1024.
   // Automatic output and unknown reference-video lengths reserve the documented
   // model duration ceiling. Completion replaces this estimate with real tokens.
@@ -83,7 +99,7 @@ export function extractUsage(ctx) {
   const pixels = { "480p": 854 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080, "4k": 3840 * 2160 }[resolution];
   if (!pixels) throw new Error("unsupported Seedance resolution for token budget");
   // Keep the removed field at zero for expressions saved against older metadata.
-  return { resolution, requests: 1, seconds, tokens: Math.ceil((seconds + (videoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: videoInput, web_search_calls: 0 };
+  return { resolution, requests: 1, seconds, tokens: Math.ceil((seconds + (hasVideoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: hasVideoInput, web_search_calls: 0 };
 }
 
 export function extractUsageOnComplete(_ctx, result, body) {
@@ -92,6 +108,7 @@ export function extractUsageOnComplete(_ctx, result, body) {
   const facts = {};
   // Missing usage keeps the reservation; explicit zero remains a real zero.
   if (usage.seconds !== undefined) facts.seconds = usage.seconds;
+  else if (usage.output_seconds !== undefined) facts.seconds = usage.output_seconds;
   if (usage.completion_tokens !== undefined) facts.tokens = usage.completion_tokens;
   return facts;
 }
