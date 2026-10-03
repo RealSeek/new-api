@@ -2,13 +2,14 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.2.4",
+  version: "1.4.0",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
-  // MiniMax-H3 is also served through the OpenAI-compatible gateway route.
-  // Keep the native hailuo plugin as a separate candidate for native channels.
-  models: ["MiniMax-H3"],
+  models: [
+    "seedance-2.0", "seedance-2.5", "[c]seedance-2.0", "[c]seedance-2.5",
+    "MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5",
+  ],
   fetchMode: "per_task",
   protocols: ["openai_video"],
   usageSchema: {
@@ -30,8 +31,58 @@ function minimaxH3Model(ctx) {
   return /minimax[-_ ]?h3/i.test(ctx.upstreamModel || ctx.model || "");
 }
 
+const VIDEO_OPTIONS = new Set([
+  "generate_audio", "watermark", "return_last_frame", "video_format",
+  "omni_reference_task_type", "priority", "execution_expires_after",
+  "safety_identifier", "tools", "face_required",
+]);
+
+function normalizeVideoRequest(request) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("video request must be a JSON object");
+  const canonical = request.contract_version !== undefined || request.prompt !== undefined || request.references !== undefined || request.options !== undefined;
+  if (!canonical) return request;
+  if (request.contract_version !== undefined && request.contract_version !== "video-v1") throw new Error("unsupported video contract_version");
+  if (request.content !== undefined) throw new Error("content cannot be combined with prompt, references or options");
+  if (typeof request.prompt !== "string" || !request.prompt.trim()) throw new Error("prompt is required");
+  if (request.contract_version === "video-v1") {
+    const fields = new Set(["contract_version", "model", "prompt", "duration", "resolution", "ratio", "references", "options"]);
+    for (const key of Object.keys(request)) if (!fields.has(key)) throw new Error("unsupported video-v1 field: " + key);
+  }
+  const references = request.references === undefined ? [] : request.references;
+  if (!Array.isArray(references) || references.length > 50) throw new Error("references must be an array of at most 50 items");
+  const content = [{ type: "text", text: request.prompt }];
+  for (const reference of references) {
+    if (!reference || typeof reference !== "object" || Array.isArray(reference)) throw new Error("invalid video reference");
+    const { type, role, source } = reference;
+    const kind = { image: "image_url", video: "video_url", audio: "audio_url" }[type];
+    const roles = { image: ["reference_image", "first_frame", "last_frame"], video: ["reference_video"], audio: ["reference_audio"] };
+    if (!kind || !roles[type].includes(role)) throw new Error("reference type and role do not match");
+    if (typeof source !== "string" || !(source.startsWith("https://") || (type !== "video" && source.startsWith("data:" + type + "/")))) {
+      throw new Error("reference source must be a public HTTPS URL or supported image/audio Data URL");
+    }
+    content.push({ type: kind, role, [kind]: { url: source } });
+  }
+  const options = request.options === undefined ? {} : request.options;
+  if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error("options must be a JSON object");
+  const body = Object.assign({}, request, { content });
+  delete body.contract_version;
+  delete body.prompt;
+  delete body.references;
+  delete body.options;
+  for (const [key, value] of Object.entries(options)) {
+    if (!VIDEO_OPTIONS.has(key)) throw new Error("unsupported video option: " + key);
+    const target = key === "video_format" ? "output_format" : key;
+    if (body[target] !== undefined && body[target] !== value) throw new Error("conflicting video option: " + key);
+    body[target] = value;
+  }
+  return body;
+}
+
 export function buildSubmitRequest(ctx) {
-  const body = Object.assign({}, ctx.requestBody, { model: ctx.upstreamModel });
+  const body = Object.assign({}, normalizeVideoRequest(ctx.requestBody), { model: ctx.upstreamModel });
+  if (/^\[c\]seedance-2[._-]5$/i.test(ctx.model || ctx.requestBody.model || "") && Number(body.duration ?? body.seconds) !== 30) {
+    throw new Error("[c]seedance-2.5 requires duration 30 seconds");
+  }
   const metadata = typeof body.metadata === "string" ? JSON.parse(body.metadata) : body.metadata || {};
   let duration;
   for (const [index, value] of [body.seconds, body.duration, body.durationSeconds, metadata.seconds, metadata.duration, metadata.durationSeconds].entries()) {
@@ -48,6 +99,19 @@ export function buildSubmitRequest(ctx) {
   // duration while forwarding a request that makes it use its default.
   if (duration !== undefined && body.seconds === undefined && body.duration === undefined) {
     throw new Error("video duration requires top-level seconds or duration");
+  }
+  const upstreamModel = ctx.upstreamModel || ctx.model || "";
+  const fullSeedance = /^seedance-2\.[05]$/i.test(upstreamModel);
+  if (fullSeedance) {
+    const resolution = String(body.resolution || "720p").trim().toLowerCase();
+    const allowed = upstreamModel.toLowerCase() === "seedance-2.5"
+      ? ["480p", "720p", "1080p"] : ["480p", "720p", "1080p", "4k"];
+    if (!allowed.includes(resolution)) throw new Error("unsupported Seedance resolution");
+    if (duration !== undefined && duration !== -1 && (duration < 4 || duration > (allowed.includes("4k") ? 15 : 30))) {
+      throw new Error("unsupported Seedance duration");
+    }
+    body.resolution = resolution;
+    body.model = upstreamModel + "-" + resolution;
   }
   const base = ctx.baseUrl.replace(/\/$/, "");
   const path = ctx.action === "remix" ? "/v1/videos/" + encodeURIComponent(ctx.originTaskId) + "/remix" : "/v1/videos";
@@ -76,7 +140,8 @@ export function extractUsage(ctx) {
   const body = ctx.requestBody || {};
   const metadata = typeof body.metadata === "string" ? JSON.parse(body.metadata) : body.metadata || {};
   const content = typeof body.content === "string" ? JSON.parse(body.content) : body.content || metadata.content || [];
-  const videoInput = content.some(item => item.type === "video_url") || (ctx.files || []).some(file => file.field === "video");
+  const references = typeof body.references === "string" ? JSON.parse(body.references) : body.references || [];
+  const videoInput = content.some(item => item.type === "video_url") || references.some(item => item.type === "video") || (ctx.files || []).some(file => file.field === "video");
   if (!model && minimaxH3Model(ctx)) {
     const requested = Number(body.duration);
     const duration = Number.isInteger(requested) && requested > 0 && requested <= 15 ? requested : 15;
@@ -89,8 +154,7 @@ export function extractUsage(ctx) {
     };
   }
   if (!model) return null;
-  const references = typeof body.references === "string" ? JSON.parse(body.references) : body.references || [];
-  const hasVideoInput = videoInput || references.some(item => item.type === "video") || (metadata.reference_videos || []).length > 0;
+  const hasVideoInput = videoInput || (metadata.reference_videos || []).length > 0;
   // Budget estimate only: the existing Ark formula uses pixels * 24 FPS / 1024.
   // Automatic output and unknown reference-video lengths reserve the documented
   // model duration ceiling. Completion replaces this estimate with real tokens.
@@ -167,7 +231,7 @@ export const protocols = {
   openai_video: {
     decodeRequest(ctx) {
       if (ctx.body.kind !== "json") throw new Error("JSON body required");
-      return { kind: "submit", model: ctx.model, requestBody: ctx.body.value };
+      return { kind: "submit", model: ctx.model, requestBody: normalizeVideoRequest(ctx.body.value) };
     },
     render(_ctx, task) {
       const statuses = { NOT_START: "queued", SUBMITTED: "queued", QUEUED: "queued", IN_PROGRESS: "in_progress", SUCCESS: "completed", FAILURE: "failed" };
@@ -177,6 +241,14 @@ export const protocols = {
         model: (task.properties || {}).origin_model_name || "",
         status: statuses[task.status] || "unknown",
       });
+      if (task.status === "SUCCESS") {
+        const details = result.result && typeof result.result === "object" && !Array.isArray(result.result) ? result.result : {};
+        const lastFrame = details.last_frame_url || result.last_frame_url || (result.metadata || {}).last_frame_url;
+        result.result = Object.assign({}, details, {
+          url: "/v1/videos/" + encodeURIComponent(task.task_id) + "/content",
+          ...(lastFrame ? { last_frame_url: lastFrame } : {}),
+        });
+      }
       if (task.status === "FAILURE" && !result.error) result.error = { code: "video_generation_failed", message: task.fail_reason || "gateway task failed" };
       return result;
     },

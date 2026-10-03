@@ -51,7 +51,10 @@ func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
 	gatewayPlugin, err := registry.RegisterFactory(gatewaySource, jsplugin.Options{})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"MiniMax-H3"}, gatewayPlugin.Meta.Models)
+	assert.Equal(t, []string{
+		"seedance-2.0", "seedance-2.5", "[c]seedance-2.0", "[c]seedance-2.5",
+		"MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5",
+	}, gatewayPlugin.Meta.Models)
 	channelPlugin, found := registry.Generation().GetByChannelType(61)
 	require.True(t, found)
 	assert.Same(t, gatewayPlugin, channelPlugin)
@@ -59,6 +62,39 @@ func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
 	require.Len(t, candidates, 2)
 	assert.Same(t, nativePlugin, candidates[0].Plugin)
 	assert.Same(t, gatewayPlugin, candidates[1].Plugin)
+	for _, model := range []string{"seedance-2.0", "seedance-2.5", "[c]seedance-2.0", "[c]MiniMaxH3", "grok-imagine-video-1.5"} {
+		candidates := registry.Generation().LookupEndpointCandidates("POST", "/v1/videos", model)
+		require.NotEmpty(t, candidates, model)
+		assert.Same(t, gatewayPlugin, candidates[len(candidates)-1].Plugin)
+	}
+}
+
+func TestRSGatewayMapsFullSeedanceResolutionWithoutChangingPublicRequest(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		model, resolution, want string
+	}{
+		{"seedance-2.0", "4k", "seedance-2.0-4k"},
+		{"seedance-2.5", "720p", "seedance-2.5-720p"},
+		{"[c]seedance-2.0", "720p", "[c]seedance-2.0"},
+	} {
+		request := map[string]any{
+			"contract_version": "video-v1", "model": tc.model, "prompt": "a wave",
+			"duration": 5, "resolution": tc.resolution, "ratio": "16:9",
+		}
+		value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+			"model": tc.model, "upstreamModel": tc.model, "requestBody": request,
+			"baseUrl": "https://gateway.example", "apiKey": "channel-key",
+		})
+		require.NoError(t, err)
+		body := value.(map[string]any)["body"].(map[string]any)
+		assert.Equal(t, tc.want, body["model"])
+		assert.Equal(t, tc.resolution, body["resolution"])
+		assert.Equal(t, tc.model, request["model"])
+	}
 }
 
 func TestRSGatewayRejectsFractionalDurationBeforeBilling(t *testing.T) {
@@ -77,7 +113,7 @@ func TestRSGatewayReportsOneRequestForPerVideoPricing(t *testing.T) {
 	require.NoError(t, err)
 	ctx := map[string]any{
 		"upstreamModel": "[c]seedance-2.5",
-		"requestBody": map[string]any{"model": "[c]seedance-2.5", "duration": 30, "resolution": "720p"},
+		"requestBody":   map[string]any{"model": "[c]seedance-2.5", "duration": 30, "resolution": "720p"},
 	}
 	value, err := plugin.Engine.Call(t.Context(), "extractUsage", ctx)
 	require.NoError(t, err)
@@ -99,15 +135,15 @@ func TestRSGatewayOfficialSeedanceAndMiniMaxRequestsKeepRequestUsage(t *testing.
 		wantSeconds float64
 	}{
 		{
-			name: "official Seedance model name",
-			model: "doubao-seedance-2-5-260628",
-			body: map[string]any{"model": "doubao-seedance-2-5-260628", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": -1, "resolution": "720p", "ratio": "16:9"},
+			name:        "official Seedance model name",
+			model:       "doubao-seedance-2-5-260628",
+			body:        map[string]any{"model": "doubao-seedance-2-5-260628", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": -1, "resolution": "720p", "ratio": "16:9"},
 			wantSeconds: 30,
 		},
 		{
-			name: "official MiniMax H3 body",
-			model: "MiniMax-H3",
-			body: map[string]any{"model": "MiniMax-H3", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": 5, "resolution": "768P", "ratio": "16:9"},
+			name:        "official MiniMax H3 body",
+			model:       "MiniMax-H3",
+			body:        map[string]any{"model": "MiniMax-H3", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": 5, "resolution": "768P", "ratio": "16:9"},
 			wantSeconds: 5,
 		},
 	} {
@@ -130,6 +166,124 @@ func TestRSGatewayOfficialSeedanceAndMiniMaxRequestsKeepRequestUsage(t *testing.
 			value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", ctx, map[string]any{"status": "SUCCESS"}, map[string]any{"usage": map[string]any{"output_seconds": tc.wantSeconds}})
 			require.NoError(t, err)
 			assert.EqualValues(t, tc.wantSeconds, value.(map[string]any)["seconds"])
+		})
+	}
+}
+
+func TestRSGatewayVideoV1UsesOneRequestShapeForVideoModels(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name       string
+		model      string
+		request    map[string]any
+		wantMedia  map[string]any
+		wantOption map[string]any
+	}{
+		{
+			name:  "Seedance reference video and explicit options",
+			model: "seedance-2.5",
+			request: map[string]any{
+				"contract_version": "video-v1", "model": "seedance-2.5", "prompt": "change the background",
+				"duration": 10, "resolution": "720p", "ratio": "adaptive",
+				"references": []any{map[string]any{"type": "video", "role": "reference_video", "source": "https://cdn.example/clip.mp4"}},
+				"options":    map[string]any{"generate_audio": false, "priority": 0, "video_format": "mp4"},
+			},
+			wantMedia:  map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "https://cdn.example/clip.mp4"}},
+			wantOption: map[string]any{"generate_audio": false, "priority": 0, "output_format": "mp4"},
+		},
+		{
+			name:  "MiniMax reference image",
+			model: "MiniMax-H3",
+			request: map[string]any{
+				"contract_version": "video-v1", "model": "MiniMax-H3", "prompt": "animate the portrait",
+				"duration": 5, "resolution": "768p", "ratio": "16:9",
+				"references": []any{map[string]any{"type": "image", "role": "reference_image", "source": "https://cdn.example/portrait.png"}},
+			},
+			wantMedia: map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "https://cdn.example/portrait.png"}},
+		},
+		{
+			name:  "Grok text only",
+			model: "grok-imagine-video-1.5",
+			request: map[string]any{
+				"contract_version": "video-v1", "model": "grok-imagine-video-1.5", "prompt": "a red paper boat",
+				"duration": 5, "resolution": "720p", "ratio": "16:9",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"},
+				map[string]any{"model": tc.model, "body": map[string]any{"kind": "json", "value": tc.request}})
+			require.NoError(t, err)
+			requestBody := decoded.(map[string]any)["requestBody"].(map[string]any)
+			assert.NotContains(t, requestBody, "contract_version")
+			assert.NotContains(t, requestBody, "references")
+			assert.NotContains(t, requestBody, "options")
+			content := requestBody["content"].([]any)
+			assert.Equal(t, map[string]any{"type": "text", "text": tc.request["prompt"]}, content[0])
+			if tc.wantMedia == nil {
+				assert.Len(t, content, 1)
+			} else {
+				assert.Equal(t, tc.wantMedia, content[1])
+			}
+
+			value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+				"upstreamModel": tc.model, "requestBody": tc.request, "baseUrl": "https://gateway.example",
+			})
+			require.NoError(t, err)
+			forwarded := value.(map[string]any)["body"].(map[string]any)
+			assert.Equal(t, requestBody["content"], forwarded["content"])
+			assert.EqualValues(t, tc.request["duration"], forwarded["duration"])
+			for key, expected := range tc.wantOption {
+				assert.EqualValues(t, expected, forwarded[key])
+			}
+		})
+	}
+	usage, err := plugin.Engine.Call(t.Context(), "extractUsage", map[string]any{
+		"upstreamModel": "MiniMax-H3",
+		"requestBody": map[string]any{
+			"duration":   5,
+			"references": []any{map[string]any{"type": "video", "role": "reference_video", "source": "https://cdn.example/clip.mp4"}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, true, usage.(map[string]any)["video_input"])
+	rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
+		map[string]any{}, map[string]any{
+			"task_id": "public-task", "status": "SUCCESS",
+			"properties": map[string]any{"origin_model_name": "seedance-2.5"},
+			"data":       map[string]any{"id": "private-task", "status": "succeeded", "metadata": map[string]any{"last_frame_url": "https://cdn.example/last.png"}},
+		})
+	require.NoError(t, err)
+	result := rendered.(map[string]any)
+	assert.Equal(t, "public-task", result["id"])
+	assert.Equal(t, "completed", result["status"])
+	assert.Equal(t, "/v1/videos/public-task/content", result["result"].(map[string]any)["url"])
+	assert.Equal(t, "https://cdn.example/last.png", result["result"].(map[string]any)["last_frame_url"])
+}
+
+func TestRSGatewayVideoV1RejectsUnsupportedInput(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, extra string
+		request     map[string]any
+	}{
+		{"mixed media formats", "content cannot be combined", map[string]any{"prompt": "a wave", "content": []any{}, "references": []any{}}},
+		{"unsupported option", "unsupported video option: callback_url", map[string]any{"prompt": "a wave", "options": map[string]any{"callback_url": "https://example.com/hook"}}},
+		{"private asset", "reference source must be", map[string]any{"prompt": "a wave", "references": []any{map[string]any{"type": "image", "role": "reference_image", "source": "asset://private"}}}},
+		{"fixed Seedance duration", "requires duration 30 seconds", map[string]any{"model": "[c]seedance-2.5", "prompt": "a wave", "duration": 5}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+				"upstreamModel": "seedance-2.0", "requestBody": tc.request, "baseUrl": "https://gateway.example",
+			})
+			require.ErrorContains(t, err, tc.extra)
 		})
 	}
 }
