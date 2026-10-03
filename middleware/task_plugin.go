@@ -326,6 +326,7 @@ func PinTaskPluginEndpoint() gin.HandlerFunc {
 		modelRequest, err := getModelFromRequest(c)
 		if err != nil {
 			if _, _, protocolPath := pluginruntime.LookupHostProtocolOperation(c.Request.Method, c.Request.URL.Path); protocolPath {
+				logger.LogWarn(c, "task_plugin subsystem=endpoint event=pin_rejected reason=invalid_request content_type=%q err=%q", c.Request.Header.Get("Content-Type"), err.Error())
 				abortWithOpenAiMessage(c, http.StatusBadRequest, "Invalid task protocol request")
 				return
 			}
