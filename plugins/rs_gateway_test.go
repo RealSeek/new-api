@@ -40,16 +40,25 @@ func TestRSGatewayPluginPreservesArbitraryVideoRequest(t *testing.T) {
 }
 
 func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
-	source, err := Source("rs-gateway")
+	nativeSource, err := Source("hailuo")
 	require.NoError(t, err)
 	registry := jsplugin.NewRegistry()
-	plugin, err := registry.RegisterFactory(source, jsplugin.Options{})
+	nativePlugin, err := registry.RegisterFactory(nativeSource, jsplugin.Options{})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"MiniMax-H3"}, plugin.Meta.Models)
-	binding, found := registry.Generation().LookupEndpoint("POST", "/v1/videos", "MiniMax-H3")
+	gatewaySource, err := Source("rs-gateway")
+	require.NoError(t, err)
+	gatewayPlugin, err := registry.RegisterFactory(gatewaySource, jsplugin.Options{})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"MiniMax-H3"}, gatewayPlugin.Meta.Models)
+	channelPlugin, found := registry.Generation().GetByChannelType(61)
 	require.True(t, found)
-	assert.Same(t, plugin, binding.Plugin)
+	assert.Same(t, gatewayPlugin, channelPlugin)
+	candidates := registry.Generation().LookupEndpointCandidates("POST", "/v1/videos", "MiniMax-H3")
+	require.Len(t, candidates, 2)
+	assert.Same(t, nativePlugin, candidates[0].Plugin)
+	assert.Same(t, gatewayPlugin, candidates[1].Plugin)
 }
 
 func TestRSGatewayRejectsFractionalDurationBeforeBilling(t *testing.T) {
