@@ -39,6 +39,19 @@ func TestRSGatewayPluginPreservesArbitraryVideoRequest(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	registry := jsplugin.NewRegistry()
+	plugin, err := registry.RegisterFactory(source, jsplugin.Options{})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"MiniMax-H3"}, plugin.Meta.Models)
+	binding, found := registry.Generation().LookupEndpoint("POST", "/v1/videos", "MiniMax-H3")
+	require.True(t, found)
+	assert.Same(t, plugin, binding.Plugin)
+}
+
 func TestRSGatewayRejectsFractionalDurationBeforeBilling(t *testing.T) {
 	source, err := Source("rs-gateway")
 	require.NoError(t, err)

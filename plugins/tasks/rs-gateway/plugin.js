@@ -2,11 +2,13 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.2.3",
+  version: "1.2.4",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
-  models: [],
+  // MiniMax-H3 is also served through the OpenAI-compatible gateway route.
+  // Keep the native hailuo plugin as a separate candidate for native channels.
+  models: ["MiniMax-H3"],
   fetchMode: "per_task",
   protocols: ["openai_video"],
   usageSchema: {
