@@ -725,7 +725,9 @@ func deliverVideoCallback(ctx context.Context, task *model.Task) {
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(body))
+	callbackCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(callbackCtx, http.MethodPost, callbackURL, bytes.NewReader(body))
 	if err != nil {
 		return
 	}
