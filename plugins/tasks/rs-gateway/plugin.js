@@ -7,7 +7,8 @@ export const meta = {
   author: { name: "RealSeek" },
   channelTypes: [61],
   models: [
-    "seedance-2.0", "seedance-2.5", "[c]seedance-2.0", "[c]seedance-2.5",
+    "seedance-2.0", "seedance-2.5", "doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628",
+    "[c]seedance-2.0", "[c]seedance-2.5",
     "MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5",
   ],
   fetchMode: "per_task",
@@ -167,17 +168,18 @@ export function buildSubmitRequest(ctx) {
     throw new Error("video duration requires top-level seconds or duration");
   }
   const upstreamModel = ctx.upstreamModel || ctx.model || "";
-  const fullSeedance = /^seedance-2\.[05]$/i.test(upstreamModel);
+  const fullSeedance = Boolean(seedanceModel({ upstreamModel }) && !/^\[c\]/i.test(upstreamModel));
   if (fullSeedance) {
     const resolution = String(body.resolution || "720p").trim().toLowerCase();
-    const allowed = upstreamModel.toLowerCase() === "seedance-2.5"
+    const is25 = /seedance-2[._-]5/i.test(upstreamModel);
+    const allowed = is25
       ? ["480p", "720p", "1080p"] : ["480p", "720p", "1080p", "4k"];
     if (!allowed.includes(resolution)) throw new Error("unsupported Seedance resolution");
-    if (duration !== undefined && duration !== -1 && (duration < 4 || duration > (allowed.includes("4k") ? 15 : 30))) {
+    if (duration !== undefined && duration !== -1 && (duration < 4 || duration > (is25 ? 30 : 15))) {
       throw new Error("unsupported Seedance duration");
     }
     body.resolution = resolution;
-    body.model = upstreamModel + "-" + resolution;
+    if (/^seedance-2\.[05]$/i.test(upstreamModel)) body.model = upstreamModel + "-" + resolution;
   }
   const base = ctx.baseUrl.replace(/\/$/, "");
   const path = ctx.action === "remix" ? "/v1/videos/" + encodeURIComponent(ctx.originTaskId) + "/remix" : "/v1/videos";

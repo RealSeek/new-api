@@ -52,7 +52,7 @@ func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{
-		"seedance-2.0", "seedance-2.5", "[c]seedance-2.0", "[c]seedance-2.5",
+		"seedance-2.0", "seedance-2.5", "doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628", "[c]seedance-2.0", "[c]seedance-2.5",
 		"MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5",
 	}, gatewayPlugin.Meta.Models)
 	channelPlugin, found := registry.Generation().GetByChannelType(61)
@@ -62,7 +62,7 @@ func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
 	require.Len(t, candidates, 2)
 	assert.Same(t, nativePlugin, candidates[0].Plugin)
 	assert.Same(t, gatewayPlugin, candidates[1].Plugin)
-	for _, model := range []string{"seedance-2.0", "seedance-2.5", "[c]seedance-2.0", "[c]MiniMaxH3", "grok-imagine-video-1.5"} {
+	for _, model := range []string{"seedance-2.0", "seedance-2.5", "doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628", "[c]seedance-2.0", "[c]MiniMaxH3", "grok-imagine-video-1.5"} {
 		candidates := registry.Generation().LookupEndpointCandidates("POST", "/v1/videos", model)
 		require.NotEmpty(t, candidates, model)
 		assert.Same(t, gatewayPlugin, candidates[len(candidates)-1].Plugin)
@@ -79,6 +79,8 @@ func TestRSGatewayMapsFullSeedanceResolutionWithoutChangingPublicRequest(t *test
 	}{
 		{"seedance-2.0", "4k", "seedance-2.0-4k"},
 		{"seedance-2.5", "720p", "seedance-2.5-720p"},
+		{"doubao-seedance-2-0-260128", "4k", "doubao-seedance-2-0-260128"},
+		{"doubao-seedance-2-5-260628", "720p", "doubao-seedance-2-5-260628"},
 		{"[c]seedance-2.0", "720p", "[c]seedance-2.0"},
 	} {
 		request := map[string]any{
@@ -296,14 +298,14 @@ func TestRSGatewayVideoV1MultipartUsesTheCanonicalContentShape(t *testing.T) {
 	decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
 		"model": "seedance-2.0",
 		"body": map[string]any{
-			"kind": "multipart",
+			"kind":   "multipart",
 			"fields": map[string]any{"prompt": []string{"from files"}, "duration": []string{"4"}, "resolution": []string{"480p"}, "ratio": []string{"16:9"}},
 			"files": []any{
 				map[string]any{"ref": "request_file:first_frame#0", "field": "first_frame", "mimeType": "image/png", "size": 3},
 				map[string]any{"ref": "request_file:last_frame#0", "field": "last_frame", "mimeType": "image/png", "size": 3},
 			},
 		},
-	},)
+	})
 	require.NoError(t, err)
 	requestBody := decoded.(map[string]any)["requestBody"].(map[string]any)
 	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
