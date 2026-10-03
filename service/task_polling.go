@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -111,6 +113,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		if !isLegacy && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, reason)
 		}
+		deliverVideoCallback(ctx, task)
 	}
 
 	if timedOutCount > 0 {
@@ -152,6 +155,19 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 				break
 			}
 			RefundTaskQuota(ctx, task, task.FailReason)
+		}
+	}
+	// Terminal tasks are not part of the unfinished-task query. Revisit a
+	// bounded recent window so callback failures survive process restarts and
+	// receive their remaining attempts without changing the task schema.
+	var callbackTasks []*model.Task
+	if err := model.DB.Where("platform = ? AND status IN ?", "rs-gateway", []model.TaskStatus{model.TaskStatusSuccess, model.TaskStatusFailure}).
+		Order("finish_time desc").Limit(100).Find(&callbackTasks).Error; err == nil {
+		for _, task := range callbackTasks {
+			if ctx.Err() != nil {
+				break
+			}
+			deliverVideoCallback(ctx, task)
 		}
 	}
 	allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
@@ -609,6 +625,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
+	persisted := false
 	if isDone && snap.Status != task.Status {
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {
@@ -617,10 +634,14 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		} else if !won {
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s CAS lost or no-op update, skip billing", task.TaskID))
 			shouldFinalizeBilling = false
+		} else {
+			persisted = true
 		}
 	} else if !snap.Equal(task.Snapshot()) {
-		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
+		if won, err := task.UpdateWithStatus(snap.Status); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
+		} else {
+			persisted = won
 		}
 	} else {
 		// No changes, skip update
@@ -629,6 +650,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	if shouldFinalizeBilling {
 		finalizeTerminalTask(ctx, adaptor, task, taskResult)
+	} else if persisted && task.Status != snap.Status {
+		deliverVideoCallback(ctx, task)
 	}
 
 	return nil
@@ -641,6 +664,119 @@ func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task 
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+	deliverVideoCallback(ctx, task)
+}
+
+const maxVideoCallbackAttempts = 8
+
+// deliverVideoCallback sends the callback recorded by the video plugin after
+// the task row and its billing outcome are durable. Progress callbacks are
+// best-effort; terminal callbacks are retried by the next polling pass.
+func deliverVideoCallback(ctx context.Context, task *model.Task) {
+	if task == nil || len(task.PrivateData.PluginState) == 0 {
+		return
+	}
+	var state map[string]any
+	if err := common.Unmarshal(task.PrivateData.PluginState, &state); err != nil {
+		return
+	}
+	callback, ok := state["callback"].(map[string]any)
+	if !ok {
+		return
+	}
+	callbackURL, _ := callback["url"].(string)
+	if callbackURL == "" {
+		return
+	}
+	parsed, err := url.Parse(callbackURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		logger.LogWarn(ctx, fmt.Sprintf("video callback rejected for task %s: invalid HTTPS URL", task.TaskID))
+		return
+	}
+	status := task.Status.ToVideoStatus()
+	if status == "unknown" {
+		return
+	}
+	if callback["notified_status"] == status || callback["exhausted_status"] == status {
+		return
+	}
+	previousStatus, _ := callback["observed_status"].(string)
+	if previousStatus != status {
+		callback["attempts"] = float64(0)
+	}
+	attempts, _ := callback["attempts"].(float64)
+	eventID := task.TaskID + ":" + status
+	payload := map[string]any{
+		"id": task.TaskID, "task_id": task.TaskID, "model": task.Properties.OriginModelName,
+		"status": status, "event_id": eventID,
+	}
+	if status == "completed" {
+		if task.PrivateData.ResultURL != "" {
+			payload["video_url"] = task.PrivateData.ResultURL
+		}
+		if lastFrame := taskLastFrameURL(task.Data); lastFrame != "" {
+			payload["last_frame_url"] = lastFrame
+		}
+	}
+	if status == "failed" {
+		payload["error"] = map[string]any{"code": "video_generation_failed", "message": task.FailReason}
+	}
+	body, err := common.Marshal(payload)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-MAI-Event-ID", eventID)
+	client := GetSSRFProtectedHTTPClient()
+	response, err := client.Do(req)
+	if err == nil {
+		io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+	}
+	if err == nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		callback["notified_status"] = status
+		callback["attempts"] = float64(0)
+		callback["observed_status"] = status
+	} else {
+		attempts++
+		callback["attempts"] = attempts
+		if attempts >= maxVideoCallbackAttempts {
+			callback["exhausted_status"] = status
+		}
+		logger.LogWarn(ctx, fmt.Sprintf("video callback failed for task %s status=%s attempt=%.0f: %v", task.TaskID, status, attempts, err))
+	}
+	encoded, err := common.Marshal(state)
+	if err != nil {
+		return
+	}
+	task.PrivateData.PluginState = encoded
+	if err := model.DB.Model(task).Update("private_data", task.PrivateData).Error; err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("persist video callback state failed for task %s: %v", task.TaskID, err))
+	}
+}
+
+func taskLastFrameURL(data []byte) string {
+	var root map[string]any
+	if common.Unmarshal(data, &root) != nil {
+		return ""
+	}
+	for _, candidate := range []any{root["last_frame_url"], root["lastFrameUrl"]} {
+		if value, ok := candidate.(string); ok && value != "" {
+			return value
+		}
+	}
+	for _, key := range []string{"result", "metadata", "content"} {
+		if child, ok := root[key].(map[string]any); ok {
+			if value, ok := child["last_frame_url"].(string); ok && value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func redactVideoResponseBody(body []byte) []byte {

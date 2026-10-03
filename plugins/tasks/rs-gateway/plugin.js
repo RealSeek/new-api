@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.4.0",
+  version: "1.5.0",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -34,13 +34,25 @@ function minimaxH3Model(ctx) {
 const VIDEO_OPTIONS = new Set([
   "generate_audio", "watermark", "return_last_frame", "video_format",
   "omni_reference_task_type", "priority", "execution_expires_after",
-  "safety_identifier", "tools", "face_required",
+  "safety_identifier", "tools", "face_required", "callback_url",
 ]);
+
+function validateCallbackURL(value) {
+  if (typeof value !== "string") throw new Error("callback_url must be a valid HTTPS URL");
+  const url = value.trim();
+  if (!/^https:\/\/[^\s/?#]+(?:[/?][^\s#]*)?$/i.test(url) || url.includes("@") || url.includes("#")) {
+    throw new Error("callback_url must be a valid HTTPS URL");
+  }
+  return url;
+}
 
 function normalizeVideoRequest(request) {
   if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("video request must be a JSON object");
   const canonical = request.contract_version !== undefined || request.prompt !== undefined || request.references !== undefined || request.options !== undefined;
   if (!canonical) return request;
+  // Protocol decoders persist this normalized internal shape before the host
+  // calls buildSubmitRequest. Keep that second hook invocation idempotent.
+  if (request.prompt !== undefined && request.content !== undefined && request.references === undefined && request.options === undefined && request.contract_version === undefined) return request;
   if (request.contract_version !== undefined && request.contract_version !== "video-v1") throw new Error("unsupported video contract_version");
   if (request.content !== undefined) throw new Error("content cannot be combined with prompt, references or options");
   if (typeof request.prompt !== "string" || !request.prompt.trim()) throw new Error("prompt is required");
@@ -69,17 +81,71 @@ function normalizeVideoRequest(request) {
   delete body.prompt;
   delete body.references;
   delete body.options;
-  for (const [key, value] of Object.entries(options)) {
+  for (let [key, value] of Object.entries(options)) {
     if (!VIDEO_OPTIONS.has(key)) throw new Error("unsupported video option: " + key);
     const target = key === "video_format" ? "output_format" : key;
+    if (key === "callback_url") value = validateCallbackURL(value);
     if (body[target] !== undefined && body[target] !== value) throw new Error("conflicting video option: " + key);
     body[target] = value;
   }
   return body;
 }
 
+function multipartRequest(ctx) {
+  const fields = ctx.body && ctx.body.fields;
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new Error("multipart fields are required");
+  const allowedFields = new Set(["contract_version", "model", "prompt", "duration", "resolution", "ratio", "references", "options"]);
+  for (const name of Object.keys(fields)) if (!allowedFields.has(name)) throw new Error("unsupported video multipart field: " + name);
+  const value = (name) => {
+    const values = fields[name];
+    if (values === undefined) return undefined;
+    if (!Array.isArray(values) || values.length !== 1) throw new Error(name + " must be provided once");
+    return values[0];
+  };
+  const body = {};
+  for (const name of ["contract_version", "model", "prompt", "resolution", "ratio"]) {
+    const item = value(name);
+    if (item !== undefined) body[name] = item;
+  }
+  const duration = value("duration");
+  if (duration !== undefined) {
+    const parsed = Number(duration);
+    if (!Number.isInteger(parsed)) throw new Error("duration must be an integer");
+    body.duration = parsed;
+  }
+  for (const name of ["references", "options"]) {
+    const raw = value(name);
+    if (raw === undefined) continue;
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { throw new Error(name + " must be valid JSON"); }
+    body[name] = parsed;
+  }
+  if (typeof body.prompt !== "string" || !body.prompt.trim()) throw new Error("prompt is required");
+  if (body.model === undefined) body.model = ctx.model;
+  return body;
+}
+
+function appendMultipartReferences(body, files) {
+  if (!Array.isArray(files) || files.length === 0) return body;
+  const content = Array.isArray(body.content) ? body.content.slice() : [];
+  const roles = { image: ["image", "reference_image"], first_frame: ["image", "first_frame"], last_frame: ["image", "last_frame"], audio: ["audio", "reference_audio"] };
+  for (const file of files) {
+    const mapping = roles[file.field];
+    if (!mapping) {
+      if (file.field === "video") throw new Error("multipart reference video must be a public HTTPS URL");
+      throw new Error("unsupported video multipart field: " + String(file.field || ""));
+    }
+    const placeholder = { __fileRef: file.ref, encoding: "dataUrl", mimeType: file.mimeType, maxBytes: 32 * 1024 * 1024 };
+    const urlKey = mapping[0] === "image" ? "image_url" : "audio_url";
+    content.push({ type: urlKey, role: mapping[1], [urlKey]: { url: placeholder } });
+  }
+  return Object.assign({}, body, { content });
+}
+
 export function buildSubmitRequest(ctx) {
-  const body = Object.assign({}, normalizeVideoRequest(ctx.requestBody), { model: ctx.upstreamModel });
+  let body = Object.assign({}, normalizeVideoRequest(ctx.requestBody), { model: ctx.upstreamModel });
+  body = appendMultipartReferences(body, ctx.files);
+  delete body.callback_url;
   if (/^\[c\]seedance-2[._-]5$/i.test(ctx.model || ctx.requestBody.model || "") && Number(body.duration ?? body.seconds) !== 30) {
     throw new Error("[c]seedance-2.5 requires duration 30 seconds");
   }
@@ -118,16 +184,6 @@ export function buildSubmitRequest(ctx) {
   const headers = { Authorization: "Bearer " + ctx.apiKey };
   for (const name of Object.keys(ctx.requestHeaders || {})) {
     if (name.toLowerCase() === "idempotency-key") headers["Idempotency-Key"] = ctx.requestHeaders[name];
-  }
-  if ((ctx.files || []).length || String((ctx.requestHeaders || {})["Content-Type"] || "").includes("multipart/form-data")) {
-    const parts = [];
-    for (const key of Object.keys(body)) {
-      if (body[key] !== undefined && body[key] !== null) {
-        parts.push({ name: key, value: typeof body[key] === "object" ? JSON.stringify(body[key]) : body[key] });
-      }
-    }
-    for (const file of ctx.files || []) parts.push({ name: file.field, fileRef: file.ref, filename: file.filename });
-    return { url: base + path, method: "POST", headers, bodyType: "multipart", parts };
   }
   headers["Content-Type"] = "application/json";
   return { url: base + path, method: "POST", headers, body };
@@ -183,7 +239,12 @@ export function parseSubmitResponse(_ctx, resp) {
   const body = resp.body || {};
   const taskId = body.id || body.task_id;
   if (!taskId) throw new Error("gateway task id is missing");
-  return { taskId, taskData: body };
+  const callbackUrl = _ctx && _ctx.requestBody && _ctx.requestBody.callback_url;
+  return {
+    taskId,
+    taskData: body,
+    ...(callbackUrl ? { state: { callback: { url: callbackUrl, notified_status: "", attempts: 0, exhausted_status: "" } } } : {}),
+  };
 }
 
 export function buildQueryRequest(ctx) {
@@ -211,6 +272,10 @@ export function parseTaskResult(_ctx, body) {
   if (status === "UNKNOWN") result.reason = "unrecognized gateway task status: " + String(body.status || "");
   if (status === "FAILURE") result.reason = (body.error || {}).message || body.fail_reason || "gateway task failed";
   if (Number(body.progress) >= 0 && Number(body.progress) <= 100) result.progress = Number(body.progress) + "%";
+  const prior = _ctx && _ctx.state && typeof _ctx.state === "object" && !Array.isArray(_ctx.state) ? _ctx.state : null;
+  if (prior && prior.callback && typeof prior.callback === "object") {
+    result.state = { ...prior, callback: { ...prior.callback, observed_status: status } };
+  }
   return result;
 }
 
@@ -230,7 +295,8 @@ export function buildContentRequest(ctx) {
 export const protocols = {
   openai_video: {
     decodeRequest(ctx) {
-      if (ctx.body.kind !== "json") throw new Error("JSON body required");
+      if (ctx.body.kind === "multipart") return { kind: "submit", model: ctx.model, requestBody: normalizeVideoRequest(multipartRequest(ctx)) };
+      if (ctx.body.kind !== "json") throw new Error("JSON or multipart body required");
       return { kind: "submit", model: ctx.model, requestBody: normalizeVideoRequest(ctx.body.value) };
     },
     render(_ctx, task) {

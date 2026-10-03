@@ -275,7 +275,7 @@ func TestRSGatewayVideoV1RejectsUnsupportedInput(t *testing.T) {
 		request     map[string]any
 	}{
 		{"mixed media formats", "content cannot be combined", map[string]any{"prompt": "a wave", "content": []any{}, "references": []any{}}},
-		{"unsupported option", "unsupported video option: callback_url", map[string]any{"prompt": "a wave", "options": map[string]any{"callback_url": "https://example.com/hook"}}},
+		{"invalid callback", "callback_url must be a valid HTTPS URL", map[string]any{"prompt": "a wave", "options": map[string]any{"callback_url": "http://example.com/hook"}}},
 		{"private asset", "reference source must be", map[string]any{"prompt": "a wave", "references": []any{map[string]any{"type": "image", "role": "reference_image", "source": "asset://private"}}}},
 		{"fixed Seedance duration", "requires duration 30 seconds", map[string]any{"model": "[c]seedance-2.5", "prompt": "a wave", "duration": 5}},
 	} {
@@ -286,4 +286,53 @@ func TestRSGatewayVideoV1RejectsUnsupportedInput(t *testing.T) {
 			require.ErrorContains(t, err, tc.extra)
 		})
 	}
+}
+
+func TestRSGatewayVideoV1MultipartUsesTheCanonicalContentShape(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+		"model": "seedance-2.0",
+		"body": map[string]any{
+			"kind": "multipart",
+			"fields": map[string]any{"prompt": []string{"from files"}, "duration": []string{"4"}, "resolution": []string{"480p"}, "ratio": []string{"16:9"}},
+			"files": []any{
+				map[string]any{"ref": "request_file:first_frame#0", "field": "first_frame", "mimeType": "image/png", "size": 3},
+				map[string]any{"ref": "request_file:last_frame#0", "field": "last_frame", "mimeType": "image/png", "size": 3},
+			},
+		},
+	},)
+	require.NoError(t, err)
+	requestBody := decoded.(map[string]any)["requestBody"].(map[string]any)
+	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+		"model": "seedance-2.0", "upstreamModel": "seedance-2.0", "requestBody": requestBody,
+		"files": []any{
+			map[string]any{"ref": "request_file:first_frame#0", "field": "first_frame", "mimeType": "image/png", "size": 3},
+			map[string]any{"ref": "request_file:last_frame#0", "field": "last_frame", "mimeType": "image/png", "size": 3},
+		}, "baseUrl": "https://gateway.example",
+	})
+	require.NoError(t, err)
+	body := value.(map[string]any)["body"].(map[string]any)
+	content := body["content"].([]any)
+	assert.Equal(t, "first_frame", content[1].(map[string]any)["role"])
+	assert.Equal(t, "last_frame", content[2].(map[string]any)["role"])
+	assert.Equal(t, "dataUrl", content[1].(map[string]any)["image_url"].(map[string]any)["url"].(map[string]any)["encoding"])
+}
+
+func TestRSGatewayVideoCallbackIsStoredButNeverForwardedUpstream(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	request := map[string]any{"contract_version": "video-v1", "model": "seedance-2.0", "prompt": "a wave", "duration": 4,
+		"options": map[string]any{"callback_url": "https://hooks.example/video"}}
+	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": request, "upstreamModel": "seedance-2.0", "baseUrl": "https://gateway.example"})
+	require.NoError(t, err)
+	assert.NotContains(t, value.(map[string]any)["body"].(map[string]any), "callback_url")
+	parsed, err := plugin.Engine.Call(t.Context(), "parseSubmitResponse", map[string]any{"requestBody": map[string]any{"callback_url": "https://hooks.example/video"}}, map[string]any{"body": map[string]any{"id": "upstream-task"}})
+	require.NoError(t, err)
+	state := parsed.(map[string]any)["state"].(map[string]any)
+	assert.Equal(t, "https://hooks.example/video", state["callback"].(map[string]any)["url"])
 }
