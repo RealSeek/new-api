@@ -1124,6 +1124,28 @@ func TestSubmitContextOmitsOriginTasksWhenEmpty(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestSubmitContextPassesIdempotencyKey(t *testing.T) {
+	plugin, err := pluginruntime.NewRegistry().Register(mockPlugin, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example", ApiKey: "secret"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor.Init(info)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Request.Header.Set("Idempotency-Key", "art-video-task-123")
+
+	ctx := adaptor.submitContext(c, info)
+
+	assert.Equal(t, map[string]string{
+		"Content-Type":    "",
+		"Accept":          "",
+		"Idempotency-Key": "art-video-task-123",
+	}, ctx["requestHeaders"])
+}
+
 func TestSubmitContextOriginTasksNilDataOnInvalidJSON(t *testing.T) {
 	plugin, err := pluginruntime.NewRegistry().Register(mockPlugin, pluginruntime.Options{})
 	require.NoError(t, err)

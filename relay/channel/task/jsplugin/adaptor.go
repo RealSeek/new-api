@@ -1357,6 +1357,9 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 			}
 			requestHeaders["Content-Type"] = c.GetHeader("Content-Type")
 			requestHeaders["Accept"] = c.GetHeader("Accept")
+			if idempotencyKey := c.GetHeader("Idempotency-Key"); idempotencyKey != "" {
+				requestHeaders["Idempotency-Key"] = idempotencyKey
+			}
 			if strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
 				if form, err := common.ParseMultipartFormReusable(c); err == nil {
 					defer form.RemoveAll()
