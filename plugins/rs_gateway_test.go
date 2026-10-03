@@ -47,3 +47,21 @@ func TestRSGatewayRejectsFractionalDurationBeforeBilling(t *testing.T) {
 	_, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": map[string]any{"seconds": 8.5}, "upstreamModel": "video", "baseUrl": "https://gateway.example"})
 	require.Error(t, err)
 }
+
+func TestRSGatewayReportsOneRequestForPerVideoPricing(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	ctx := map[string]any{
+		"upstreamModel": "[c]seedance-2.5",
+		"requestBody": map[string]any{"model": "[c]seedance-2.5", "duration": 30, "resolution": "720p"},
+	}
+	value, err := plugin.Engine.Call(t.Context(), "extractUsage", ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, value.(map[string]any)["requests"])
+	assert.EqualValues(t, 30, value.(map[string]any)["seconds"])
+	_, examples := plugin.Meta.UsageForModel("[c]seedance-2.5")
+	require.NotEmpty(t, examples)
+	assert.EqualValues(t, 1, examples[0].Facts["requests"])
+}

@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.2.2",
+  version: "1.2.3",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -11,15 +11,16 @@ export const meta = {
   protocols: ["openai_video"],
   usageSchema: {
     resolution: { enum: ["480p", "720p", "1080p", "4k"], allowCustomValues: true, description: { en: "Output video resolution", zh: "输出视频分辨率" } },
+    requests: { type: "number", unit: "count", unitLabel: { en: "video", zh: "次" }, description: { en: "Video generation unit price", zh: "视频生成单价" } },
     seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
     tokens: { type: "number", unit: "token", description: { en: "Video generation token unit price", zh: "视频生成 Token 单价" } },
     video_input: { type: "boolean", description: { en: "Reference video present", zh: "存在参考视频" } },
   },
-  usageExamples: [{ label: "720p · 5s", facts: { resolution: "720p", seconds: 5, tokens: 108000, video_input: false } }],
+  usageExamples: [{ label: "720p · 5s", facts: { resolution: "720p", requests: 1, seconds: 5, tokens: 108000, video_input: false } }],
 };
 
 function seedanceModel(ctx) {
-  const model = /^(seedance-2\.[05])(?:-(480p|720p|1080p|4k))?$/.exec(ctx.upstreamModel || ctx.model || "");
+  const model = /^(?:\[c\])?(seedance-2\.[05])(?:-(480p|720p|1080p|4k))?$/.exec(ctx.upstreamModel || ctx.model || "");
   return model && !(model[1] === "seedance-2.5" && model[2] === "4k") ? model : null;
 }
 
@@ -82,7 +83,7 @@ export function extractUsage(ctx) {
   const pixels = { "480p": 854 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080, "4k": 3840 * 2160 }[resolution];
   if (!pixels) throw new Error("unsupported Seedance resolution for token budget");
   // Keep the removed field at zero for expressions saved against older metadata.
-  return { resolution, seconds, tokens: Math.ceil((seconds + (videoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: videoInput, web_search_calls: 0 };
+  return { resolution, requests: 1, seconds, tokens: Math.ceil((seconds + (videoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: videoInput, web_search_calls: 0 };
 }
 
 export function extractUsageOnComplete(_ctx, result, body) {
