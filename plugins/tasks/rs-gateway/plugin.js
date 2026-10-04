@@ -170,6 +170,8 @@ export function buildSubmitRequest(ctx) {
   const upstreamModel = ctx.upstreamModel || ctx.model || "";
   const fullSeedance = Boolean(seedanceModel({ upstreamModel }) && !/^\[c\]/i.test(upstreamModel));
   if (fullSeedance) {
+    const routedAlias = /^(seedance-2\.[05])-(?:480p|720p|1080p|4k)$/i.exec(upstreamModel);
+    if (routedAlias) body.model = routedAlias[1];
     const resolution = String(body.resolution || "720p").trim().toLowerCase();
     const is25 = /seedance-2[._-]5/i.test(upstreamModel);
     const allowed = is25

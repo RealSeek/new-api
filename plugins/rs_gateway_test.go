@@ -75,20 +75,20 @@ func TestRSGatewayMapsFullSeedanceResolutionWithoutChangingPublicRequest(t *test
 	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		model, resolution, want string
+		model, upstreamModel, resolution, want string
 	}{
-		{"seedance-2.0", "4k", "seedance-2.0"},
-		{"seedance-2.5", "720p", "seedance-2.5"},
-		{"doubao-seedance-2-0-260128", "4k", "doubao-seedance-2-0-260128"},
-		{"doubao-seedance-2-5-260628", "720p", "doubao-seedance-2-5-260628"},
-		{"[c]seedance-2.0", "720p", "[c]seedance-2.0"},
+		{"seedance-2.0", "seedance-2.0-4k", "4k", "seedance-2.0"},
+		{"seedance-2.5", "seedance-2.5-720p", "720p", "seedance-2.5"},
+		{"doubao-seedance-2-0-260128", "doubao-seedance-2-0-260128", "4k", "doubao-seedance-2-0-260128"},
+		{"doubao-seedance-2-5-260628", "doubao-seedance-2-5-260628", "720p", "doubao-seedance-2-5-260628"},
+		{"[c]seedance-2.0", "[c]seedance-2.0", "720p", "[c]seedance-2.0"},
 	} {
 		request := map[string]any{
 			"contract_version": "video-v1", "model": tc.model, "prompt": "a wave",
 			"duration": 5, "resolution": tc.resolution, "ratio": "16:9",
 		}
 		value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
-			"model": tc.model, "upstreamModel": tc.model, "requestBody": request,
+			"model": tc.model, "upstreamModel": tc.upstreamModel, "requestBody": request,
 			"baseUrl": "https://gateway.example", "apiKey": "channel-key",
 		})
 		require.NoError(t, err)
