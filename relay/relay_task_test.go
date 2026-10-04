@@ -630,7 +630,9 @@ func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 			if resolution == "" {
 				resolution = "720p"
 			}
-			body["model"] = tc.model + "-" + resolution
+			body["model"] = tc.model
+			body["resolution"] = resolution
+			delete(body, "callback_url")
 			wantBody, err := common.Marshal(body)
 			require.NoError(t, err)
 			actualBody, err := common.Marshal(forwarded)
