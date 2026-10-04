@@ -280,6 +280,14 @@ func updatePricing() {
 		names = append(names, ability.Model)
 	}
 	metaMap := resolveModelMetadata(allMeta, names)
+	channelDescriptions := map[string]string{}
+	if rows, err := GetChannelModelDescriptions(); err == nil {
+		for _, row := range rows {
+			if _, exists := channelDescriptions[row.ModelName]; !exists && row.Description != "" {
+				channelDescriptions[row.ModelName] = row.Description
+			}
+		}
+	}
 
 	// 预加载供应商
 	var vendors []Vendor
@@ -477,6 +485,9 @@ func updatePricing() {
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
+		}
+		if description, ok := channelDescriptions[model]; ok {
+			pricing.Description = description
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {

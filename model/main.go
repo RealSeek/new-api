@@ -371,6 +371,7 @@ func migrateDB() error {
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
+		&ChannelModelDescription{},
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},

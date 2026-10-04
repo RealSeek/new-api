@@ -5,10 +5,7 @@ import (
 	"strconv"
 
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
-
 	"github.com/gin-gonic/gin"
-	"github.com/samber/lo"
 )
 
 func GetPerfMetricsSummary(c *gin.Context) {
@@ -19,8 +16,10 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		}
 	}
 
-	activeGroups := append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto")
-	result, err := perfmetrics.QuerySummaryAll(hours, activeGroups)
+	// Performance history is keyed by the group used at request time. Do not
+	// filter it by the currently configured group ratios: removing or renaming
+	// a group must not make existing model metrics disappear from the square.
+	result, err := perfmetrics.QuerySummaryAll(hours, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -53,10 +52,9 @@ func GetPerfMetrics(c *gin.Context) {
 	}
 
 	result, err := perfmetrics.Query(perfmetrics.QueryParams{
-		Model:         modelName,
-		Group:         c.Query("group"),
-		Hours:         hours,
-		AllowedGroups: append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto"),
+		Model: modelName,
+		Group: c.Query("group"),
+		Hours: hours,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

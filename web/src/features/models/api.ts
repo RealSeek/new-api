@@ -38,6 +38,29 @@ import type {
   ListDeploymentsResponse,
 } from './types'
 
+export type ChannelModelDescription = {
+  id: number
+  channel_id: number
+  model_name: string
+  description: string
+  enabled: boolean
+}
+
+export async function getChannelModelDescriptions() {
+  const res = await api.get<{ success: boolean; data: ChannelModelDescription[] }>('/api/models/channel-descriptions')
+  return res.data
+}
+
+export async function saveChannelModelDescription(data: Omit<ChannelModelDescription, 'id'> & { id?: number }) {
+  const res = await api.put<{ success: boolean; data: ChannelModelDescription }>('/api/models/channel-descriptions', data)
+  return res.data
+}
+
+export async function deleteChannelModelDescription(id: number) {
+  const res = await api.delete(`/api/models/channel-descriptions/${id}`)
+  return res.data
+}
+
 // ============================================================================
 // Model CRUD Operations
 // ============================================================================

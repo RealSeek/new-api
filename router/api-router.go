@@ -403,6 +403,9 @@ func SetApiRouter(router *gin.Engine) {
 		modelsRoute := apiRouter.Group("/models")
 		modelsRoute.Use(middleware.AdminAuth())
 		{
+			modelsRoute.GET("/channel-descriptions", controller.ListChannelModelDescriptions)
+			modelsRoute.PUT("/channel-descriptions", controller.UpsertChannelModelDescription)
+			modelsRoute.DELETE("/channel-descriptions/:id", controller.DeleteChannelModelDescription)
 			modelsRoute.GET("/sync_upstream/preview", controller.SyncUpstreamPreview)
 			modelsRoute.POST("/sync_upstream", controller.SyncUpstreamModels)
 			modelsRoute.POST("/delete", controller.BatchDeleteModelMeta)

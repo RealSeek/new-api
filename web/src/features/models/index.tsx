@@ -36,6 +36,7 @@ import { ModelsPrimaryButtons } from './components/models-primary-buttons'
 import { ModelsProvider, useModels } from './components/models-provider'
 import { ModelsTable } from './components/models-table'
 import { VendorsTable } from './components/vendors-table'
+import { ModelDescriptions } from './components/model-descriptions'
 import { useModelDeploymentSettings } from './hooks/use-model-deployment-settings'
 import { deploymentsQueryKeys } from './lib'
 import {
@@ -59,6 +60,7 @@ const SECTION_META: Record<
     titleKey: 'Deployments',
     tabKey: 'Deployments',
   },
+  descriptions: { titleKey: 'Model descriptions', tabKey: 'Descriptions' },
 }
 
 function ModelsContent() {
@@ -92,7 +94,7 @@ function ModelsContent() {
 
   const meta = SECTION_META[activeSection] ?? SECTION_META.metadata
 
-  let actions = <ModelsPrimaryButtons />
+  let actions: React.ReactNode = <ModelsPrimaryButtons />
   let content = <ModelsTable />
   if (activeSection === 'vendors') {
     actions = (
@@ -116,6 +118,9 @@ function ModelsContent() {
       </Button>
     )
     content = <DeploymentsSection />
+  } else if (activeSection === 'descriptions') {
+    actions = <span />
+    content = <ModelDescriptions />
   }
 
   return (
