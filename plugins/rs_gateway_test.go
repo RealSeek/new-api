@@ -39,6 +39,32 @@ func TestRSGatewayPluginPreservesArbitraryVideoRequest(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRSGatewayVideoContentUsesReturnedSignedURL(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	for _, field := range []string{"result", "metadata"} {
+		for _, method := range []string{"GET", "HEAD"} {
+			t.Run(field+"/"+method, func(t *testing.T) {
+				url := "https://cdn.example/video.mp4?signature=signed%2Fvalue&expires=86400"
+				value, err := plugin.Engine.Call(t.Context(), "buildContentRequest", map[string]any{
+					"artifactKey": "video", "upstreamTaskId": "private/task",
+					"baseUrl": "https://gateway.example", "apiKey": "channel-secret",
+					"data":          map[string]any{field: map[string]any{"url": url}},
+					"clientRequest": map[string]any{"method": method},
+				})
+				require.NoError(t, err)
+				request := value.(map[string]any)
+				assert.Equal(t, url, request["url"])
+				assert.Equal(t, method, request["method"])
+				assert.Equal(t, true, request["credentialless"])
+				assert.NotContains(t, request, "headers")
+			})
+		}
+	}
+}
+
 func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
 	nativeSource, err := Source("hailuo")
 	require.NoError(t, err)

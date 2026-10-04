@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.5.0",
+  version: "1.5.1",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -288,6 +288,11 @@ export function listArtifacts(task) {
 
 export function buildContentRequest(ctx) {
   if (ctx.artifactKey !== "video") throw new Error("artifact_not_found");
+  const data = ctx.data || {};
+  const url = String((data.result || {}).url || (data.metadata || {}).url || "").trim();
+  if (url.startsWith("https://")) {
+    return { url, method: ctx.clientRequest.method, credentialless: true };
+  }
   return {
     url: ctx.baseUrl.replace(/\/$/, "") + "/v1/videos/" + encodeURIComponent(ctx.upstreamTaskId) + "/content",
     method: ctx.clientRequest.method,
