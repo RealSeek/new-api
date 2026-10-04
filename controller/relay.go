@@ -112,9 +112,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo := relaycommon.GenRSGatewayRelayInfo(c, relayFormat, ws)
 		if relayFormat == types.RelayFormatOpenAIRealtime {
 			newAPIError = relay.WssHelper(c, relayInfo)
-		} else {
-			newAPIError = relay.RSGatewayHelper(c, relayInfo)
+			return
 		}
+		defer func() {
+			perfmetrics.RecordRelayResult(c.Request.Context(), relayInfo, newAPIError)
+		}()
+		newAPIError = relay.RSGatewayHelper(c, relayInfo)
 		return
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -24,7 +25,7 @@ import (
 func TestRelayRSGatewaySkipsRequestValidationAndNormalizesErrorResponse(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.RSGatewaySettlement{}))
+	require.NoError(t, db.AutoMigrate(&model.RSGatewaySettlement{}, &model.PerfMetric{}))
 	originalDB := model.DB
 	model.DB = db
 	t.Cleanup(func() { model.DB = originalDB })
@@ -113,4 +114,12 @@ func TestRelayRSGatewaySkipsRequestValidationAndNormalizesErrorResponse(t *testi
 	assert.Equal(t, "rate_limit_error", response.Error.Type)
 	assert.Equal(t, "rate_limit_exceeded", response.Error.Code)
 	assert.Empty(t, response.Error.Param)
+
+	// Gateway relays return before the generic relay path, so they must still
+	// feed the model performance metrics.
+	metrics, err := perfmetrics.Query(perfmetrics.QueryParams{Model: "gateway-model", Hours: 1})
+	require.NoError(t, err)
+	require.NotNil(t, metrics.Summary)
+	assert.Equal(t, float64(0), metrics.Summary.SuccessRate)
+	require.Len(t, metrics.Groups, 1)
 }
