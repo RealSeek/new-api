@@ -24,17 +24,18 @@ func ClassifyRelayOutcome(ctx context.Context, info *relaycommon.RelayInfo, apiE
 	if info == nil || info.PerformanceBusinessRejection {
 		return OutcomeIgnored
 	}
-	if ctx != nil && ctx.Err() == context.Canceled {
-		return OutcomeIgnored
-	}
-	if apiErr != nil && errors.Is(apiErr, context.Canceled) {
-		return OutcomeIgnored
-	}
+	// A cancelled request context can mean either a client disconnect or an
+	// upstream gateway request being aborted. The latter is a real service
+	// failure and must remain visible in health metrics; stream status below
+	// preserves the explicit client-gone/cancelled cases as ignored.
 	stream := info.StreamStatus.OutcomeSnapshot()
 	if stream.Response == relaycommon.ResponseOutcomeFailed {
 		return classifyFailure(false, stream.ErrorCode, stream.ErrorType, stream.ErrorStatus)
 	}
 	if apiErr != nil {
+		if errors.Is(apiErr, context.Canceled) {
+			return OutcomeFailure
+		}
 		root := rootAPIError(apiErr)
 		local := root.GetErrorType() == types.ErrorTypeNewAPIError
 		return classifyFailure(local, string(root.GetErrorCode()), root.ToOpenAIError().Type, root.StatusCode)
