@@ -27,6 +27,7 @@ type taskArtifactResponse struct {
 	Type       string `json:"type"`
 	MimeType   string `json:"mime_type,omitempty"`
 	ContentURL string `json:"content_url"`
+	DirectURL  string `json:"direct_url,omitempty"`
 }
 
 var (
@@ -110,6 +111,23 @@ func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
 			MimeType:   artifact.MimeType,
 			ContentURL: contentURL,
 		})
+		if task.Platform == constant.TaskPlatform("rs-gateway") {
+			adaptor, resolveErr := initTaskArtifactAdaptor(task)
+			if resolveErr != nil {
+				writeTaskArtifactProjectionError(c, resolveErr)
+				return
+			}
+			if provider, ok := adaptor.(relaychannel.TaskContentRequestProvider); ok {
+				request, resolveErr := provider.BuildContentRequest(task, artifact.Key, relaychannel.TaskArtifactClientRequest{Method: http.MethodGet})
+				if resolveErr != nil {
+					writeTaskArtifactProjectionError(c, resolveErr)
+					return
+				}
+				if request != nil && request.Credentialless {
+					items[len(items)-1].DirectURL = request.URL
+				}
+			}
+		}
 	}
 	response := gin.H{"task_id": task.TaskID, "artifacts": items}
 	if dashboard && task.Status == model.TaskStatusSuccess && task.Platform == constant.TaskPlatformSuno {

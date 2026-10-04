@@ -53,7 +53,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function parseContentUrl(value: unknown): string {
+function parseContentUrl(value: unknown, direct = false): string {
   if (typeof value !== 'string') {
     throw new TaskArtifactApiError('invalid_content_url')
   }
@@ -89,10 +89,13 @@ function parseContentUrl(value: unknown): string {
       url.username ||
       url.password ||
       url.hash ||
-      !taskArtifactContentPathPattern.test(url.pathname)
+      (direct
+        ? url.protocol !== 'https:'
+        : !taskArtifactContentPathPattern.test(url.pathname))
     ) {
       throw new TaskArtifactApiError('invalid_content_url')
     }
+    if (direct) return contentUrl
     const accessToken = url.searchParams.get('access')
     if (
       accessToken == null ||
@@ -127,6 +130,9 @@ function parseTaskArtifact(value: unknown): TaskArtifact {
     key,
     type: type as TaskArtifact['type'],
     content_url: parseContentUrl(value.content_url),
+  }
+  if (value.direct_url != null) {
+    artifact.direct_url = parseContentUrl(value.direct_url, true)
   }
   if (typeof value.mime_type === 'string' && value.mime_type.trim()) {
     const mimeType = value.mime_type.trim()

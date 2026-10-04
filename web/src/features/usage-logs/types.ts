@@ -387,6 +387,7 @@ export interface TaskArtifact {
   type: TaskArtifactType
   mime_type?: string
   content_url: string
+  direct_url?: string
 }
 
 export interface AudioClip {

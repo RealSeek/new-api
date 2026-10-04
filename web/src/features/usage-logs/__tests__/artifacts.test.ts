@@ -88,6 +88,39 @@ describe('task artifact projection', () => {
     )
   })
 
+  test('preserves original signed HTTPS artifact URLs and rejects unsafe direct URLs', () => {
+    const directUrl =
+      'https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/video.mp4?X-Tos-Signature=original%2Fsignature&X-Tos-Expires=86400'
+    const artifact = {
+      key: 'video',
+      type: 'video',
+      content_url: artifactContentUrl('video'),
+      direct_url: directUrl,
+    }
+    assert.equal(
+      parseTaskArtifactsResponse({
+        success: true,
+        data: { artifacts: [artifact] },
+      }).artifacts[0]?.direct_url,
+      directUrl
+    )
+    for (const unsafeUrl of [
+      'javascript:alert(1)',
+      'http://cdn.example/video.mp4',
+      'https://user:secret@cdn.example/video.mp4',
+      'https://cdn.example/video.mp4#fragment',
+    ]) {
+      assert.throws(
+        () =>
+          parseTaskArtifactsResponse({
+            success: true,
+            data: { artifacts: [{ ...artifact, direct_url: unsafeUrl }] },
+          }),
+        TaskArtifactApiError
+      )
+    }
+  })
+
   test('keeps stable absolute cross-origin content URLs', () => {
     assert.deepEqual(
       parseTaskArtifactsResponse({

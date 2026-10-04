@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.5.1",
+  version: "1.5.2",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -318,9 +318,10 @@ export const protocols = {
       });
       if (task.status === "SUCCESS") {
         const details = result.result && typeof result.result === "object" && !Array.isArray(result.result) ? result.result : {};
+        const videoURL = details.url || (result.metadata || {}).url;
         const lastFrame = details.last_frame_url || result.last_frame_url || (result.metadata || {}).last_frame_url;
         result.result = Object.assign({}, details, {
-          url: "/v1/videos/" + encodeURIComponent(task.task_id) + "/content",
+          url: videoURL || "/v1/videos/" + encodeURIComponent(task.task_id) + "/content",
           ...(lastFrame ? { last_frame_url: lastFrame } : {}),
         });
       }

@@ -211,6 +211,7 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
   const [mediaFailed, setMediaFailed] = useState(false)
   const [mediaRevision, setMediaRevision] = useState(0)
   const icon = artifactIcon(props.artifact.type)
+  const mediaUrl = props.artifact.direct_url ?? props.artifact.content_url
   const isVisualArtifact =
     props.artifact.type === 'image' || props.artifact.type === 'video'
 
@@ -238,7 +239,7 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
       <ArtifactMedia
         key={mediaRevision}
         artifact={props.artifact}
-        mediaUrl={props.artifact.content_url}
+        mediaUrl={mediaUrl}
         onError={() => setMediaFailed(true)}
       />
     )
@@ -262,6 +263,17 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
           <span className='block truncate font-mono text-xs'>
             {props.artifact.key}
           </span>
+          {props.artifact.direct_url ? (
+            <a
+              href={props.artifact.direct_url}
+              target='_blank'
+              rel='noopener noreferrer'
+              className='block truncate text-xs underline'
+              title={props.artifact.direct_url}
+            >
+              {new URL(props.artifact.direct_url).hostname}
+            </a>
+          ) : null}
           {props.artifact.mime_type ? (
             <span className='block truncate font-mono text-[11px]'>
               {props.artifact.mime_type}
@@ -277,7 +289,7 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
           nativeButton={false}
           render={
             <a
-              href={props.artifact.content_url}
+              href={mediaUrl}
               download={props.artifact.key}
               target='_blank'
               rel='noopener noreferrer'

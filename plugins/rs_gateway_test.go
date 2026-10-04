@@ -60,6 +60,13 @@ func TestRSGatewayVideoContentUsesReturnedSignedURL(t *testing.T) {
 				assert.Equal(t, "GET", request["method"])
 				assert.Equal(t, true, request["credentialless"])
 				assert.NotContains(t, request, "headers")
+				rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
+					map[string]any{}, map[string]any{
+						"task_id": "public-task", "status": "SUCCESS",
+						"data": map[string]any{field: map[string]any{"url": url}},
+					})
+				require.NoError(t, err)
+				assert.Equal(t, url, rendered.(map[string]any)["result"].(map[string]any)["url"])
 			})
 		}
 	}

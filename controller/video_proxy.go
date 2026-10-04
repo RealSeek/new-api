@@ -180,6 +180,12 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 			message: "Artifact proxy loop was rejected", err: errTaskMediaRequestRejected,
 		}
 	}
+	if task.Platform == constant.TaskPlatform("rs-gateway") && descriptor.Credentialless && parsedURL.Scheme == "https" && c.Request.Method == http.MethodGet {
+		c.Header("Cache-Control", "private, no-store")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Redirect(http.StatusFound, rawURL)
+		return nil
+	}
 
 	method := strings.ToUpper(strings.TrimSpace(descriptor.Method))
 	if method == "" {

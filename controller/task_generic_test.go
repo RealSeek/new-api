@@ -401,6 +401,50 @@ func TestDisabledArtifactStorePreservesPluginUpstreamContent(t *testing.T) {
 	assert.Equal(t, "bytes 0-13/14", recorder.Header().Get("Content-Range"))
 }
 
+func TestRSGatewayArtifactsExposeAndRedirectToOriginalURL(t *testing.T) {
+	task := setupGenericTaskTest(t)
+	previousAddress := system_setting.TaskPublicAddress
+	previousMemoryCache := common.MemoryCacheEnabled
+	system_setting.TaskPublicAddress = "https://gateway.example"
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		system_setting.TaskPublicAddress = previousAddress
+		common.MemoryCacheEnabled = previousMemoryCache
+	})
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Update("type", constant.ChannelTypeRSGateway).Error)
+	task.Platform = constant.TaskPlatform("rs-gateway")
+	task.PrivateData.Execution = &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
+		Key: "rs-gateway", Name: "RS Gateway", Version: "1.5.2", APIVersion: 1,
+	}}
+	originalURL := "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/video.mp4?X-Tos-Signature=original%2Fsignature&X-Tos-Expires=86400"
+	task.SetData(map[string]any{"result": map[string]any{"url": originalURL}})
+	require.NoError(t, model.DB.Save(task).Error)
+
+	listing := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(listing)
+	c.Set("id", task.UserId)
+	c.Params = gin.Params{{Key: "key", Value: task.TaskID}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts", nil)
+	GetTaskArtifacts(c)
+	require.Equal(t, http.StatusOK, listing.Code)
+	var response struct {
+		Artifacts []taskArtifactResponse `json:"artifacts"`
+	}
+	require.NoError(t, common.Unmarshal(listing.Body.Bytes(), &response))
+	require.Len(t, response.Artifacts, 1)
+	assert.Equal(t, originalURL, response.Artifacts[0].DirectURL)
+
+	content := httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(content)
+	c.Set("id", task.UserId)
+	c.Params = gin.Params{{Key: "key", Value: task.TaskID}, {Key: "artifact_key", Value: "video"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts/video/content", nil)
+	TaskArtifactContent(c)
+	assert.Equal(t, http.StatusFound, content.Code)
+	assert.Equal(t, originalURL, content.Header().Get("Location"))
+	assert.Equal(t, "private, no-store", content.Header().Get("Cache-Control"))
+}
+
 func TestProjectedTaskArtifactValidationRejectsAmbiguousIdentity(t *testing.T) {
 	validated, err := validateProjectedTaskArtifacts([]relaychannel.TaskArtifact{
 		{Key: "video-main", Type: "video", MimeType: "video/mp4"},
