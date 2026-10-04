@@ -57,7 +57,7 @@ func TestRSGatewayVideoContentUsesReturnedSignedURL(t *testing.T) {
 				require.NoError(t, err)
 				request := value.(map[string]any)
 				assert.Equal(t, url, request["url"])
-				assert.Equal(t, method, request["method"])
+				assert.Equal(t, "GET", request["method"])
 				assert.Equal(t, true, request["credentialless"])
 				assert.NotContains(t, request, "headers")
 			})

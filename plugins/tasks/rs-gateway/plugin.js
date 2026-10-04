@@ -291,7 +291,8 @@ export function buildContentRequest(ctx) {
   const data = ctx.data || {};
   const url = String((data.result || {}).url || (data.metadata || {}).url || "").trim();
   if (url.startsWith("https://")) {
-    return { url, method: ctx.clientRequest.method, credentialless: true };
+    // Signed result URLs authorize GET; the host suppresses the body for HEAD.
+    return { url, method: "GET", credentialless: true };
   }
   return {
     url: ctx.baseUrl.replace(/\/$/, "") + "/v1/videos/" + encodeURIComponent(ctx.upstreamTaskId) + "/content",
