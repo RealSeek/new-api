@@ -77,8 +77,8 @@ func TestRSGatewayMapsFullSeedanceResolutionWithoutChangingPublicRequest(t *test
 	for _, tc := range []struct {
 		model, resolution, want string
 	}{
-		{"seedance-2.0", "4k", "seedance-2.0-4k"},
-		{"seedance-2.5", "720p", "seedance-2.5-720p"},
+		{"seedance-2.0", "4k", "seedance-2.0"},
+		{"seedance-2.5", "720p", "seedance-2.5"},
 		{"doubao-seedance-2-0-260128", "4k", "doubao-seedance-2-0-260128"},
 		{"doubao-seedance-2-5-260628", "720p", "doubao-seedance-2-5-260628"},
 		{"[c]seedance-2.0", "720p", "[c]seedance-2.0"},

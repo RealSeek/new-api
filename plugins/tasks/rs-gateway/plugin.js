@@ -179,7 +179,6 @@ export function buildSubmitRequest(ctx) {
       throw new Error("unsupported Seedance duration");
     }
     body.resolution = resolution;
-    if (/^seedance-2\.[05]$/i.test(upstreamModel)) body.model = upstreamModel + "-" + resolution;
   }
   const base = ctx.baseUrl.replace(/\/$/, "");
   const path = ctx.action === "remix" ? "/v1/videos/" + encodeURIComponent(ctx.originTaskId) + "/remix" : "/v1/videos";
