@@ -249,6 +249,25 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 98.04, combined.Summary.SuccessRate)
 			assert.Equal(t, 99.01, combined.Models[0].SuccessRate)
+
+			// Status board: one point per hour across the window, the shortest
+			// trailing window with enough samples, and no entry for idle groups.
+			clear(groupStatusCache)
+			board, err := QueryGroupStatus([]string{"a", "b", "idle"})
+			require.NoError(t, err)
+			assert.Equal(t, &Summary{SuccessRate: 98.04, AvgLatencyMs: 1000, AvgTps: 5}, board.Summary)
+			assert.Equal(t, int64(102), board.RequestCount)
+			require.Len(t, board.Groups, 2)
+			groupA := board.Groups["a"]
+			assert.Equal(t, int64(101), groupA.RequestCount)
+			assert.Equal(t, 99.01, groupA.SuccessRate)
+			assert.Equal(t, int64(990), groupA.AvgLatencyMs)
+			assert.Equal(t, 5.0, groupA.AvgTps)
+			assert.Equal(t, GroupRecent{Hours: 3, RequestCount: 101, SuccessRate: 99.01}, groupA.Recent)
+			require.Len(t, groupA.Series, 24)
+			assert.Equal(t, GroupHourPoint{Ts: hour, RequestCount: 101, SuccessRate: 99.01}, groupA.Series[22])
+			assert.Equal(t, map[string]int64{"test-model": 100, "second-model": 1}, groupA.ModelRequests)
+			assert.Equal(t, GroupRecent{Hours: 24, RequestCount: 1}, board.Groups["b"].Recent)
 		})
 	}
 }

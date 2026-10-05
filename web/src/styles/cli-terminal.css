@@ -1,0 +1,370 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+/* Bundled under OFL-1.1 so block glyphs never fall back to proportional fonts. */
+@font-face {
+  font-family: 'CLI Mono';
+  src: url('../assets/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+/* Terminal palettes are independent of the host page's theme. */
+.cli-screen {
+  --cli-accent: #d77757;
+  --cli-border: #666666;
+  --cli-muted: #a0a0a0;
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  height: 354px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #373737;
+  border-radius: 4px;
+  background: #191919;
+  color: #ededed;
+  color-scheme: dark;
+  font-family: 'CLI Mono', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: 0;
+  font-variant-ligatures: none;
+}
+
+.cli-screen pre {
+  font-family: inherit;
+}
+
+.cli-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  height: 32px;
+  padding: 4px 12px 0;
+  flex-shrink: 0;
+  color: var(--cli-muted);
+  font-size: 10px;
+}
+
+.cli-transcript {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 18px 16px;
+}
+
+.cli-muted {
+  color: var(--cli-muted);
+}
+.cli-welcome {
+  margin-bottom: 24px;
+}
+.cli-welcome strong {
+  font-weight: 700;
+}
+.cli-claude-welcome {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.cli-claude-logo {
+  margin: 0;
+  color: var(--cli-accent);
+  font: inherit;
+  font-weight: 400;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+.cli-question {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.cli-prompt {
+  flex-shrink: 0;
+  color: #b8b8b8;
+}
+.cli-response {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+.cli-bullet {
+  flex-shrink: 0;
+  color: var(--cli-accent);
+}
+.cli-cursor {
+  background: #d5d5d5;
+}
+
+.cli-thinking {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--cli-muted);
+}
+.cli-thinking-label,
+.cli-spinner {
+  color: var(--cli-accent);
+}
+.cli-thinking-summary {
+  font-style: italic;
+}
+.cli-spinner {
+  display: inline-block;
+}
+.cli-tool-call {
+  margin-bottom: 10px;
+  padding-left: 14px;
+}
+.cli-tool-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+.cli-tool-title > :first-child {
+  color: #98c379;
+}
+.cli-tool-title > :last-child {
+  color: var(--cli-muted);
+  overflow-wrap: anywhere;
+}
+.cli-tool-output {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #98c379;
+}
+[data-cli='claude'] .cli-tool-output::before {
+  content: '⎿  ';
+  color: var(--cli-muted);
+}
+[data-cli='codex'] .cli-thinking-label {
+  display: none;
+}
+[data-cli='codex'] .cli-tool-call {
+  padding-left: 0;
+}
+[data-cli='gemini'] .cli-tool-call {
+  padding: 8px 10px;
+  border: 1px solid #606578;
+  border-radius: 3px;
+}
+[data-cli='gemini'] .cli-tool-output {
+  padding-left: 0;
+}
+[data-cli='pi'] .cli-thinking {
+  border-left: 2px solid #63616c;
+  padding-left: 10px;
+}
+[data-cli='pi'] .cli-tool-call {
+  padding: 8px 10px;
+  background: #243d35;
+}
+[data-cli='pi'] .cli-tool-call[data-complete='false'] {
+  background: #2d2e34;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cli-screen[data-playing='true'] .cli-spinner {
+    animation: cli-thinking-spin 1.6s steps(8) infinite;
+  }
+}
+@keyframes cli-thinking-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cli-screen .cli-control {
+  color: var(--cli-muted);
+  border-radius: 0;
+}
+.cli-screen .cli-control:hover {
+  background: #333333;
+  color: #ffffff;
+}
+.cli-screen .cli-control:focus-visible {
+  outline: 1px solid var(--cli-accent);
+  box-shadow: none;
+}
+
+.cli-form {
+  flex-shrink: 0;
+  margin: 0 18px;
+}
+.cli-screen .cli-input {
+  height: 42px;
+  border: 0;
+  border-block: 1px solid var(--cli-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.cli-screen .cli-input:focus-within {
+  border-color: #b0b0b0;
+  box-shadow: none;
+}
+.cli-screen .cli-input input {
+  height: 40px;
+  font-family: inherit;
+  color: #ededed;
+  caret-color: #dedede;
+}
+.cli-screen .cli-input input::placeholder {
+  color: #a0a0a0;
+}
+.cli-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 12px;
+  min-height: 32px;
+  padding: 5px 18px 8px;
+  color: var(--cli-muted);
+  font-size: 10px;
+}
+
+.cli-screen[data-cli='codex'] {
+  --cli-accent: #c8c8c8;
+  background: #101116;
+}
+.cli-codex-welcome {
+  width: min(100%, 380px);
+  padding: 10px 14px;
+  border: 1px solid #727278;
+  border-radius: 5px;
+}
+[data-cli='codex'] .cli-question {
+  margin-inline: -8px;
+  padding: 8px;
+  background: #27282e;
+}
+[data-cli='codex'] .cli-input {
+  border: 0;
+  background: #27282e;
+}
+
+.cli-screen[data-cli='gemini'] {
+  --cli-accent: #c6a0ef;
+  --cli-border: #779fe5;
+  background: #0c0c0c;
+}
+.cli-gemini-logo {
+  width: max-content;
+  max-width: 100%;
+  margin: 0;
+  padding-block: 2px;
+  background: linear-gradient(90deg, #5497dd, #9475cb 55%, #cf748e);
+  background-clip: text;
+  color: transparent;
+  font: inherit;
+  font-weight: 400;
+  font-size: 10px;
+  /* Official ASCII height matches physical inkHeight (13px at 10px). */
+  line-height: 13px;
+}
+@media (max-width: 640px) {
+  .cli-gemini-logo {
+    font-size: 7px;
+    line-height: 9.5px;
+  }
+}
+@media (max-width: 360px) {
+  .cli-gemini-logo {
+    font-size: 6px;
+    line-height: 8px;
+  }
+}
+[data-cli='gemini'] .cli-prompt {
+  color: #c6a0ef;
+}
+[data-cli='gemini'] .cli-input {
+  border: 1px solid var(--cli-border);
+  border-radius: 3px;
+}
+[data-cli='gemini'] .cli-input:focus-within {
+  border-color: #a0beff;
+}
+[data-cli='gemini'] .cli-footer > :first-child {
+  color: #91b9ff;
+}
+
+.cli-screen[data-cli='pi'] {
+  --cli-accent: #bfa0dd;
+  --cli-border: #8484b5;
+  background: #18191c;
+}
+.cli-pi-welcome {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cli-pi-logo {
+  font-size: 16px;
+  line-height: 1;
+}
+.cli-pi-coral-blue {
+  color: #e48a7a;
+  background: #4f8eb3;
+}
+.cli-pi-coral {
+  color: #e48a7a;
+}
+.cli-pi-blue {
+  color: #4f8eb3;
+}
+.cli-pi-yellow {
+  color: #eab65d;
+}
+[data-cli='pi'] .cli-question {
+  margin-inline: -8px;
+  padding: 8px;
+  background: #303849;
+}
+[data-cli='pi'] .cli-question > :first-child,
+[data-cli='pi'] .cli-bullet,
+[data-cli='pi'] .cli-input > :first-child {
+  display: none;
+}
+[data-cli='pi'] .cli-footer {
+  flex-direction: column;
+}
+[data-cli='pi'] .cli-input {
+  border-bottom: 0;
+}
+
+@media (max-width: 639px) {
+  .cli-transcript {
+    padding-inline: 12px;
+  }
+  .cli-form {
+    margin-inline: 12px;
+  }
+  .cli-footer {
+    padding-inline: 12px;
+  }
+}

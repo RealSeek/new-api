@@ -688,6 +688,57 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
+/* ── Home live topology ──
+ * Dashes travel along each link toward its group. The duration is set per
+ * link (`--flow-duration`) so busier groups visibly move faster. */
+@keyframes topology-flow {
+  to {
+    stroke-dashoffset: -64;
+  }
+}
+.topology-flow {
+  stroke-dasharray: 10 22;
+  animation: topology-flow var(--flow-duration, 2.4s) linear infinite;
+}
+
+@keyframes topology-ripple {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+.topology-ripple {
+  animation: topology-ripple 2.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes topology-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.topology-draw {
+  stroke-dasharray: 1;
+  animation: topology-draw 1.1s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topology-flow,
+  .topology-ripple,
+  .topology-draw {
+    animation: none !important;
+  }
+  .topology-flow {
+    stroke-dasharray: none;
+  }
+}
+
 /* ── Auto group flowing border ── */
 @property --auto-group-flow-angle {
   syntax: '<angle>';

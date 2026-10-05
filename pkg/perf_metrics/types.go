@@ -82,6 +82,43 @@ type SummaryAllResult struct {
 	Models      []ModelSummary `json:"models"`
 }
 
+// GroupHourPoint is one hour of a group's relay samples on the public status
+// board.
+type GroupHourPoint struct {
+	Ts           int64   `json:"ts"`
+	RequestCount int64   `json:"request_count"`
+	SuccessRate  float64 `json:"success_rate"`
+}
+
+// GroupRecent is the shortest trailing window that holds enough samples to
+// judge a group's current health.
+type GroupRecent struct {
+	Hours        int     `json:"hours"`
+	RequestCount int64   `json:"request_count"`
+	SuccessRate  float64 `json:"success_rate"`
+}
+
+type GroupStatus struct {
+	RequestCount int64            `json:"request_count"`
+	SuccessRate  float64          `json:"success_rate"`
+	AvgLatencyMs int64            `json:"avg_latency_ms"`
+	AvgTps       float64          `json:"avg_tps"`
+	Recent       GroupRecent      `json:"recent"`
+	Series       []GroupHourPoint `json:"series"`
+	// ModelRequests orders a group's model list by traffic; per-model volume
+	// is not published.
+	ModelRequests map[string]int64 `json:"-"`
+}
+
+type GroupStatusResult struct {
+	Summary      *Summary
+	RequestCount int64
+	WindowStart  int64
+	WindowEnd    int64
+	// Groups holds only the requested groups that have samples in the window.
+	Groups map[string]GroupStatus
+}
+
 type bucketKey struct {
 	model    string
 	group    string

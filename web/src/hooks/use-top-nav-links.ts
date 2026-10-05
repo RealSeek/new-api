@@ -16,24 +16,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
-import { useStatus } from '@/hooks/use-status'
+import { useStatus } from "@/hooks/use-status";
 import {
   parseHeaderNavCustomLinks,
   resolveHeaderNavCustomLinkTitle,
-} from '@/lib/header-nav-custom-links'
-import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
-import { useAuthStore } from '@/stores/auth-store'
+} from "@/lib/header-nav-custom-links";
+import { parseHeaderNavModulesFromStatus } from "@/lib/nav-modules";
+import { useAuthStore } from "@/stores/auth-store";
 
 export type TopNavLink = {
-  title: string
-  href: string
-  disabled?: boolean
-  requiresAuth?: boolean
-  external?: boolean
-}
+  title: string;
+  href: string;
+  disabled?: boolean;
+  requiresAuth?: boolean;
+  external?: boolean;
+};
 
 /**
  * 根据后端 /api/status 返回的 HeaderNavModules 配置生成顶部导航链接。
@@ -48,76 +48,69 @@ export type TopNavLink = {
  * }
  */
 export function useTopNavLinks(): TopNavLink[] {
-  const { t, i18n } = useTranslation()
-  const { status } = useStatus()
-  const { auth } = useAuthStore()
+  const { t, i18n } = useTranslation();
+  const { status } = useStatus();
+  const { auth } = useAuthStore();
 
   // 解析内置模块和自定义链接配置。
   const { modules, customLinks } = useMemo(() => {
-    const statusRecord = status as Record<string, unknown> | null
+    const statusRecord = status as Record<string, unknown> | null;
     return {
       modules: parseHeaderNavModulesFromStatus(statusRecord),
       customLinks: parseHeaderNavCustomLinks(
-        statusRecord?.HeaderNavCustomLinks
+        statusRecord?.HeaderNavCustomLinks,
       ),
-    }
-  }, [status])
+    };
+  }, [status]);
 
-  // 文档链接可以是外部地址。
-  const docsLink: string | undefined = status?.docs_link as string | undefined
+  const isAuthed = !!auth?.user;
 
-  const isAuthed = !!auth?.user
-
-  const links: TopNavLink[] = []
+  const links: TopNavLink[] = [];
 
   // 主页
   if (modules?.home !== false) {
-    links.push({ title: t('Home'), href: '/' })
+    links.push({ title: t("Home"), href: "/" });
   }
 
   // 控制台
   if (modules?.console !== false) {
-    links.push({ title: t('Console'), href: '/dashboard' })
+    links.push({ title: t("Console"), href: "/dashboard" });
   }
 
   // 模型广场
-  const pricing = modules?.pricing
-  if (pricing && typeof pricing === 'object' && pricing.enabled) {
-    const requiresAuth = pricing.requireAuth && !isAuthed
-    links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
+  const pricing = modules?.pricing;
+  if (pricing && typeof pricing === "object" && pricing.enabled) {
+    const requiresAuth = pricing.requireAuth && !isAuthed;
+    links.push({ title: t("Model Square"), href: "/pricing", requiresAuth });
   }
 
   customLinks.forEach((link) => {
     links.push({
       title: resolveHeaderNavCustomLinkTitle(
         link,
-        i18n.resolvedLanguage ?? i18n.language
+        i18n.resolvedLanguage ?? i18n.language,
       ),
       href: link.url,
       external: true,
-    })
-  })
+    });
+  });
 
   // 排行榜
-  const rankings = modules?.rankings
-  if (rankings && typeof rankings === 'object' && rankings.enabled) {
-    const requiresAuth = rankings.requireAuth && !isAuthed
-    links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
+  const rankings = modules?.rankings;
+  if (rankings && typeof rankings === "object" && rankings.enabled) {
+    const requiresAuth = rankings.requireAuth && !isAuthed;
+    links.push({ title: t("Rankings"), href: "/rankings", requiresAuth });
   }
 
   // 文档
   if (modules?.docs !== false) {
-    if (docsLink) {
-      links.push({ title: t('Docs'), href: docsLink, external: true })
-    } else {
-      links.push({ title: t('Docs'), href: '/docs' })
-    }
+    links.push({ title: t("Docs"), href: "/docs" });
   }
 
   // 关于
   if (modules?.about !== false) {
-    links.push({ title: t('About'), href: '/about' })
+    links.push({ title: t("About"), href: "/about" });
   }
 
-  return links
+  return links;
 }
