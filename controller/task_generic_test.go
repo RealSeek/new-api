@@ -413,8 +413,9 @@ func TestRSGatewayArtifactsExposeAndRedirectToOriginalURL(t *testing.T) {
 	})
 	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Update("type", constant.ChannelTypeRSGateway).Error)
 	task.Platform = constant.TaskPlatform("rs-gateway")
+	task.Properties = model.Properties{OriginModelName: "seedance-2.5"}
 	task.PrivateData.Execution = &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
-		Key: "rs-gateway", Name: "RS Gateway", Version: "1.5.2", APIVersion: 1,
+		Key: "rs-gateway", Name: "RS Gateway", Version: "1.5.3", APIVersion: 1,
 	}}
 	originalURL := "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/video.mp4?X-Tos-Signature=original%2Fsignature&X-Tos-Expires=86400"
 	task.SetData(map[string]any{"result": map[string]any{"url": originalURL}})
@@ -443,6 +444,60 @@ func TestRSGatewayArtifactsExposeAndRedirectToOriginalURL(t *testing.T) {
 	assert.Equal(t, http.StatusFound, content.Code)
 	assert.Equal(t, originalURL, content.Header().Get("Location"))
 	assert.Equal(t, "private, no-store", content.Header().Get("Cache-Control"))
+}
+
+func TestRSGatewayArtifactsKeepProviderURLsOffOtherModels(t *testing.T) {
+	task := setupGenericTaskTest(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCache })
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Update("type", constant.ChannelTypeRSGateway).Error)
+	task.Platform = constant.TaskPlatform("rs-gateway")
+	task.Properties = model.Properties{OriginModelName: "[c]seedance-2.5"}
+	task.PrivateData = model.TaskPrivateData{
+		Key:            "key",
+		UpstreamTaskID: "upstream-task",
+		Execution: &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
+			Key: "rs-gateway", Name: "RS Gateway", Version: "1.5.3", APIVersion: 1,
+		}},
+	}
+	providerURL := "https://upstream.example/v1/videos/task_1/content?expires=1791623595&signature=abc"
+	task.SetData(map[string]any{"metadata": map[string]any{"url": providerURL}})
+	require.NoError(t, model.DB.Save(task).Error)
+
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/videos/upstream-task/content", r.URL.Path)
+		assert.Equal(t, "Bearer key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("gateway-video"))
+	}))
+	defer gateway.Close()
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Update("base_url", gateway.URL).Error)
+
+	listing := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(listing)
+	c.Set("id", task.UserId)
+	c.Params = gin.Params{{Key: "key", Value: task.TaskID}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts", nil)
+	GetTaskArtifacts(c)
+	require.Equal(t, http.StatusOK, listing.Code)
+	var response struct {
+		Artifacts []taskArtifactResponse `json:"artifacts"`
+	}
+	require.NoError(t, common.Unmarshal(listing.Body.Bytes(), &response))
+	require.Len(t, response.Artifacts, 1)
+	assert.Empty(t, response.Artifacts[0].DirectURL)
+	assert.NotContains(t, listing.Body.String(), "upstream.example")
+
+	content := httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(content)
+	c.Set("id", task.UserId)
+	c.Params = gin.Params{{Key: "key", Value: task.TaskID}, {Key: "artifact_key", Value: "video"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts/video/content", nil)
+	TaskArtifactContent(c)
+	assert.Equal(t, http.StatusOK, content.Code)
+	assert.Empty(t, content.Header().Get("Location"))
+	assert.Equal(t, "gateway-video", content.Body.String())
 }
 
 func TestProjectedTaskArtifactValidationRejectsAmbiguousIdentity(t *testing.T) {

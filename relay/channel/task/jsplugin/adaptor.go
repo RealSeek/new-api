@@ -1039,6 +1039,8 @@ func taskArtifactContext(task *model.Task) (map[string]any, error) {
 		"taskId":          task.TaskID,
 		"status":          string(task.Status),
 		"action":          task.Action,
+		"model":           task.Properties.OriginModelName,
+		"upstreamModel":   task.Properties.UpstreamModelName,
 		"data":            data,
 		"state":           state,
 		"producerVersion": producerVersion,

@@ -50,7 +50,7 @@ func TestRSGatewayVideoContentUsesReturnedSignedURL(t *testing.T) {
 				url := "https://cdn.example/video.mp4?signature=signed%2Fvalue&expires=86400"
 				value, err := plugin.Engine.Call(t.Context(), "buildContentRequest", map[string]any{
 					"artifactKey": "video", "upstreamTaskId": "private/task",
-					"baseUrl": "https://gateway.example", "apiKey": "channel-secret",
+					"baseUrl": "https://gateway.example", "apiKey": "channel-secret", "model": "seedance-2.5",
 					"data":          map[string]any{field: map[string]any{"url": url}},
 					"clientRequest": map[string]any{"method": method},
 				})
@@ -63,12 +63,58 @@ func TestRSGatewayVideoContentUsesReturnedSignedURL(t *testing.T) {
 				rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
 					map[string]any{}, map[string]any{
 						"task_id": "public-task", "status": "SUCCESS",
-						"data": map[string]any{field: map[string]any{"url": url}},
+						"properties": map[string]any{"origin_model_name": "seedance-2.5"},
+						"data":       map[string]any{field: map[string]any{"url": url}},
 					})
 				require.NoError(t, err)
 				assert.Equal(t, url, rendered.(map[string]any)["result"].(map[string]any)["url"])
 			})
 		}
+	}
+}
+
+func TestRSGatewayOnlyFullSeedanceExposesTheProviderURL(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	url := "https://cdn.example/video.mp4?signature=signed%2Fvalue&expires=86400"
+	for _, tc := range []struct{ model, upstreamModel string }{
+		{model: "[c]seedance-2.0", upstreamModel: "[c]seedance-2.0"},
+		{model: "[c]seedance-2.5", upstreamModel: "[c]seedance-2.5"},
+		{model: "MiniMax-H3", upstreamModel: "MiniMax-H3"},
+		{model: "grok-imagine-video-1.5", upstreamModel: "grok-imagine-video-1.5"},
+		// 公开名和实际路由必须都是满血 Seedance，否则同样不返回上游地址。
+		{model: "seedance-2.5", upstreamModel: "[c]seedance-2.5"},
+		{model: "[c]seedance-2.5", upstreamModel: "seedance-2.5"},
+	} {
+		t.Run(tc.model+" -> "+tc.upstreamModel, func(t *testing.T) {
+			value, err := plugin.Engine.Call(t.Context(), "buildContentRequest", map[string]any{
+				"artifactKey": "video", "upstreamTaskId": "private/task",
+				"baseUrl": "https://gateway.example", "apiKey": "channel-secret",
+				"model": tc.model, "upstreamModel": tc.upstreamModel,
+				"data":          map[string]any{"metadata": map[string]any{"url": url}},
+				"clientRequest": map[string]any{"method": "GET"},
+			})
+			require.NoError(t, err)
+			request := value.(map[string]any)
+			assert.Equal(t, "https://gateway.example/v1/videos/private%2Ftask/content", request["url"])
+			assert.NotContains(t, request, "credentialless")
+			assert.Equal(t, "Bearer channel-secret", request["headers"].(map[string]any)["Authorization"])
+
+			rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
+				map[string]any{}, map[string]any{
+					"task_id": "public-task", "status": "SUCCESS",
+					"properties": map[string]any{"origin_model_name": tc.model, "upstream_model_name": tc.upstreamModel},
+					"data":       map[string]any{"metadata": map[string]any{"url": url, "last_frame_url": "https://cdn.example/last.png", "duration": 5}},
+				})
+			require.NoError(t, err)
+			result := rendered.(map[string]any)
+			assert.Equal(t, "/v1/videos/public-task/content", result["result"].(map[string]any)["url"])
+			assert.NotContains(t, result["result"].(map[string]any), "last_frame_url")
+			assert.NotContains(t, result["metadata"].(map[string]any), "url")
+			assert.EqualValues(t, 5, result["metadata"].(map[string]any)["duration"])
+		})
 	}
 }
 

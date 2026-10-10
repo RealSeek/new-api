@@ -408,6 +408,7 @@ func TestTaskAdaptorBuildContentRequestHookAndMissingFallback(t *testing.T) {
 export function buildContentRequest() { throw new Error("artifact_not_found"); }`, `export function listArtifacts(task) { return [{key: "video", type: "video", mimeType: "video/mp4"}]; }
 export function buildContentRequest(ctx) {
   if (ctx.data.id !== "raw-upstream" || ctx.upstreamTaskId !== "upstream-task" || ctx.producerVersion !== "0.9.0") throw new Error("bad task context");
+  if (ctx.model !== "origin-model" || ctx.upstreamModel !== "upstream-model") throw new Error("bad task identity");
   return {url: ctx.baseUrl + "/content/" + ctx.artifactKey, method: ctx.clientRequest.method, headers: {"X-Content": "plugin"}};
 }`, 1)
 	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
@@ -418,6 +419,7 @@ export function buildContentRequest(ctx) {
 	require.NoError(t, err)
 	task := &model.Task{
 		TaskID: "task-public", Status: model.TaskStatusSuccess, Data: taskData,
+		Properties: model.Properties{OriginModelName: "origin-model", UpstreamModelName: "upstream-model"},
 		PrivateData: model.TaskPrivateData{
 			UpstreamTaskID: "upstream-task",
 			Execution: &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{

@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.5.2",
+  version: "1.5.3",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -26,6 +26,17 @@ export const meta = {
 function seedanceModel(ctx) {
   const match = /^(?:\[c\])?(?:doubao-)?seedance-2[._-]([05])(?:-?\d{6})?(?:-(?:fast|mini))?(?:-(480p|720p|1080p|4k))?$/i.exec(ctx.upstreamModel || ctx.model || "");
   return match ? [match[0], "seedance-2." + match[1], match[2]] : null;
+}
+
+// 满血 Seedance：不带特价前缀的 2.0 / 2.5。
+function fullSeedanceModel(model) {
+  const name = String(model || "").trim();
+  return Boolean(seedanceModel({ model: name })) && !/^\[c\]/i.test(name);
+}
+
+// 公开名和实际路由都是满血 Seedance 时才把上游成片地址直接交给调用方。
+function fullSeedanceRoute(model, upstreamModel) {
+  return fullSeedanceModel(model) && fullSeedanceModel(upstreamModel || model);
 }
 
 function minimaxH3Model(ctx) {
@@ -168,7 +179,7 @@ export function buildSubmitRequest(ctx) {
     throw new Error("video duration requires top-level seconds or duration");
   }
   const upstreamModel = ctx.upstreamModel || ctx.model || "";
-  const fullSeedance = Boolean(seedanceModel({ upstreamModel }) && !/^\[c\]/i.test(upstreamModel));
+  const fullSeedance = fullSeedanceModel(upstreamModel);
   if (fullSeedance) {
     const routedAlias = /^(seedance-2\.[05])-(?:480p|720p|1080p|4k)$/i.exec(upstreamModel);
     if (routedAlias) body.model = routedAlias[1];
@@ -290,10 +301,11 @@ export function buildContentRequest(ctx) {
   if (ctx.artifactKey !== "video") throw new Error("artifact_not_found");
   const data = ctx.data || {};
   const url = String((data.result || {}).url || (data.metadata || {}).url || "").trim();
-  if (url.startsWith("https://")) {
+  if (fullSeedanceRoute(ctx.model, ctx.upstreamModel) && url.startsWith("https://")) {
     // Signed result URLs authorize GET; the host suppresses the body for HEAD.
     return { url, method: "GET", credentialless: true };
   }
+  // 其他模型（含特价 Seedance、MiniMax、Grok）经本站网关内容地址转发，不把上游地址交给调用方。
   return {
     url: ctx.baseUrl.replace(/\/$/, "") + "/v1/videos/" + encodeURIComponent(ctx.upstreamTaskId) + "/content",
     method: ctx.clientRequest.method,
@@ -310,20 +322,31 @@ export const protocols = {
     },
     render(_ctx, task) {
       const statuses = { NOT_START: "queued", SUBMITTED: "queued", QUEUED: "queued", IN_PROGRESS: "in_progress", SUCCESS: "completed", FAILURE: "failed" };
+      const properties = task.properties || {};
+      const fullSeedance = fullSeedanceRoute(properties.origin_model_name, properties.upstream_model_name);
+      const localURL = "/v1/videos/" + encodeURIComponent(task.task_id) + "/content";
       const result = Object.assign({}, task.data || {}, {
         id: task.task_id,
         task_id: task.task_id,
-        model: (task.properties || {}).origin_model_name || "",
+        model: properties.origin_model_name || "",
         status: statuses[task.status] || "unknown",
       });
       if (task.status === "SUCCESS") {
         const details = result.result && typeof result.result === "object" && !Array.isArray(result.result) ? result.result : {};
-        const videoURL = details.url || (result.metadata || {}).url;
-        const lastFrame = details.last_frame_url || result.last_frame_url || (result.metadata || {}).last_frame_url;
-        result.result = Object.assign({}, details, {
-          url: videoURL || "/v1/videos/" + encodeURIComponent(task.task_id) + "/content",
-          ...(lastFrame ? { last_frame_url: lastFrame } : {}),
-        });
+        const videoURL = fullSeedance ? details.url || (result.metadata || {}).url : "";
+        const lastFrame = fullSeedance ? details.last_frame_url || result.last_frame_url || (result.metadata || {}).last_frame_url : "";
+        result.result = fullSeedance
+          ? Object.assign({}, details, {
+            url: videoURL || localURL,
+            ...(lastFrame ? { last_frame_url: lastFrame } : {}),
+          })
+          : { url: localURL };
+        if (!fullSeedance && result.metadata && typeof result.metadata === "object" && !Array.isArray(result.metadata)) {
+          // 上游签名地址不能透给非满血模型的调用方；其余快照字段保持原样。
+          const metadata = Object.assign({}, result.metadata);
+          delete metadata.url;
+          result.metadata = metadata;
+        }
       }
       if (task.status === "FAILURE" && !result.error) result.error = { code: "video_generation_failed", message: task.fail_reason || "gateway task failed" };
       return result;

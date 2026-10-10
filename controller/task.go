@@ -471,6 +471,10 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			}
 		}
 		item := relay.TaskModel2Dto(task)
+		if task.Platform == constant.TaskPlatform("rs-gateway") {
+			// 面板任务列表不渲染上游快照；上游地址只允许满血 Seedance 通过结果地址给出。
+			item.Data = redactProviderURLs(task.Data)
+		}
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
 		item.ResultDiscarded = task.PrivateData.ResultDiscarded
 		if task.Status == model.TaskStatusSuccess {
@@ -524,6 +528,50 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		result[i] = item
 	}
 	return result
+}
+
+// redactProviderURLs removes absolute provider addresses from a task snapshot
+// before the panel returns it. Only full Seedance results hand out the
+// provider's own address, and the panel never renders this snapshot.
+func redactProviderURLs(data json.RawMessage) json.RawMessage {
+	if len(data) == 0 {
+		return data
+	}
+	var snapshot any
+	if common.Unmarshal(data, &snapshot) != nil {
+		return data
+	}
+	if !redactProviderURLValues(snapshot) {
+		return data
+	}
+	encoded, err := common.Marshal(snapshot)
+	if err != nil {
+		return data
+	}
+	return encoded
+}
+
+func redactProviderURLValues(value any) bool {
+	changed := false
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			if text, ok := item.(string); ok {
+				trimmed := strings.TrimSpace(text)
+				if strings.HasPrefix(trimmed, "https://") || strings.HasPrefix(trimmed, "http://") {
+					delete(typed, key)
+					changed = true
+					continue
+				}
+			}
+			changed = redactProviderURLValues(item) || changed
+		}
+	case []any:
+		for _, item := range typed {
+			changed = redactProviderURLValues(item) || changed
+		}
+	}
+	return changed
 }
 
 func taskFailReasonIsLegacyResultURL(value string) bool {

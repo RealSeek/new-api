@@ -283,7 +283,7 @@ curl '{{BASE_URL}}/v1/videos/{id}' \
 ```
 
 - 状态取值包括 `queued`、`in_progress`、`completed`、`failed` 等；`failed` 时查看 `error` 字段。
-- 完成后 `result.url` 统一指向本站相对地址 `/v1/videos/{id}/content`，下载时同样携带本站 API Key。
+- 完成后 `result.url` 通常指向本站相对地址 `/v1/videos/{id}/content`，下载时同样携带本站 API Key；满血 `seedance-2.0` 和 `seedance-2.5` 会直接返回模型方的成片地址，客户端应按 `result.url` 的实际取值下载，不要假定它一定是本站地址。
 - `result.last_frame_url` 只在模型返回尾帧时出现。
 - 任务完成前不要重新提交同一请求。
 

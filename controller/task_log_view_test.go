@@ -105,6 +105,42 @@ func TestTaskLogDTOReplacesLegacyVideoURLWithAvailabilityFlag(t *testing.T) {
 	assert.Contains(t, string(encoded), "legacy_video_available")
 }
 
+func TestTaskLogDTORedactsGatewayProviderURLs(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "task_gateway_video",
+		Platform: constant.TaskPlatform("rs-gateway"),
+		Action:   constant.TaskActionTextToVideo,
+		Status:   model.TaskStatusSuccess,
+		Progress: "100%",
+	}
+	task.SetData(map[string]any{
+		"id":       "upstream-task",
+		"status":   "completed",
+		"progress": 100,
+		"metadata": map[string]any{
+			"url":         "https://gateway.example/v1/videos/task_1/content?expires=1791623595&signature=secret",
+			"content_url": "/v1/videos/upstream-task/content",
+		},
+		"result": map[string]any{"url": "https://cdn.example/video.mp4"},
+		"usage":  map[string]any{"seconds": 5},
+	})
+
+	view := tasksToDto([]*model.Task{task}, false, common.RoleCommonUser)[0]
+	var snapshot map[string]any
+	require.NoError(t, common.Unmarshal(view.Data, &snapshot))
+	metadata := snapshot["metadata"].(map[string]any)
+	assert.NotContains(t, metadata, "url")
+	assert.Equal(t, "/v1/videos/upstream-task/content", metadata["content_url"])
+	assert.NotContains(t, snapshot["result"].(map[string]any), "url")
+	assert.EqualValues(t, 5, snapshot["usage"].(map[string]any)["seconds"])
+	assert.EqualValues(t, 100, snapshot["progress"])
+
+	encoded, err := common.Marshal(view)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "gateway.example")
+	assert.NotContains(t, string(encoded), "cdn.example")
+}
+
 func TestTaskLogDTOKeepsFailureReasonAndDoesNotMarkPluginTaskLegacy(t *testing.T) {
 	failed := &model.Task{
 		TaskID:     "task_failed",
