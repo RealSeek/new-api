@@ -222,6 +222,12 @@ var (
 	CriticalRateLimitNum            = 20
 	CriticalRateLimitDuration int64 = 20 * 60
 
+	// OnlyArt SSO: every call arrives from the OnlyArt backend on one address,
+	// so it gets its own bounded budget instead of the strict per-IP limit
+	// shared with public login.
+	ArtSSORateLimitNum            = 240
+	ArtSSORateLimitDuration int64 = 180
+
 	UploadRateLimitNum            = 10
 	UploadRateLimitDuration int64 = 60
 

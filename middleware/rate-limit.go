@@ -178,6 +178,14 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+// ArtSSORateLimit guards the OnlyArt SSO integration. All of its calls arrive
+// from the OnlyArt backend on one address, so the strict per-IP critical limit
+// would throttle every user's login at once; this keeps a bounded but usable
+// budget for a server-to-server client.
+func ArtSSORateLimit() func(c *gin.Context) {
+	return rateLimitFactory(common.ArtSSORateLimitNum, common.ArtSSORateLimitDuration, "ART")
+}
+
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
 	if !common.CriticalRateLimitEnable {
 		return defNext

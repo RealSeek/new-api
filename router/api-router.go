@@ -72,14 +72,14 @@ func SetApiRouter(router *gin.Engine) {
 		// Universal secure verification routes
 		apiRouter.GET("/verify/methods", middleware.UserAuth(), middleware.DisableCache(), controller.GetVerificationMethods)
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.UniversalVerify)
-		apiRouter.POST("/sso/art/token", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOToken)
-		apiRouter.POST("/sso/art/account", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOAccount)
-		apiRouter.POST("/sso/art/groups", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOGroups)
-		apiRouter.POST("/sso/art/provision-token", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOProvisionToken)
+		apiRouter.POST("/sso/art/token", middleware.ArtSSORateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOToken)
+		apiRouter.POST("/sso/art/account", middleware.ArtSSORateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOAccount)
+		apiRouter.POST("/sso/art/groups", middleware.ArtSSORateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOGroups)
+		apiRouter.POST("/sso/art/provision-token", middleware.ArtSSORateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ArtSSOProvisionToken)
 
 		userRoute := apiRouter.Group("/user")
 		{
-			userRoute.GET("/auth/sso/art/authorize", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.ArtSSOAuthorize)
+			userRoute.GET("/auth/sso/art/authorize", middleware.ArtSSORateLimit(), middleware.DisableCache(), controller.ArtSSOAuthorize)
 			userRoute.POST("/auth/refresh", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.RefreshAuth)
 			userRoute.POST("/auth/logout", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AuthLogout)
 			userRoute.POST("/register", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Register)
