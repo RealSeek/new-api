@@ -897,7 +897,18 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.CallPath(context.Background(), "protocols", []string{"openai_video", "render"}, map[string]any{"protocol": "openai_video", "operation": "retrieve"}, pluginruntime.RawJSON(encodedView))
+	renderContext := map[string]any{
+		"protocol": "openai_video", "operation": "retrieve",
+		"model": task.Properties.OriginModelName, "upstreamModel": task.Properties.UpstreamModelName,
+	}
+	if a.plugin.Meta.Key == "rs-gateway" && task.Status == model.TaskStatusSuccess {
+		contentURL, err := service.BuildTaskArtifactContentURL(task.TaskID, "video")
+		if err != nil {
+			return nil, err
+		}
+		renderContext["artifacts"] = map[string]any{"video": map[string]any{"url": contentURL}}
+	}
+	value, err := a.plugin.Engine.CallPath(context.Background(), "protocols", []string{"openai_video", "render"}, renderContext, pluginruntime.RawJSON(encodedView))
 	if err != nil {
 		return nil, err
 	}

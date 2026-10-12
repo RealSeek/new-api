@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +33,65 @@ type taskPollingFetchAdaptor struct {
 	blockStarted chan struct{}
 	releaseBlock chan struct{}
 	blockOnce    sync.Once
+}
+
+type callbackRenderingAdaptor struct {
+	taskPollingFetchAdaptor
+	response []byte
+}
+
+func (a *callbackRenderingAdaptor) ConvertToOpenAIVideo(*model.Task) ([]byte, error) {
+	return a.response, nil
+}
+
+func TestVideoCallbackUsesPublicVideoRendering(t *testing.T) {
+	previousFactory, previousClient := GetTaskAdaptorFunc, httpClient
+	fetchSetting := system_setting.GetFetchSetting()
+	previousFetchSetting := *fetchSetting
+	fetchSetting.EnableSSRFProtection = false
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc, httpClient = previousFactory, previousClient
+		*fetchSetting = previousFetchSetting
+	})
+	for _, fullSeedance := range []bool{false, true} {
+		truncate(t)
+		var received map[string]any
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			if err == nil {
+				err = common.Unmarshal(body, &received)
+			}
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(server.Close)
+		httpClient = server.Client()
+		result := map[string]any{"url": "https://gateway.example/v1/tasks/task_callback/artifacts/video/content?access=test"}
+		if fullSeedance {
+			result["url"] = "https://supplier.example/full.mp4"
+			result["last_frame_url"] = "https://supplier.example/full.jpg"
+		}
+		response, err := common.Marshal(map[string]any{"result": result})
+		require.NoError(t, err)
+		GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return &callbackRenderingAdaptor{response: response} }
+		task := seedPollingTask(t, 1, "task_callback", "private_callback")
+		task.Platform, task.Status = constant.TaskPlatform("rs-gateway"), model.TaskStatusSuccess
+		task.PrivateData.ResultURL = "https://supplier.example/old.mp4"
+		task.Data = []byte(`{"last_frame_url":"https://supplier.example/old.jpg"}`)
+		task.PrivateData.PluginState, err = common.Marshal(map[string]any{"callback": map[string]any{"url": server.URL}})
+		require.NoError(t, err)
+		deliverVideoCallback(context.Background(), task)
+		require.NotNil(t, received)
+		assert.Equal(t, result["url"], received["video_url"])
+		if fullSeedance {
+			assert.Equal(t, result["last_frame_url"], received["last_frame_url"])
+		} else {
+			assert.NotContains(t, received, "last_frame_url")
+		}
+	}
 }
 
 type batchPollingAdaptor struct {

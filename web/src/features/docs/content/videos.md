@@ -283,8 +283,8 @@ curl '{{BASE_URL}}/v1/videos/{id}' \
 ```
 
 - 状态取值包括 `queued`、`in_progress`、`completed`、`failed` 等；`failed` 时查看 `error` 字段。
-- 完成后 `result.url` 通常指向本站相对地址 `/v1/videos/{id}/content`，下载时同样携带本站 API Key；满血 `seedance-2.0` 和 `seedance-2.5` 会直接返回模型方的成片地址，客户端应按 `result.url` 的实际取值下载，不要假定它一定是本站地址。
-- `result.last_frame_url` 只在模型返回尾帧时出现。
+- 完成后，除满血 `seedance-2.0` 和 `seedance-2.5` 保留模型方的成片地址外，`result.url` 均为本站域名下的签名下载链接，可直接下载。签名链接具有访问权限，请妥善保管；也可通过 `/v1/videos/{id}/content` 携带本站 API Key 下载。
+- `result.last_frame_url` 只在满血 Seedance 返回尾帧时出现。任务失败的供应商错误由本站网关统一改写，原始响应仅供后台排查。
 - 任务完成前不要重新提交同一请求。
 
 下载成片：

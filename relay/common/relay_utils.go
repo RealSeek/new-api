@@ -169,10 +169,13 @@ func validatePrompt(prompt string) *dto.TaskError {
 const MaxTaskDurationSeconds = 3600
 
 // IsSeedance2VideoModel identifies the gateway's Seedance 2.x video variants.
+// Restricted variants (特价 [c]、未评级 [NSFW]) share the upstream duration
+// semantics but keep their own pricing configuration.
 func IsSeedance2VideoModel(model string) bool {
 	switch model {
 	case "seedance-2.0", "seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p", "seedance-2.0-4k",
-		"seedance-2.5", "seedance-2.5-480p", "seedance-2.5-720p", "seedance-2.5-1080p":
+		"seedance-2.5", "seedance-2.5-480p", "seedance-2.5-720p", "seedance-2.5-1080p",
+		"[NSFW]seedance-2.0", "[NSFW]seedance-2.5":
 		return true
 	default:
 		return false

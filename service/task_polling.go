@@ -711,11 +711,36 @@ func deliverVideoCallback(ctx context.Context, task *model.Task) {
 		"status": status, "event_id": eventID,
 	}
 	if status == "completed" {
-		if task.PrivateData.ResultURL != "" {
-			payload["video_url"] = task.PrivateData.ResultURL
-		}
-		if lastFrame := taskLastFrameURL(task.Data); lastFrame != "" {
-			payload["last_frame_url"] = lastFrame
+		if task.Platform == constant.TaskPlatform("rs-gateway") {
+			converter, ok := GetTaskAdaptorFunc(task.Platform).(interface {
+				ConvertToOpenAIVideo(*model.Task) ([]byte, error)
+			})
+			if !ok {
+				logger.LogWarn(ctx, fmt.Sprintf("video callback cannot render task %s: plugin unavailable", task.TaskID))
+				return
+			}
+			rendered, err := converter.ConvertToOpenAIVideo(task)
+			var video struct {
+				Result struct {
+					URL          string `json:"url"`
+					LastFrameURL string `json:"last_frame_url"`
+				} `json:"result"`
+			}
+			if err != nil || common.Unmarshal(rendered, &video) != nil || video.Result.URL == "" {
+				logger.LogWarn(ctx, fmt.Sprintf("video callback cannot render task %s: %v", task.TaskID, err))
+				return
+			}
+			payload["video_url"] = video.Result.URL
+			if video.Result.LastFrameURL != "" {
+				payload["last_frame_url"] = video.Result.LastFrameURL
+			}
+		} else {
+			if task.PrivateData.ResultURL != "" {
+				payload["video_url"] = task.PrivateData.ResultURL
+			}
+			if lastFrame := taskLastFrameURL(task.Data); lastFrame != "" {
+				payload["last_frame_url"] = lastFrame
+			}
 		}
 	}
 	if status == "failed" {

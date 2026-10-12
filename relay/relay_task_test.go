@@ -757,16 +757,18 @@ func TestSeedanceGatewayValidationAndFailedResponse(t *testing.T) {
 			}
 		})
 	}
+	// The gateway rewrites supplier failures, so the client response never
+	// carries the raw provider payload.
 	providerError := `{"code":"InvalidParameter","message":"unsupported reference","param":"content","type":"invalid_request_error"}`
 	task := &model.Task{TaskID: "public-job", Status: model.TaskStatusFailure, FailReason: "unsupported reference", Data: []byte(`{"status":"failed","error":` + providerError + `}`)}
 	adaptor := jsadaptor.New(plugin)
 	rendered, err := adaptor.ConvertToOpenAIVideo(task)
 	require.NoError(t, err)
+	assert.NotContains(t, string(rendered), "InvalidParameter")
+	assert.NotContains(t, string(rendered), "invalid_request_error")
 	var response map[string]any
 	require.NoError(t, common.Unmarshal(rendered, &response))
-	errorJSON, err := common.Marshal(response["error"])
-	require.NoError(t, err)
-	assert.JSONEq(t, providerError, string(errorJSON))
+	assert.Equal(t, map[string]any{"code": "video_generation_failed", "message": "unsupported reference"}, response["error"])
 	assert.Equal(t, "public-job", response["id"])
 	assert.Equal(t, "failed", response["status"])
 }

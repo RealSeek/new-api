@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -587,6 +588,35 @@ func TestTaskAdaptorMapsJSContract(t *testing.T) {
 	}`, string(rendered))
 	_, err = plugin.Engine.Export(context.Background(), "meta")
 	require.NoError(t, err)
+}
+
+func TestTaskAdaptorRSGatewayVideoURLsUseConfiguredDomain(t *testing.T) {
+	previousAddress, previousSecret := system_setting.ServerAddress, common.CryptoSecret
+	system_setting.ServerAddress, common.CryptoSecret = "https://gateway.example", "test-artifact-secret"
+	t.Cleanup(func() { system_setting.ServerAddress, common.CryptoSecret = previousAddress, previousSecret })
+	source, err := plugins.Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	for _, name := range []string{"MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5", "[c]seedance-2.5", "[NSFW]seedance-2.5", "seedance-2.5"} {
+		t.Run(name, func(t *testing.T) {
+			task := &model.Task{
+				TaskID: "task_public", Status: model.TaskStatusSuccess,
+				Properties: model.Properties{OriginModelName: name, UpstreamModelName: name},
+				Data:       []byte(`{"url":"https://supplier.example/video.mp4","task":{"content":{"url":"https://supplier.example/video.mp4"}},"metadata":{"url":"https://supplier.example/video.mp4"}}`),
+			}
+			encoded, err := New(plugin).ConvertToOpenAIVideo(task)
+			require.NoError(t, err)
+			var result map[string]any
+			require.NoError(t, common.Unmarshal(encoded, &result))
+			if name == "seedance-2.5" {
+				assert.Equal(t, "https://supplier.example/video.mp4", result["result"].(map[string]any)["url"])
+			} else {
+				assert.NotContains(t, string(encoded), "supplier.example")
+				assert.Contains(t, result["result"].(map[string]any)["url"], "https://gateway.example/v1/tasks/task_public/artifacts/video/content?access=")
+			}
+		})
+	}
 }
 
 func TestTaskAdaptorPreservesSoraVideoResponseFields(t *testing.T) {

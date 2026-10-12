@@ -2,13 +2,14 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.5.3",
+  version: "1.5.5",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
   models: [
     "seedance-2.0", "seedance-2.5", "doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628",
     "[c]seedance-2.0", "[c]seedance-2.5",
+    "[NSFW]seedance-2.0", "[NSFW]seedance-2.5",
     "MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5",
   ],
   fetchMode: "per_task",
@@ -23,15 +24,21 @@ export const meta = {
   usageExamples: [{ label: "720p · 5s", facts: { resolution: "720p", requests: 1, seconds: 5, tokens: 108000, video_input: false } }],
 };
 
+// 未评级前缀与特价前缀一样属于受限变体，只影响公开名，不改变上游模型。
+const RESTRICTED_SEEDANCE_PREFIX = /^\[(?:c|nsfw)\]/i;
+
+// Ark 计费 token 估算使用的像素表（tokens ≈ 时长 × 像素 × 24FPS / 1024）。
+const SEEDANCE_RESOLUTION_PIXELS = { "480p": 854 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080, "4k": 3840 * 2160 };
+
 function seedanceModel(ctx) {
-  const match = /^(?:\[c\])?(?:doubao-)?seedance-2[._-]([05])(?:-?\d{6})?(?:-(?:fast|mini))?(?:-(480p|720p|1080p|4k))?$/i.exec(ctx.upstreamModel || ctx.model || "");
+  const match = /^(?:\[c\]|\[nsfw\])?(?:doubao-)?seedance-2[._-]([05])(?:-?\d{6})?(?:-(?:fast|mini))?(?:-(480p|720p|1080p|4k))?$/i.exec(ctx.upstreamModel || ctx.model || "");
   return match ? [match[0], "seedance-2." + match[1], match[2]] : null;
 }
 
-// 满血 Seedance：不带特价前缀的 2.0 / 2.5。
+// 满血 Seedance：不带特价/未评级前缀的 2.0 / 2.5。
 function fullSeedanceModel(model) {
   const name = String(model || "").trim();
-  return Boolean(seedanceModel({ model: name })) && !/^\[c\]/i.test(name);
+  return Boolean(seedanceModel({ model: name })) && !RESTRICTED_SEEDANCE_PREFIX.test(name);
 }
 
 // 公开名和实际路由都是满血 Seedance 时才把上游成片地址直接交给调用方。
@@ -232,8 +239,10 @@ export function extractUsage(ctx) {
   const requested = Number(body.duration === undefined ? body.seconds : body.duration);
   const seconds = requested > 0 ? requested : maxDuration;
   const resolution = model[2] || String(body.resolution || metadata.resolution || body.size || "720p").trim().toLowerCase();
-  const pixels = { "480p": 854 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080, "4k": 3840 * 2160 }[resolution];
-  if (!pixels) throw new Error("unsupported Seedance resolution for token budget");
+  // A restricted variant keeps its custom resolution tiers, so an unpriced
+  // resolution must still reserve: fall back to the largest tier and let
+  // completion replace the estimate with real tokens.
+  const pixels = SEEDANCE_RESOLUTION_PIXELS[resolution] || SEEDANCE_RESOLUTION_PIXELS["4k"];
   // Keep the removed field at zero for expressions saved against older metadata.
   return { resolution, requests: 1, seconds, tokens: Math.ceil((seconds + (hasVideoInput ? maxDuration : 0)) * pixels * 24 / 1024), video_input: hasVideoInput, web_search_calls: 0 };
 }
@@ -284,7 +293,7 @@ export function parseTaskResult(_ctx, body) {
   const status = statuses[body.status] || "UNKNOWN";
   const result = { status };
   if (status === "UNKNOWN") result.reason = "unrecognized gateway task status: " + String(body.status || "");
-  if (status === "FAILURE") result.reason = (body.error || {}).message || body.fail_reason || "gateway task failed";
+  if (status === "FAILURE") result.reason = (body.error || {}).message || body.fail_reason || "视频生成失败，请稍后重试";
   if (Number(body.progress) >= 0 && Number(body.progress) <= 100) result.progress = Number(body.progress) + "%";
   const prior = _ctx && _ctx.state && typeof _ctx.state === "object" && !Array.isArray(_ctx.state) ? _ctx.state : null;
   if (prior && prior.callback && typeof prior.callback === "object") {
@@ -320,35 +329,41 @@ export const protocols = {
       if (ctx.body.kind !== "json") throw new Error("JSON or multipart body required");
       return { kind: "submit", model: ctx.model, requestBody: normalizeVideoRequest(ctx.body.value) };
     },
-    render(_ctx, task) {
+    render(ctx, task) {
       const statuses = { NOT_START: "queued", SUBMITTED: "queued", QUEUED: "queued", IN_PROGRESS: "in_progress", SUCCESS: "completed", FAILURE: "failed" };
       const properties = task.properties || {};
-      const fullSeedance = fullSeedanceRoute(properties.origin_model_name, properties.upstream_model_name);
-      const localURL = "/v1/videos/" + encodeURIComponent(task.task_id) + "/content";
-      const result = Object.assign({}, task.data || {}, {
+      const fullSeedance = fullSeedanceRoute(ctx.model || properties.origin_model_name, ctx.upstreamModel || properties.upstream_model_name);
+      const localURL = ((ctx.artifacts || {}).video || {}).url;
+      const data = task.data || {};
+      const result = {
         id: task.task_id,
         task_id: task.task_id,
-        model: properties.origin_model_name || "",
+        model: ctx.model || properties.origin_model_name || "",
         status: statuses[task.status] || "unknown",
-      });
+      };
+      for (const key of ["duration", "seconds", "resolution", "aspect_ratio", "ratio", "usage"]) {
+        if (data[key] !== undefined) result[key] = data[key];
+      }
       if (task.status === "SUCCESS") {
-        const details = result.result && typeof result.result === "object" && !Array.isArray(result.result) ? result.result : {};
-        const videoURL = fullSeedance ? details.url || (result.metadata || {}).url : "";
-        const lastFrame = fullSeedance ? details.last_frame_url || result.last_frame_url || (result.metadata || {}).last_frame_url : "";
+        const details = data.result || {};
+        const videoURL = fullSeedance ? details.url || (data.metadata || {}).url || (data.content || {}).video_url : "";
+        const lastFrame = fullSeedance ? details.last_frame_url || data.last_frame_url || (data.metadata || {}).last_frame_url : "";
+        if (!videoURL && !localURL) throw new Error("video content URL is unavailable");
         result.result = fullSeedance
-          ? Object.assign({}, details, {
+          ? {
             url: videoURL || localURL,
             ...(lastFrame ? { last_frame_url: lastFrame } : {}),
-          })
+          }
           : { url: localURL };
-        if (!fullSeedance && result.metadata && typeof result.metadata === "object" && !Array.isArray(result.metadata)) {
-          // 上游签名地址不能透给非满血模型的调用方；其余快照字段保持原样。
-          const metadata = Object.assign({}, result.metadata);
-          delete metadata.url;
+        if (data.metadata) {
+          const metadata = {};
+          for (const key of ["duration", "seconds", "resolution", "aspect_ratio", "ratio"]) {
+            if (data.metadata[key] !== undefined) metadata[key] = data.metadata[key];
+          }
           result.metadata = metadata;
         }
       }
-      if (task.status === "FAILURE" && !result.error) result.error = { code: "video_generation_failed", message: task.fail_reason || "gateway task failed" };
+      if (task.status === "FAILURE") result.error = { code: "video_generation_failed", message: task.fail_reason || "视频生成失败，请稍后重试" };
       return result;
     },
   },

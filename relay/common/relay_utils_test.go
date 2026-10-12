@@ -240,3 +240,23 @@ func TestPluginTaskRequestNormalizesDurationAliases(t *testing.T) {
 		assert.Equal(t, 8, ResolveTaskDuration(request, 5))
 	}
 }
+
+func TestIsSeedance2VideoModelCoversRestrictedVariants(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  bool
+	}{
+		{"seedance-2.0", true},
+		{"seedance-2.5-1080p", true},
+		// 未评级变体与满血变体共享上游的自动时长语义，价格各自配置。
+		{"[NSFW]seedance-2.0", true},
+		{"[NSFW]seedance-2.5", true},
+		// 特价变体保有自己的时长规则，不由此判断兜底。
+		{"[c]seedance-2.5", false},
+		{"MiniMax-H3", false},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsSeedance2VideoModel(tc.model))
+		})
+	}
+}
