@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { AlertTriangle, X } from 'lucide-react'
-import { memo, useId, useState } from 'react'
+import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -36,7 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
@@ -97,6 +96,20 @@ type TaskUsagePricingEditorProps = {
 
 type EditorMode = 'visual' | 'raw'
 
+// Reference cases are editing columns, not provider usage fields: a meter priced
+// for requests without a reference video also gets one for requests with it.
+const REFERENCE_PRICE_SUFFIX = '__reference'
+
+function referencePriceKey(field: string): string {
+  return `${field}${REFERENCE_PRICE_SUFFIX}`
+}
+
+function referenceMeterField(priceKey: string): string | null {
+  return priceKey.endsWith(REFERENCE_PRICE_SUFFIX)
+    ? priceKey.slice(0, -REFERENCE_PRICE_SUFFIX.length)
+    : null
+}
+
 function taskVideoReferencePricing(
   rows: TaskMatrixRow[],
   schema: BillingUsageSchema
@@ -130,19 +143,13 @@ function taskVideoReferencePricing(
     )
     return [{ baseIndex, referenceIndex }]
   })
-  // Independent reference tariffs remain editable in their original condition table.
+  // A pair stays editable as one row only while both cases share the per-request
+  // charge; stored constants that differ keep their original condition table.
   if (
     pairs.some(({ baseIndex, referenceIndex }) => {
       const base = rows[baseIndex]
       const reference = rows[referenceIndex]
-      return (
-        !reference ||
-        reference.constant < base.constant ||
-        getTaskNumberFields(schema).some(
-          ([key]) =>
-            (reference.unitPrices[key] ?? 0) !== (base.unitPrices[key] ?? 0)
-        )
-      )
+      return !reference || reference.constant !== base.constant
     })
   ) {
     return null
@@ -153,8 +160,7 @@ function taskVideoReferencePricing(
 function taskVideoBillingConfig(
   rows: TaskMatrixRow[],
   schema: BillingUsageSchema,
-  billingUnit: string,
-  referenceCharge: boolean
+  billingUnit: string
 ) {
   const meters = getTaskNumberFields(schema).filter(
     ([field, definition]) =>
@@ -163,9 +169,7 @@ function taskVideoBillingConfig(
       (field === 'requests' && definition.unit === 'count')
   )
   const selectedSchema =
-    schema.resolution &&
-    meters.length > 1 &&
-    billingUnit !== 'mixed'
+    schema.resolution && meters.length > 1 && billingUnit !== 'mixed'
       ? Object.fromEntries(
           Object.entries(schema).filter(
             ([field]) =>
@@ -174,20 +178,10 @@ function taskVideoBillingConfig(
           )
         )
       : schema
-  const nextRows = [...rows]
-  const referencePairs = taskVideoReferencePricing(rows, schema)
-  if (!referenceCharge) {
-    for (const pair of referencePairs ?? []) {
-      nextRows[pair.referenceIndex] = {
-        ...rows[pair.referenceIndex],
-        constant: rows[pair.baseIndex].constant,
-      }
-    }
-  }
-  const tiers = taskMatrixToTiers({ rows: nextRows }, selectedSchema)
-  const lastPair = referencePairs?.at(-1)
+  const tiers = taskMatrixToTiers({ rows }, selectedSchema)
+  const lastPair = taskVideoReferencePricing(rows, schema)?.at(-1)
   const fallback = tiers.at(-1)
-  if (referenceCharge && lastPair && fallback && tiers.length > 1) {
+  if (lastPair && fallback && tiers.length > 1) {
     // Open resolution selectors must also respect whether a reference is present.
     fallback.conditions = [
       {
@@ -200,7 +194,7 @@ function taskVideoBillingConfig(
       label: 'base_without_reference',
       conditions: [],
       constant: rows[lastPair.baseIndex].constant,
-      unitPrices: { ...fallback.unitPrices },
+      unitPrices: { ...rows[lastPair.baseIndex].unitPrices },
     })
   }
   return { schema: selectedSchema, tiers }
@@ -399,7 +393,6 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   props: TaskUsagePricingEditorProps
 ) {
   const { t, i18n } = useTranslation()
-  const referenceChargeId = useId()
   const [usageSchema, setUsageSchema] = useState(() =>
     editableTaskPricingSchema(props.usageSchema, props.billingExpr)
   )
@@ -421,7 +414,8 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
       definition.unit === 'token' ||
       (field === 'requests' && definition.unit === 'count')
   )
-  const hasVideoUnits = Boolean(usageSchema.resolution) && videoMeters.length > 1
+  const hasVideoUnits =
+    Boolean(usageSchema.resolution) && videoMeters.length > 1
   const [billingUnit, setBillingUnit] = useState(() => {
     const requestedField = videoMeters.find(([field, definition]) => {
       if (props.billingUnit === 'request') return field === 'requests'
@@ -440,55 +434,64 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
           '')
   })
   const referencePairs = taskVideoReferencePricing(matrixRows, usageSchema)
-  const [referenceCharge, setReferenceCharge] = useState(() =>
-    (referencePairs ?? []).some(
-      ({ baseIndex, referenceIndex }) =>
-        matrixRows[referenceIndex].constant > matrixRows[baseIndex].constant
-    )
-  )
   const billingConfig = taskVideoBillingConfig(
     matrixRows,
     usageSchema,
-    billingUnit,
-    referenceCharge
+    billingUnit
   )
   const displaySchema = billingConfig.schema
-  // The surcharge is an editing column, not a provider usage field.
+  // Priced meters are duplicated per reference case so the table shows the
+  // reference price beside the one it replaces.
   const matrixSchema = referencePairs
     ? Object.fromEntries([
         ...Object.entries(displaySchema).filter(
           ([key]) => key !== 'video_input'
         ),
-        ...(referenceCharge
-          ? [
-              [
-                '__reference_surcharge',
-                {
-                  type: 'number',
-                  unit: 'count',
-                  unitLabel: t('request'),
-                  description: t('Reference video surcharge'),
-                },
-              ] as const,
-            ]
-          : []),
+        ...getTaskNumberFields(displaySchema).flatMap(([field, definition]) => {
+          const label = taskPriceLabel(
+            definition.description,
+            t('Unit price: {{field}}', { field }),
+            i18n.language
+          )
+          return [
+            [
+              field,
+              {
+                ...definition,
+                description: `${label} · ${t('Without reference video')}`,
+              },
+            ],
+            [
+              referencePriceKey(field),
+              {
+                ...definition,
+                description: `${label} · ${t('With reference video')}`,
+              },
+            ],
+          ]
+        }),
       ])
     : displaySchema
   const displayedRows = referencePairs
-    ? referencePairs.map(({ baseIndex, referenceIndex }) => ({
-        ...matrixRows[baseIndex],
-        combination: Object.fromEntries(
-          Object.entries(matrixRows[baseIndex].combination).filter(
-            ([key]) => key !== 'video_input'
-          )
-        ),
-        unitPrices: {
-          ...matrixRows[baseIndex].unitPrices,
-          __reference_surcharge:
-            matrixRows[referenceIndex].constant -
-            matrixRows[baseIndex].constant,
-        },
-      }))
+    ? referencePairs.map(({ baseIndex, referenceIndex }) => {
+        const base = matrixRows[baseIndex]
+        const reference = matrixRows[referenceIndex]
+        return {
+          ...base,
+          combination: Object.fromEntries(
+            Object.entries(base.combination).filter(
+              ([key]) => key !== 'video_input'
+            )
+          ),
+          unitPrices: Object.fromEntries([
+            ...Object.entries(base.unitPrices),
+            ...Object.entries(base.unitPrices).map(([field]) => [
+              referencePriceKey(field),
+              reference.unitPrices[field] ?? 0,
+            ]),
+          ]),
+        }
+      })
     : matrixRows
   const [rawExpr, setRawExpr] = useState(() =>
     combineBillingExpr(props.billingExpr, props.requestRuleExpr)
@@ -539,76 +542,61 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
   const publishRows = (
     nextRows: TaskMatrixRow[],
     nextSchema = usageSchema,
-    nextUnit = billingUnit,
-    nextReferenceCharge = referenceCharge
+    nextUnit = billingUnit
   ) => {
     setMatrixRows(nextRows)
-    const config = taskVideoBillingConfig(
-      nextRows,
-      nextSchema,
-      nextUnit,
-      nextReferenceCharge
-    )
+    const config = taskVideoBillingConfig(nextRows, nextSchema, nextUnit)
     props.onBillingExprChange(
       generateTaskExprFromConfig({ tiers: config.tiers }, config.schema)
     )
   }
 
   const handleRowChange = (index: number, next: TaskMatrixRow) => {
-    const nextRows = [...matrixRows]
     const pair = referencePairs?.[index]
-    if (pair) {
-      const unitPrices = Object.fromEntries(
-        Object.entries(next.unitPrices).filter(
-          ([key]) => key !== '__reference_surcharge'
-        )
-      )
-      nextRows[pair.baseIndex] = {
-        ...matrixRows[pair.baseIndex],
-        constant: next.constant,
-        unitPrices,
-      }
-      nextRows[pair.referenceIndex] = {
-        ...matrixRows[pair.referenceIndex],
-        constant: next.constant + next.unitPrices.__reference_surcharge,
-        unitPrices,
-      }
-    } else {
+    if (!pair) {
+      const nextRows = [...matrixRows]
       nextRows[index] = next
+      publishRows(nextRows)
+      return
+    }
+    const basePrices = { ...matrixRows[pair.baseIndex].unitPrices }
+    const referencePrices = { ...matrixRows[pair.referenceIndex].unitPrices }
+    for (const [key, value] of Object.entries(next.unitPrices)) {
+      const field = referenceMeterField(key)
+      if (field) referencePrices[field] = value
+      else basePrices[key] = value
+    }
+    const nextRows = [...matrixRows]
+    nextRows[pair.baseIndex] = {
+      ...matrixRows[pair.baseIndex],
+      constant: next.constant,
+      unitPrices: basePrices,
+    }
+    nextRows[pair.referenceIndex] = {
+      ...matrixRows[pair.referenceIndex],
+      constant: next.constant,
+      unitPrices: referencePrices,
     }
     publishRows(nextRows)
   }
 
   const handleFillColumn = (priceKey: string, value: number) => {
-    const nextRows = matrixRows.map((row) => {
-      if (
-        referencePairs &&
-        (priceKey === 'constant' || priceKey === '__reference_surcharge')
-      ) {
-        return row
-      }
+    const referenceField = referenceMeterField(priceKey)
+    const field = referenceField ?? priceKey
+    const nextRows = matrixRows.map((row, index) => {
       if (priceKey === 'constant') return { ...row, constant: value }
-      return {
-        ...row,
-        unitPrices: { ...row.unitPrices, [priceKey]: value },
+      const pair = referencePairs?.find(
+        (candidate) =>
+          candidate.baseIndex === index || candidate.referenceIndex === index
+      )
+      if (!pair) {
+        if (referenceField) return row
+        return { ...row, unitPrices: { ...row.unitPrices, [field]: value } }
       }
+      if ((pair.referenceIndex === index) !== Boolean(referenceField))
+        return row
+      return { ...row, unitPrices: { ...row.unitPrices, [field]: value } }
     })
-    for (const { baseIndex, referenceIndex } of referencePairs ?? []) {
-      if (priceKey === 'constant') {
-        const extra =
-          matrixRows[referenceIndex].constant - matrixRows[baseIndex].constant
-        nextRows[baseIndex] = { ...nextRows[baseIndex], constant: value }
-        nextRows[referenceIndex] = {
-          ...nextRows[referenceIndex],
-          constant: value + extra,
-        }
-      } else if (priceKey === '__reference_surcharge') {
-        nextRows[referenceIndex] = {
-          ...nextRows[referenceIndex],
-          constant: nextRows[baseIndex].constant + value,
-        }
-      }
-    }
     publishRows(nextRows)
   }
 
@@ -679,19 +667,7 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
           )?.[0] ??
           '')
     setBillingUnit(nextUnit)
-    const nextReferenceCharge = (
-      taskVideoReferencePricing(nextRows, nextSchema) ?? []
-    ).some(
-      ({ baseIndex, referenceIndex }) =>
-        nextRows[referenceIndex].constant > nextRows[baseIndex].constant
-    )
-    setReferenceCharge(nextReferenceCharge)
-    const config = taskVideoBillingConfig(
-      nextRows,
-      nextSchema,
-      nextUnit,
-      nextReferenceCharge
-    )
+    const config = taskVideoBillingConfig(nextRows, nextSchema, nextUnit)
     props.onBillingExprChange(
       generateTaskExprFromConfig({ tiers: config.tiers }, config.schema)
     )
@@ -783,25 +759,25 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
                     if (!value || value === billingUnit) return
                     setBillingUnit(value)
                     const definition = usageSchema[value]
-                    props.onBillingUnitChange?.(
-                      value === 'requests'
-                        ? 'request'
-                        : definition?.unit === 'token'
-                          ? 'token'
-                          : 'second'
-                    )
+                    let unit: TaskPricingUnit = 'second'
+                    if (value === 'requests') unit = 'request'
+                    else if (definition?.unit === 'token') unit = 'token'
+                    props.onBillingUnitChange?.(unit)
                     publishRows(matrixRows, usageSchema, value)
                   }}
                 >
-                  {videoMeters.map(([field, definition]) => (
-                    <ToggleGroupItem key={field} value={field}>
-                      {field === 'requests'
-                        ? t('Per-request')
-                        : definition.unit === 'second'
-                          ? t('Per-second')
-                          : t('Per-token')}
-                    </ToggleGroupItem>
-                  ))}
+                  {videoMeters.map(([field, definition]) => {
+                    let label = t('Per-token')
+                    if (field === 'requests') label = t('Per-request')
+                    else if (definition.unit === 'second') {
+                      label = t('Per-second')
+                    }
+                    return (
+                      <ToggleGroupItem key={field} value={field}>
+                        {label}
+                      </ToggleGroupItem>
+                    )
+                  })}
                   {billingUnit === 'mixed' ? (
                     <ToggleGroupItem value='mixed'>
                       {t('Usage prices')}
@@ -811,29 +787,6 @@ export const TaskUsagePricingEditor = memo(function TaskUsagePricingEditor(
                 <FieldDescription>
                   {t(
                     'Switching units retains editing prices. Saving uses only the selected billing unit.'
-                  )}
-                </FieldDescription>
-              </Field>
-            ) : null}
-            {referencePairs ? (
-              <Field className='gap-2'>
-                <div className='flex items-center gap-2'>
-                  <Switch
-                    id={referenceChargeId}
-                    aria-label={t('Charge extra for reference video')}
-                    checked={referenceCharge}
-                    onCheckedChange={(checked) => {
-                      setReferenceCharge(checked)
-                      publishRows(matrixRows, usageSchema, billingUnit, checked)
-                    }}
-                  />
-                  <FieldLabel htmlFor={referenceChargeId}>
-                    {t('Charge extra for reference video')}
-                  </FieldLabel>
-                </div>
-                <FieldDescription>
-                  {t(
-                    'When a reference video is present, add the fixed fee for its resolution once per request.'
                   )}
                 </FieldDescription>
               </Field>

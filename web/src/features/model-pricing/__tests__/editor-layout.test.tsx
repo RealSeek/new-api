@@ -386,7 +386,7 @@ it.each(['default', 'unset'] as const)(
       screen.queryByRole('tab', { name: 'Per-request' })
     ).not.toBeInTheDocument()
     const price = screen.getByLabelText(
-      /Video generation unit price:.*480p/
+      /Video generation unit price · Without reference video:.*480p/
     )
     await user.clear(price)
     await user.type(price, '0.25')
@@ -398,9 +398,7 @@ it.each(['default', 'unset'] as const)(
     await waitFor(() => expect(save).toHaveBeenCalledOnce())
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
-        BillingExpr: expect.stringContaining(
-          'u(\\"requests\\") * 0.25'
-        ),
+        BillingExpr: expect.stringContaining('u(\\"requests\\") * 0.25'),
         BillingMode: '{"example-model":"tiered_expr"}',
         ExposeRatioEnabled: variant === 'default',
         ModelPrice: '{}',
