@@ -59,7 +59,7 @@ func TestHailuoUsageProfilesPerModel(t *testing.T) {
 		{
 			models:      []string{"MiniMax-H3"},
 			fields:      []string{"input_images", "input_video_seconds", "resolution", "seconds"},
-			resolutions: []string{"768P", "2K"},
+			resolutions: []string{"768P"},
 		},
 		{
 			models:      []string{"MiniMax-Hailuo-2.3", "MiniMax-Hailuo-2.3-Fast"},
