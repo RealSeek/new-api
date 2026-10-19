@@ -109,6 +109,35 @@ test('shows the recorded request and response models in log details', () => {
   queryClient.clear()
 })
 
+describe('request format details', () => {
+  test.each([
+    { chain: ['Claude Messages'], label: 'Claude Messages' },
+    { chain: ['OpenAI Responses'], label: 'OpenAI Responses' },
+    { chain: ['OpenAI Compatible'], label: 'OpenAI Compatible' },
+    { chain: ['Google Gemini'], label: 'Google Gemini' },
+    {
+      chain: ['OpenAI Compatible', 'Claude Messages'],
+      label: 'OpenAI Compatible -> Claude Messages',
+    },
+  ])('shows the recorded protocol as $label', ({ chain, label }) => {
+    const queryClient = renderDetails({
+      request_path: '/v1/messages',
+      request_conversion: chain,
+    })
+
+    expect(screen.getByText(label)).toBeVisible()
+    expect(screen.queryByText('Native format')).not.toBeInTheDocument()
+    queryClient.clear()
+  })
+
+  test('omits the content section when the consume log has no diagnostic content', () => {
+    const queryClient = renderDetails({})
+
+    expect(screen.queryByText('Content')).not.toBeInTheDocument()
+    queryClient.clear()
+  })
+})
+
 describe('usage facts billing details', () => {
   test('shows the settled image count and a per-image price', () => {
     const queryClient = renderDetails({

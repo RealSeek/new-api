@@ -63,23 +63,26 @@ type RSGatewayBillingUsage struct {
 }
 
 type rsGatewayBillingContext struct {
-	BaseURL        string
-	KeyHash        string
-	Username       string
-	TokenName      string
-	ModelName      string
-	UsingGroup     string
-	StartTime      time.Time
-	IsStream       bool
-	RelayFormat    types.RelayFormat
-	Price          hosttypes.PriceData
-	OtherRatios    map[string]float64
-	Tiered         *billingexpr.BillingSnapshot
-	RequestInput   billingexpr.RequestInput
-	PreConsumed    int
-	TokenConsumed  int
-	Funding        string
-	SubscriptionID int
+	BaseURL            string
+	KeyHash            string
+	Username           string
+	TokenName          string
+	ModelName          string
+	UsingGroup         string
+	StartTime          time.Time
+	IsStream           bool
+	RelayFormat        types.RelayFormat
+	RequestPath        string
+	ConversionChain    []types.RelayFormat
+	FinalRequestFormat types.RelayFormat
+	Price              hosttypes.PriceData
+	OtherRatios        map[string]float64
+	Tiered             *billingexpr.BillingSnapshot
+	RequestInput       billingexpr.RequestInput
+	PreConsumed        int
+	TokenConsumed      int
+	Funding            string
+	SubscriptionID     int
 }
 
 // PrepareRSGatewayReceipt persists the existing reservation and user price
@@ -97,12 +100,15 @@ func PrepareRSGatewayReceipt(c *gin.Context, info *relaycommon.RelayInfo) error 
 		pricingTime = time.Now()
 	}
 	input.PricingTime = &pricingTime
+	requestPath, _, _ := strings.Cut(info.RequestURLPath, "?")
 	snapshot := rsGatewayBillingContext{
 		BaseURL: info.ChannelBaseUrl, KeyHash: fmt.Sprintf("%x", sha256.Sum256([]byte(info.ApiKey))),
 		Username: c.GetString("username"), TokenName: info.TokenName,
 		ModelName: info.GetBillingModelName(), UsingGroup: info.UsingGroup,
 		StartTime: info.StartTime, IsStream: info.IsStream, RelayFormat: info.RelayFormat,
-		Price: info.PriceData, OtherRatios: info.PriceData.OtherRatios(), Tiered: info.TieredBillingSnapshot,
+		RequestPath: requestPath, ConversionChain: info.RequestConversionChain,
+		FinalRequestFormat: info.GetFinalRequestRelayFormat(),
+		Price:              info.PriceData, OtherRatios: info.PriceData.OtherRatios(), Tiered: info.TieredBillingSnapshot,
 		RequestInput: input, SubscriptionID: info.SubscriptionId,
 	}
 	quotaPerUnit := common.QuotaPerUnit
@@ -312,9 +318,12 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 	info := &relaycommon.RelayInfo{
 		OriginModelName: snapshot.ModelName, BillingModelName: snapshot.ModelName, StartTime: snapshot.StartTime,
 		FirstResponseTime: snapshot.StartTime, IsStream: snapshot.IsStream,
-		RelayFormat: snapshot.RelayFormat, PriceData: snapshot.Price, TieredBillingSnapshot: snapshot.Tiered,
+		RequestURLPath: snapshot.RequestPath, RequestConversionChain: snapshot.ConversionChain,
+		FinalRequestRelayFormat: snapshot.FinalRequestFormat,
+		RelayFormat:             snapshot.RelayFormat, PriceData: snapshot.Price, TieredBillingSnapshot: snapshot.Tiered,
 		BillingRequestInput: &snapshot.RequestInput, ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway},
 	}
+	info.InitRequestConversionChain()
 	info.PriceData.ReplaceOtherRatios(snapshot.OtherRatios)
 	quota, charges, prompt, completion, err := priceRSGatewayReceipt(info, record.RequestId, receipt)
 	if err != nil {
@@ -398,7 +407,7 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 	model.RecordConsumeLog(logContext, record.UserId, model.RecordConsumeLogParams{
 		ChannelId: record.ChannelId, PromptTokens: prompt, CompletionTokens: completion,
 		ModelName: snapshot.ModelName, TokenName: snapshot.TokenName, Quota: quota,
-		Content: "网关完整逐路用量结算", TokenId: record.TokenId,
+		TokenId:        record.TokenId,
 		UseTimeSeconds: int(durationMs / 1000), IsStream: snapshot.IsStream, Group: snapshot.UsingGroup, Other: other,
 	})
 	return nil

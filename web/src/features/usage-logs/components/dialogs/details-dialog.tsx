@@ -613,7 +613,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
       ? other.request_conversion.filter(Boolean)
       : []
   const conversionLabel =
-    conversionChain.length <= 1
+    conversionChain.length === 0
       ? t('Native format')
       : conversionChain.join(' -> ')
   const showConversion = shouldShowRequestConversion(

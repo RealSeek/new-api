@@ -307,6 +307,7 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	require.NoError(t, model.BeginRSGatewaySettlement(requestID, user.Id, token.Id, channel.Id))
 	expression := `len <= 100 ? tier("s", p * 2 + c * 4) : tier("l", p * 10 + c * 20)`
 	info := &relaycommon.RelayInfo{RequestId: requestID, UserId: user.Id, TokenId: token.Id, TokenName: token.Name, OriginModelName: "receipt-model", StartTime: time.Now().Add(-time.Hour), RelayFormat: types.RelayFormatOpenAI, IsStream: true,
+		RequestURLPath:        "/v1/chat/completions?private=value",
 		ChannelMeta:           &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway, ChannelId: channel.Id, ChannelBaseUrl: server.URL, ApiKey: key},
 		PriceData:             hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
 		TieredBillingSnapshot: &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), QuotaPerUnit: 500000, GroupRatio: 1},
@@ -319,6 +320,11 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	info.Billing = &BillingSession{relayInfo: info, funding: source, preConsumedQuota: reserved, tokenConsumed: reserved}
 	c := &gin.Context{}
 	c.Set("username", user.Username)
+	if funding == "subscription" {
+		info.RelayFormat = types.RelayFormatClaude
+		info.RequestURLPath = "/v1/messages?beta=true"
+	}
+	info.InitRequestConversionChain()
 	require.NoError(t, PrepareRSGatewayReceipt(c, info))
 	QueueRSGatewayReceipt(requestID)
 	require.NoError(t, ReconcileRSGatewayBillingOnce(context.Background()))
@@ -327,6 +333,8 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	assert.Equal(t, "pending", ledger.State)
 	assert.NotEmpty(t, ledger.ContextJSON)
 	assert.NotContains(t, ledger.ContextJSON, key)
+	assert.NotContains(t, ledger.ContextJSON, "private=value")
+	assert.NotContains(t, ledger.ContextJSON, "beta=true")
 	assert.Empty(t, ledger.ReceiptHash)
 	responseStatus.Store(http.StatusNotFound)
 	QueueRSGatewayReceipt(requestID)
@@ -350,8 +358,16 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	assert.Equal(t, 15, logs[0].CompletionTokens)
 	assert.Equal(t, 7, logs[0].UseTime, "receipt polling delay and hedge completion do not inflate model duration")
 	assert.True(t, logs[0].IsStream)
+	assert.Empty(t, logs[0].Content, "settlement diagnostics are not model response content")
 	var other map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
+	if funding == "subscription" {
+		assert.Equal(t, "/v1/messages", other["request_path"])
+		assert.Equal(t, []any{"Claude Messages"}, other["request_conversion"])
+	} else {
+		assert.Equal(t, "/v1/chat/completions", other["request_path"])
+		assert.Equal(t, []any{"OpenAI Compatible"}, other["request_conversion"])
+	}
 	assert.Equal(t, float64(250), other["frt"])
 	admin, ok := other["admin_info"].(map[string]any)
 	require.True(t, ok)
