@@ -42,6 +42,8 @@ type RSGatewayBillingAttempt struct {
 	PhysicalID    string                 `json:"physical_id"`
 	Role          string                 `json:"role"`
 	State         string                 `json:"state"`
+	FirstByteMs   *int64                 `json:"first_byte_ms"`
+	DurationMs    *int64                 `json:"duration_ms"`
 	UsageObserved bool                   `json:"usage_observed"`
 	Usage         *RSGatewayBillingUsage `json:"usage"`
 }
@@ -309,6 +311,7 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 	}
 	info := &relaycommon.RelayInfo{
 		OriginModelName: snapshot.ModelName, BillingModelName: snapshot.ModelName, StartTime: snapshot.StartTime,
+		FirstResponseTime: snapshot.StartTime, IsStream: snapshot.IsStream,
 		RelayFormat: snapshot.RelayFormat, PriceData: snapshot.Price, TieredBillingSnapshot: snapshot.Tiered,
 		BillingRequestInput: &snapshot.RequestInput, ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway},
 	}
@@ -339,33 +342,77 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 	logContext := &gin.Context{Request: &http.Request{Header: make(http.Header)}}
 	logContext.Set("username", snapshot.Username)
 	logContext.Set(common.RequestIdKey, record.RequestId)
-	other := model.NewLogOther()
+	var cacheRead, cacheCreation, cacheCreation5m, cacheCreation1h int64
+	primary := -1
+	for i, charge := range charges {
+		if charge.Usage != nil {
+			cacheRead += charge.Usage.CacheReadTokens
+			cacheCreation += charge.Usage.CacheCreationTokens
+			cacheCreation5m += charge.Usage.CacheCreation5mTokens
+			cacheCreation1h += charge.Usage.CacheCreation1hTokens
+			if primary < 0 || charges[primary].Role != "winner" {
+				primary = i
+			}
+		}
+		if charge.Role == "winner" {
+			primary = i
+		}
+	}
+	// Physical completion timings survive a new-api restart and receipt polling.
+	// The background worker's clock does not measure the model response.
+	var durationMs int64
+	if primary >= 0 {
+		attempt := receipt.Attempts[primary]
+		if attempt.FirstByteMs != nil {
+			info.FirstResponseTime = info.StartTime.Add(time.Duration(*attempt.FirstByteMs) * time.Millisecond)
+		}
+		if attempt.DurationMs != nil {
+			durationMs = *attempt.DurationMs
+		}
+	}
+	other := GenerateTextOtherInfo(logContext, info, snapshot.Price.ModelRatio, snapshot.Price.GroupRatioInfo.GroupRatio,
+		snapshot.Price.CompletionRatio, common.QuotaFromFloat(float64(cacheRead)), snapshot.Price.CacheRatio,
+		snapshot.Price.ModelPrice, snapshot.Price.GroupRatioInfo.GroupSpecialRatio)
+	// Receipt input totals include cache even when an upstream reports it separately.
+	other.SetPublic("usage_semantic", "openai")
+	other.SetPublic("input_tokens_total", prompt)
+	other.SetPublic("cache_creation_tokens", common.QuotaFromFloat(float64(cacheCreation)))
+	other.SetPublic("cache_creation_tokens_5m", common.QuotaFromFloat(float64(cacheCreation5m)))
+	other.SetPublic("cache_creation_tokens_1h", common.QuotaFromFloat(float64(cacheCreation1h)))
+	other.SetPublic("cache_write_tokens", common.QuotaFromFloat(float64(cacheCreation)))
+	other.SetPublic("cache_creation_ratio", snapshot.Price.CacheCreationRatio)
+	other.SetPublic("cache_creation_ratio_5m", snapshot.Price.CacheCreation5mRatio)
+	other.SetPublic("cache_creation_ratio_1h", snapshot.Price.CacheCreation1hRatio)
 	other.SetPublic("rs_gateway", true)
 	other.SetPublic("gateway_billing_version", 1)
 	other.SetPublic("gateway_attempts", charges)
 	other.SetPublic("gateway_receipt_hash", hash)
-	other.SetPublic("model_ratio", snapshot.Price.ModelRatio)
-	other.SetPublic("group_ratio", snapshot.Price.GroupRatioInfo.GroupRatio)
-	if snapshot.Tiered != nil {
-		other.SetPublic("billing_mode", snapshot.Tiered.BillingMode)
+	if primary >= 0 && charges[primary].Billing != nil {
+		// The displayed tier belongs to this physical call. Every call retains its
+		// own evaluated billing tokens and tier; totals never select a new tier.
+		other.MergePublic(charges[primary].Billing.Snapshot())
+		other.SetPublic("gateway_pricing_physical_id", charges[primary].PhysicalID)
 	}
+	other.SetAdmin("duration_ms", durationMs)
 	attachQuotaSaturation(logContext, info, other)
 	model.RecordConsumeLog(logContext, record.UserId, model.RecordConsumeLogParams{
 		ChannelId: record.ChannelId, PromptTokens: prompt, CompletionTokens: completion,
 		ModelName: snapshot.ModelName, TokenName: snapshot.TokenName, Quota: quota,
 		Content: "网关完整逐路用量结算", TokenId: record.TokenId,
-		UseTimeSeconds: int(time.Since(snapshot.StartTime).Seconds()), IsStream: snapshot.IsStream, Group: snapshot.UsingGroup, Other: other,
+		UseTimeSeconds: int(durationMs / 1000), IsStream: snapshot.IsStream, Group: snapshot.UsingGroup, Other: other,
 	})
 	return nil
 }
 
 type rsGatewayAttemptCharge struct {
-	PhysicalID    string `json:"physical_id"`
-	Role          string `json:"role"`
-	State         string `json:"state"`
-	UsageObserved bool   `json:"usage_observed"`
-	Quota         int    `json:"quota"`
-	BillingUnit   string `json:"billing_unit"`
+	PhysicalID    string                 `json:"physical_id"`
+	Role          string                 `json:"role"`
+	State         string                 `json:"state"`
+	UsageObserved bool                   `json:"usage_observed"`
+	Quota         int                    `json:"quota"`
+	BillingUnit   string                 `json:"billing_unit"`
+	Usage         *RSGatewayBillingUsage `json:"usage,omitempty"`
+	Billing       *model.LogOther        `json:"billing,omitempty"`
 }
 
 func priceRSGatewayReceipt(info *relaycommon.RelayInfo, requestID string, receipt RSGatewayBillingReceipt) (int, []rsGatewayAttemptCharge, int, int, error) {
@@ -411,7 +458,11 @@ func priceRSGatewayReceipt(info *relaycommon.RelayInfo, requestID string, receip
 				usage.ClaudeCacheCreation5mTokens = int(u.CacheCreationTokens - u.CacheCreation1hTokens)
 			}
 			prompt += u.InputTokens
+			if !*u.InputIncludesCache {
+				prompt += u.CacheReadTokens + u.CacheCreationTokens
+			}
 			completion += u.OutputTokens
+			charge.Usage = u
 		}
 		priceInfo := *info
 		priceInfo.ResponsesUsageInfo = nil
@@ -429,6 +480,9 @@ func priceRSGatewayReceipt(info *relaycommon.RelayInfo, requestID string, receip
 				return 0, nil, 0, 0, fmt.Errorf("gateway attempt %s price: %w", attempt.PhysicalID, err)
 			}
 			quota, unit = result.ActualQuotaAfterGroup, result.BillingUnit
+			result.BillingTokens = &params
+			charge.Billing = model.NewLogOther()
+			InjectTieredBillingInfo(charge.Billing, &priceInfo, &result)
 			noteQuotaClamp(info, result.Clamp)
 		} else if info.PriceData.UsePrice {
 			unit = billingexpr.BillingUnitRequest

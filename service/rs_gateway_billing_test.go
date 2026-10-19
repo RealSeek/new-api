@@ -129,6 +129,54 @@ func TestRSGatewayReceiptPerAttemptPricesAndRequestProbes(t *testing.T) {
 	require.Error(t, err, "a duplicate physical ID must not be billed twice")
 }
 
+func TestRSGatewayReceiptUsageAndBillingMetadata(t *testing.T) {
+	included, separate := true, false
+	expression := `len <= 100 ? tier("short", p * 2 + c * 4 + cr * 0.5 + cc * 3 + cc1h * 6) : tier("long", p * 10 + c * 20 + cr + cc * 6 + cc1h * 12)`
+	info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAI,
+		PriceData:             hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), QuotaPerUnit: 1000000, GroupRatio: 1},
+		BillingRequestInput:   &billingexpr.RequestInput{},
+	}
+	for _, test := range []struct {
+		name          string
+		input         int64
+		includesCache *bool
+	}{
+		{"inclusive input", 80, &included},
+		{"separate Anthropic cache", 55, &separate},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			receipt := RSGatewayBillingReceipt{Version: 1, RequestID: "metadata", Complete: true, Success: true, Attempts: []RSGatewayBillingAttempt{
+				{PhysicalID: "winner", Role: "winner", State: "succeeded", UsageObserved: true, Usage: &RSGatewayBillingUsage{
+					InputTokens: test.input, OutputTokens: 10, CacheReadTokens: 20, CacheCreationTokens: 5, CacheCreation5mTokens: 5, InputIncludesCache: test.includesCache,
+				}},
+				{PhysicalID: "hedge", Role: "hedge", State: "cancelled", UsageObserved: true, Usage: &RSGatewayBillingUsage{
+					InputTokens: 120, OutputTokens: 5, InputIncludesCache: &included,
+				}},
+			}}
+			quota, charges, prompt, completion, err := priceRSGatewayReceipt(info, receipt.RequestID, receipt)
+			require.NoError(t, err)
+			assert.Equal(t, 200, prompt, "log inputs include separately reported cache exactly once")
+			assert.Equal(t, 15, completion)
+			assert.Equal(t, 1475, quota)
+			require.Len(t, charges, 2)
+			winner := charges[0].Billing.Snapshot()
+			loser := charges[1].Billing.Snapshot()
+			assert.Equal(t, "short", winner["matched_tier"])
+			assert.Equal(t, "long", loser["matched_tier"])
+			assert.Equal(t, map[string]float64{"p": 55, "c": 10, "len": 80, "cr": 20, "cc": 5, "cc1h": 0,
+				"img": 0, "img_cr": 0, "img_o": 0, "ai": 0, "ao": 0}, winner["billing_tokens"])
+			assert.Equal(t, test.input, charges[0].Usage.InputTokens)
+			assert.Equal(t, *test.includesCache, *charges[0].Usage.InputIncludesCache)
+			encoded, err := common.Marshal(charges)
+			require.NoError(t, err)
+			assert.Contains(t, string(encoded), `"matched_tier":"short"`)
+			assert.Contains(t, string(encoded), `"matched_tier":"long"`)
+			assert.Contains(t, string(encoded), `"expr_b64":`)
+		})
+	}
+}
+
 // The isolated databases are supplied by the runner; no server is installed or
 // production DSN inferred. This exercises migrations, HTTP polling and money.
 func TestRSGatewayReceiptDatabaseMatrix(t *testing.T) {
@@ -163,14 +211,14 @@ func TestRSGatewayReceiptDatabaseMatrix(t *testing.T) {
 			oldMemory, oldRedis, oldBatch, oldLog := common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled
 			model.DB, model.LOG_DB = db, db
 			common.SetDatabaseTypes(dialect.name, dialect.name)
-			common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = false, false, false, false
+			common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = false, false, false, true
 			t.Cleanup(func() {
 				model.DB, model.LOG_DB = oldDB, oldLogDB
 				common.SetDatabaseTypes(oldMainType, oldLogType)
 				common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = oldMemory, oldRedis, oldBatch, oldLog
 				require.NoError(t, sqlDB.Close())
 			})
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.Log{}))
 			// Use the actual old schema, then run the production model migration twice.
 			if !db.Migrator().HasTable(&model.RSGatewaySettlement{}) {
 				require.NoError(t, db.Migrator().CreateTable(&rsGatewaySettlementBeforeReceipts{}))
@@ -207,9 +255,12 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	var responseStatus atomic.Int64
 	responseStatus.Store(http.StatusAccepted)
 	cacheIncluded := true
+	firstByteMs, winnerDurationMs, hedgeDurationMs := int64(250), int64(7500), int64(9200)
 	receipt := RSGatewayBillingReceipt{Version: 1, RequestID: requestID, Complete: true, Success: true, Attempts: []RSGatewayBillingAttempt{
-		{PhysicalID: "flow:1", Role: "winner", State: "succeeded", UsageObserved: true, Usage: &RSGatewayBillingUsage{InputTokens: 80, OutputTokens: 10, InputIncludesCache: &cacheIncluded}},
-		{PhysicalID: "flow:2", Role: "hedge", State: "cancelled", UsageObserved: true, Usage: &RSGatewayBillingUsage{InputTokens: 80, OutputTokens: 5, InputIncludesCache: &cacheIncluded}},
+		{PhysicalID: "flow:1", Role: "winner", State: "succeeded", FirstByteMs: &firstByteMs, DurationMs: &winnerDurationMs, UsageObserved: true, Usage: &RSGatewayBillingUsage{
+			InputTokens: 80, OutputTokens: 10, CacheReadTokens: 20, CacheCreationTokens: 5, CacheCreation5mTokens: 2, CacheCreation1hTokens: 3, InputIncludesCache: &cacheIncluded,
+		}},
+		{PhysicalID: "flow:2", Role: "hedge", State: "cancelled", DurationMs: &hedgeDurationMs, UsageObserved: true, Usage: &RSGatewayBillingUsage{InputTokens: 80, OutputTokens: 5, InputIncludesCache: &cacheIncluded}},
 	}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
@@ -236,6 +287,7 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 		require.NoError(t, db.Create(&sub).Error)
 	}
 	t.Cleanup(func() {
+		require.NoError(t, db.Where("request_id = ?", requestID).Delete(&model.Log{}).Error)
 		require.NoError(t, db.Where("request_id = ?", requestID).Delete(&model.RSGatewaySettlement{}).Error)
 		require.NoError(t, db.Unscoped().Delete(&token).Error)
 		require.NoError(t, db.Unscoped().Delete(&user).Error)
@@ -254,7 +306,7 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	require.True(t, ok)
 	require.NoError(t, model.BeginRSGatewaySettlement(requestID, user.Id, token.Id, channel.Id))
 	expression := `len <= 100 ? tier("s", p * 2 + c * 4) : tier("l", p * 10 + c * 20)`
-	info := &relaycommon.RelayInfo{RequestId: requestID, UserId: user.Id, TokenId: token.Id, TokenName: token.Name, OriginModelName: "receipt-model", StartTime: time.Now(), RelayFormat: types.RelayFormatOpenAI,
+	info := &relaycommon.RelayInfo{RequestId: requestID, UserId: user.Id, TokenId: token.Id, TokenName: token.Name, OriginModelName: "receipt-model", StartTime: time.Now().Add(-time.Hour), RelayFormat: types.RelayFormatOpenAI, IsStream: true,
 		ChannelMeta:           &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway, ChannelId: channel.Id, ChannelBaseUrl: server.URL, ApiKey: key},
 		PriceData:             hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
 		TieredBillingSnapshot: &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), QuotaPerUnit: 500000, GroupRatio: 1},
@@ -291,6 +343,30 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	assert.Equal(t, "settled", ledger.State)
 	assert.EqualValues(t, want, ledger.Quota)
 	assert.NotEmpty(t, ledger.ReceiptHash)
+	var logs []model.Log
+	require.NoError(t, db.Where("request_id = ?", requestID).Find(&logs).Error)
+	require.Len(t, logs, 1, "repeated receipt reconciliation records one consume log")
+	assert.Equal(t, 160, logs[0].PromptTokens)
+	assert.Equal(t, 15, logs[0].CompletionTokens)
+	assert.Equal(t, 7, logs[0].UseTime, "receipt polling delay and hedge completion do not inflate model duration")
+	assert.True(t, logs[0].IsStream)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
+	assert.Equal(t, float64(250), other["frt"])
+	admin, ok := other["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(7500), admin["duration_ms"])
+	assert.Equal(t, float64(20), other["cache_tokens"])
+	assert.Equal(t, float64(5), other["cache_creation_tokens"])
+	assert.Equal(t, float64(2), other["cache_creation_tokens_5m"])
+	assert.Equal(t, float64(3), other["cache_creation_tokens_1h"])
+	assert.Equal(t, float64(160), other["input_tokens_total"])
+	assert.Equal(t, "s", other["matched_tier"], "combined input must not select the long-context tier")
+	assert.Equal(t, "flow:1", other["gateway_pricing_physical_id"])
+	assert.NotEmpty(t, other["expr_b64"])
+	billingTokens, ok := other["billing_tokens"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(80), billingTokens["len"], "the displayed pricing keeps the winner's actual context length")
 	require.NoError(t, db.First(&user, user.Id).Error)
 	require.NoError(t, db.First(&token, token.Id).Error)
 	require.NoError(t, db.First(&channel, channel.Id).Error)
