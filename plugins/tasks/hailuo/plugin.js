@@ -62,9 +62,13 @@ export const meta = {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",
     zh: "MiniMax 海螺视频生成（文生视频、图生视频、MiniMax-H3 多模态参考生视频）",
   },
-  version: "1.3.0",
+  version: "1.4.0",
   author: { name: "QuantumNous" },
   channelTypes: [35],
+  routes: [
+    { method: "POST", path: "/hailuo/v2/video_generation", type: "submit", models: ["MiniMax-H3"], decode: "createH3Task", render: "taskCreated" },
+    { method: "GET", path: "/hailuo/v2/query/video_generation/:task_id", type: "query", render: "taskStatus" },
+  ],
   models: [
     "MiniMax-H3",
     "MiniMax-Hailuo-2.3",
@@ -487,6 +491,42 @@ export function buildSubmitRequest(ctx) {
     action: hasHailuoImage(req, false) ? "image_to_video" : "text_to_video",
   };
 }
+
+export const native = {
+  createH3Task: function (ctx) {
+    if (!ctx.body || ctx.body.kind !== "json" || !ctx.body.value || typeof ctx.body.value !== "object" || Array.isArray(ctx.body.value))
+      throw new Error("JSON object required");
+    const req = ctx.body.value;
+    if (req.model !== H3_MODEL) throw new Error("MiniMax-H3 is required on this route");
+    const content = h3Content(req);
+    const requestBody = {
+      model: req.model,
+      content: content,
+      duration: h3Duration(req),
+      resolution: h3Resolution(req),
+      ratio: h3Ratio(req, content),
+      metadata: {},
+    };
+    for (const key of ["callback_url", "aigc_watermark"]) {
+      if (req[key] !== undefined) requestBody.metadata[key] = req[key];
+    }
+    return { kind: "submit", model: req.model, action: h3HasVisualContent(content) ? "image_to_video" : "text_to_video", requestBody: requestBody };
+  },
+  taskCreated: function (ctx, task) {
+    return Object.assign({}, task.data || {}, { task_id: task.task_id });
+  },
+  taskStatus: function (ctx, task) {
+    const data = task.data || {};
+    const value = h3QueryTask(data) || {};
+    const statuses = { NOT_START: "queued", SUBMITTED: "queued", QUEUED: "queued", IN_PROGRESS: "running", SUCCESS: "succeeded", FAILURE: "failed" };
+    const result = Object.assign({}, value, { id: task.task_id, status: statuses[task.status] || "queued" });
+    if (task.status === "FAILURE" && task.fail_reason) result.error = { message: task.fail_reason };
+    return Object.assign({}, data, { task: result });
+  },
+  error: function (ctx, error) {
+    return { type: "error", error: { code: error.code, message: error.message } };
+  },
+};
 
 export function parseSubmitResponse(ctx, resp) {
   const body = resp.body || {};

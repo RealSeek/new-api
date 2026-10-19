@@ -635,3 +635,38 @@ func TestHailuoH3PassesOpenAIVideoDecode(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, float64(12), requestBody["duration"])
 }
+
+func TestHailuoH3NativeProtocol(t *testing.T) {
+	plugin := loadHailuoPlugin(t)
+	request := map[string]any{
+		"model": "MiniMax-H3", "duration": 7, "resolution": "768P", "ratio": "16:9", "aigc_watermark": false,
+		"content": []any{map[string]any{"type": "text", "text": "ocean at sunset"}},
+	}
+	value, err := plugin.Engine.CallPath(t.Context(), "native", []string{"createH3Task"}, map[string]any{"body": map[string]any{"kind": "json", "value": request}})
+	require.NoError(t, err)
+	encoded, err := common.Marshal(value)
+	require.NoError(t, err)
+	var intent map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &intent))
+	assert.Equal(t, "text_to_video", intent["action"])
+	body, ok := intent["requestBody"].(map[string]any)
+	require.True(t, ok)
+	descriptor := callHailuoHook(t, plugin, "buildSubmitRequest", map[string]any{"requestBody": body, "upstreamModel": "MiniMax-H3", "baseUrl": "https://minimax.example", "apiKey": "test-key"})
+	outbound, err := common.Marshal(descriptor["body"])
+	require.NoError(t, err)
+	original, err := common.Marshal(request)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(original), string(outbound))
+	assert.Equal(t, "https://minimax.example/v2/video_generation", descriptor["url"])
+	// A malformed duration never reaches billing or the supplier request.
+	request["duration"] = 16
+	_, err = plugin.Engine.CallPath(t.Context(), "native", []string{"createH3Task"}, map[string]any{"body": map[string]any{"kind": "json", "value": request}})
+	require.ErrorContains(t, err, "between 1 and 15")
+	rendered, err := plugin.Engine.CallPath(t.Context(), "native", []string{"taskStatus"}, map[string]any{}, map[string]any{
+		"task_id": "task_public", "status": "SUCCESS", "data": map[string]any{"task": map[string]any{"id": "vendor-private", "status": "succeeded", "content": map[string]any{"url": "https://cdn.example/video.mp4"}}},
+	})
+	require.NoError(t, err)
+	result, err := common.Marshal(rendered)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"task":{"id":"task_public","status":"succeeded","content":{"url":"https://cdn.example/video.mp4"}}}`, string(result))
+}

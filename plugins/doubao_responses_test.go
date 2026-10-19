@@ -51,7 +51,7 @@ func TestDoubaoResponsesProtocol(t *testing.T) {
 				"resolution": "1080p",
 			},
 		},
-		wantUsageKeys:  []string{"resolution", "tokens", "video_input"},
+		wantUsageKeys:  []string{"resolution", "seconds", "tokens", "video_input"},
 		wantVendorName: "doubao",
 	})
 }
@@ -265,9 +265,9 @@ func TestDoubaoImageSubmission(t *testing.T) {
 		_, found = registry.Generation().LookupEndpoint(http.MethodPost, "/v1/images/generations", "doubao-seedance-2-0-260128")
 		assert.False(t, found)
 		schema, _ := plugin.Meta.UsageForModel("doubao-seedance-2-0-260128")
-		assert.ElementsMatch(t, []string{"tokens", "resolution", "video_input"}, keysOf(schema))
+		assert.ElementsMatch(t, []string{"seconds", "tokens", "resolution", "video_input"}, keysOf(schema))
 		schema, examples := plugin.Meta.UsageForModel("doubao-seedance-1-5-pro-251215")
-		assert.ElementsMatch(t, []string{"tokens", "resolution", "generate_audio"}, keysOf(schema))
+		assert.ElementsMatch(t, []string{"seconds", "tokens", "resolution", "generate_audio"}, keysOf(schema))
 		assert.Equal(t, "boolean", schema["generate_audio"].Type)
 		assert.NotEmpty(t, examples)
 	})
@@ -291,11 +291,11 @@ func TestDoubaoSeedanceUsageFacts(t *testing.T) {
 		resolutions []string
 		fields      []string
 	}{
-		{[]string{pro10, "doubao-seedance-1-0-lite-t2v", "doubao-seedance-1-0-lite-i2v"}, []string{"480p", "720p", "1080p"}, []string{"resolution", "tokens"}},
-		{[]string{pro15}, []string{"480p", "720p", "1080p"}, []string{"generate_audio", "resolution", "tokens"}},
-		{[]string{v20}, []string{"480p", "720p", "1080p", "4k"}, []string{"resolution", "tokens", "video_input"}},
-		{[]string{fast20, mini20}, []string{"480p", "720p"}, []string{"resolution", "tokens", "video_input"}},
-		{[]string{v25}, []string{"480p", "720p", "1080p"}, []string{"resolution", "tokens", "video_input"}},
+		{[]string{pro10, "doubao-seedance-1-0-lite-t2v", "doubao-seedance-1-0-lite-i2v"}, []string{"480p", "720p", "1080p"}, []string{"resolution", "seconds", "tokens"}},
+		{[]string{pro15}, []string{"480p", "720p", "1080p"}, []string{"generate_audio", "resolution", "seconds", "tokens"}},
+		{[]string{v20, "seedance-2.0", "[NSFW]seedance-2.0"}, []string{"480p", "720p", "1080p", "4k"}, []string{"resolution", "seconds", "tokens", "video_input"}},
+		{[]string{fast20, mini20}, []string{"480p", "720p"}, []string{"resolution", "seconds", "tokens", "video_input"}},
+		{[]string{v25, "seedance-2.5", "[NSFW]seedance-2.5"}, []string{"480p", "720p", "1080p"}, []string{"resolution", "seconds", "tokens", "video_input"}},
 	}
 	profiled := make([]string, 0, len(plugin.Meta.Models))
 	for _, family := range families {
@@ -386,6 +386,7 @@ func TestDoubaoSeedanceUsageFacts(t *testing.T) {
 			assert.Equal(t, metadata["generate_audio"], body["generate_audio"])
 			facts, err := adaptor.ExtractUsageFactsValidated(c, info)
 			require.NoError(t, err)
+			tc.want["seconds"] = float64(5)
 			assert.Equal(t, tc.want, alibabaObject(t, facts))
 			_, trace, err := billingexpr.RunExprWithRequest(sharedMatrix, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
 			require.NoError(t, err)
@@ -949,5 +950,26 @@ func TestDoubaoImageEndpointMappingKeepsDeclaredModel(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, map[string]any{"images_up_to_1_5k": float64(0), "images_above_1_5k": float64(1), "input_images": float64(0), "layer_decomposition": false}, alibabaObject(t, facts))
 		})
+	}
+}
+
+func TestDoubaoPublicAliasesKeepBooleanVideoInput(t *testing.T) {
+	_, plugin := newDoubaoPlugin(t)
+	for _, name := range []string{"seedance-2.0", "seedance-2.5", "[NSFW]seedance-2.0", "[NSFW]seedance-2.5"} {
+		schema, _ := plugin.Meta.UsageForModel(name)
+		assert.Equal(t, "boolean", schema["video_input"].Type)
+		for _, input := range []bool{false, true} {
+			content := []any{map[string]any{"type": "text", "text": "p"}}
+			if input {
+				content = append(content, map[string]any{"type": "video_url", "video_url": map[string]any{"url": "https://cdn.example/input.mp4"}, "role": "reference_video"})
+			}
+			value, err := plugin.Engine.Call(t.Context(), "extractUsage", map[string]any{"model": name, "upstreamModel": name, "requestBody": map[string]any{"model": name, "seconds": 5, "metadata": map[string]any{"resolution": "720p", "content": content}}})
+			require.NoError(t, err)
+			encoded, err := common.Marshal(value)
+			require.NoError(t, err)
+			var facts map[string]any
+			require.NoError(t, common.Unmarshal(encoded, &facts))
+			assert.Equal(t, input, facts["video_input"], name)
+		}
 	}
 }

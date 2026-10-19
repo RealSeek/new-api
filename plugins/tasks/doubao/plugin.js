@@ -4,6 +4,11 @@
 // output is priced separately (Seedance 1.5 pro; generate_audio defaults to
 // true). Seedance 1.0 lite is no longer listed and keeps the 1.0 pro tiers.
 const VIDEO_MODELS = {
+  // Public gateway model names retain their existing boolean video-input price tiers.
+  "seedance-2.0": { resolutions: ["480p", "720p", "1080p", "4k"], videoInput: true, booleanVideoInput: true },
+  "seedance-2.5": { resolutions: ["480p", "720p", "1080p"], videoInput: true, booleanVideoInput: true },
+  "[NSFW]seedance-2.0": { resolutions: ["480p", "720p", "1080p", "4k"], videoInput: true, booleanVideoInput: true },
+  "[NSFW]seedance-2.5": { resolutions: ["480p", "720p", "1080p"], videoInput: true, booleanVideoInput: true },
   "doubao-seedance-1-0-pro-250528": { resolutions: ["480p", "720p", "1080p"] },
   "doubao-seedance-1-0-lite-t2v": { resolutions: ["480p", "720p", "1080p"] },
   "doubao-seedance-1-0-lite-i2v": { resolutions: ["480p", "720p", "1080p"] },
@@ -240,7 +245,10 @@ function seedanceUsageSchema(profile) {
   };
   // Whether the request includes reference video input; Seedance 2.x prices video-to-video tokens at a lower unit rate.
   if (profile.videoInput) {
-    schema.video_input = {
+    schema.video_input = profile.booleanVideoInput ? {
+      type: "boolean",
+      description: { en: "Reference video present", zh: "存在参考视频" },
+    } : {
       enum: ["none", "video"],
       enumLabels: { none: { en: "No reference video", zh: "无参考视频" }, video: { en: "With reference video", zh: "有参考视频" } },
       description: { en: "Reference video input", zh: "参考视频输入" },
@@ -270,7 +278,7 @@ function seedanceUsageExamples(profile) {
   if (profile.audio) specs.push({ label: "720p · 5s · 无声", resolution: "720p", seconds: 5, generate_audio: false });
   return specs.map((spec) => {
     const facts = { seconds: 5, tokens: Math.round(estimateTokens(spec.seconds, spec.resolution)), resolution: spec.resolution };
-    if (profile.videoInput) facts.video_input = spec.video_input || "none";
+    if (profile.videoInput) facts.video_input = profile.booleanVideoInput ? spec.video_input === "video" : spec.video_input || "none";
     if (profile.audio) facts.generate_audio = spec.generate_audio !== false;
     return { label: spec.label, facts: facts };
   });
@@ -303,7 +311,7 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation and Seedream image generation",
     zh: "火山引擎豆包 Seedance 视频生成与 Seedream 图片生成",
   },
-  version: "1.3.0",
+  version: "1.4.0",
   author: { name: "QuantumNous" },
   channelTypes: [54, 45], // VolcEngine-type channels serve Ark video models with the same wire format
   models: Object.keys(VIDEO_MODELS).concat(Object.keys(IMAGE_MODELS)),
@@ -871,7 +879,7 @@ export function extractUsage(ctx) {
   // Every model reports video_input, including those whose profile omits it:
   // expressions saved when all Seedance models declared the field then keep
   // matching their no-video tier.
-  facts.video_input = hasVideo(metadata.content) ? "video" : "none";
+  facts.video_input = profile.booleanVideoInput ? hasVideo(metadata.content) : hasVideo(metadata.content) ? "video" : "none";
   if (profile.audio) facts.generate_audio = metadata.generate_audio !== false;
   return facts;
 }
