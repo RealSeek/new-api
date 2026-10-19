@@ -113,6 +113,9 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		},
 		"param": func(path string) any {
 			path = strings.TrimSpace(path)
+			if request.FrozenParams != nil {
+				return request.FrozenParams[path]
+			}
 			if path == "" || len(request.Body) == 0 {
 				return nil
 			}
@@ -134,11 +137,11 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 			}
 			return strings.Contains(fmt.Sprint(source), substr)
 		},
-		"hour":    func(tz string) int { return timeInZone(tz).Hour() },
-		"minute":  func(tz string) int { return timeInZone(tz).Minute() },
-		"weekday": func(tz string) int { return int(timeInZone(tz).Weekday()) },
-		"month":   func(tz string) int { return int(timeInZone(tz).Month()) },
-		"day":     func(tz string) int { return timeInZone(tz).Day() },
+		"hour":    func(tz string) int { return timeInZone(tz, request.PricingTime).Hour() },
+		"minute":  func(tz string) int { return timeInZone(tz, request.PricingTime).Minute() },
+		"weekday": func(tz string) int { return int(timeInZone(tz, request.PricingTime).Weekday()) },
+		"month":   func(tz string) int { return int(timeInZone(tz, request.PricingTime).Month()) },
+		"day":     func(tz string) int { return timeInZone(tz, request.PricingTime).Day() },
 		"max":     math.Max,
 		"min":     math.Min,
 		"abs":     math.Abs,
@@ -157,16 +160,20 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 	return f, trace, nil
 }
 
-func timeInZone(tz string) time.Time {
+func timeInZone(tz string, pricingTime *time.Time) time.Time {
+	at := time.Now()
+	if pricingTime != nil {
+		at = *pricingTime
+	}
 	tz = strings.TrimSpace(tz)
 	if tz == "" {
-		return time.Now().UTC()
+		return at.UTC()
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		return time.Now().UTC()
+		return at.UTC()
 	}
-	return time.Now().In(loc)
+	return at.In(loc)
 }
 
 func normalizeHeaders(headers map[string]string) map[string]string {

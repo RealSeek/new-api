@@ -22,6 +22,11 @@ type RSGatewaySettlement struct {
 	SubscriptionId int
 	CreatedAt      int64
 	UpdatedAt      int64
+	ContextJSON    string `gorm:"type:text"`
+	ReceiptJSON    string `gorm:"type:text"`
+	ReceiptHash    string `gorm:"type:varchar(64)"`
+	ReconcileAfter int64  `gorm:"index"`
+	LeaseUntil     int64
 }
 
 func (RSGatewaySettlement) TableName() string { return "rs_gateway_settlements" }
@@ -45,12 +50,18 @@ type RSGatewayCompletion struct {
 	Funding        string
 	SubscriptionId int
 	Refunded       bool
+	ReceiptJSON    string
+	ReceiptHash    string
+	LeaseUntil     int64
 }
 
 // CompleteRSGatewaySettlement 只用于网关渠道，绕过内存额度批处理。
 // 预扣已完成时只调整差额；资金、令牌和最终账目任一步失败均回滚。
 func CompleteRSGatewaySettlement(requestId string, input RSGatewayCompletion) error {
 	for _, quota := range []int{input.Quota, input.PreConsumed, input.TokenConsumed} {
+		if quota < 0 {
+			return errors.New("gateway settlement quota must not be negative")
+		}
 		if err := common.ValidateWalletQuota(quota); err != nil {
 			return err
 		}
@@ -69,6 +80,9 @@ func CompleteRSGatewaySettlement(requestId string, input RSGatewayCompletion) er
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockForUpdate(tx).Where("request_id = ?", requestId).First(&record).Error; err != nil {
 			return err
+		}
+		if input.ReceiptHash != "" && (record.LeaseUntil != input.LeaseUntil || record.ReceiptHash != "" && record.ReceiptHash != input.ReceiptHash) {
+			return errors.New("gateway receipt lease or immutable receipt does not match")
 		}
 		if record.State != "pending" {
 			if record.State == state && record.Quota == int64(input.Quota) &&
@@ -133,6 +147,18 @@ func CompleteRSGatewaySettlement(requestId string, input RSGatewayCompletion) er
 			if result.RowsAffected != 1 {
 				return errors.New("gateway token adjustment failed")
 			}
+		}
+		if input.ReceiptHash != "" {
+			if err := tx.Model(&User{}).Where("id = ?", record.UserId).Updates(map[string]any{
+				"used_quota":    gorm.Expr("used_quota + ?", input.Quota),
+				"request_count": gorm.Expr("request_count + ?", 1),
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&Channel{}).Where("id = ?", record.ChannelId).Update("used_quota", gorm.Expr("used_quota + ?", input.Quota)).Error; err != nil {
+				return err
+			}
+			record.ReceiptJSON, record.ReceiptHash = input.ReceiptJSON, input.ReceiptHash
 		}
 		record.Quota = int64(input.Quota)
 		record.State = state

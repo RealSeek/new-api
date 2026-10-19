@@ -51,6 +51,7 @@
 | POST | `/v1/videos`               | 创建视频任务，见 [视频生成](/docs/videos) |
 | GET  | `/v1/videos/{id}`          | 查询视频任务                              |
 | GET  | `/v1/videos/{id}/content`  | 下载成片                                  |
+| HEAD | `/v1/videos/{id}/content`  | 查询成片响应头                            |
 | POST | `/v1/audio/speech`         | 语音合成                                  |
 | POST | `/v1/audio/transcriptions` | 语音转文字                                |
 | POST | `/v1/audio/translations`   | 语音翻译                                  |

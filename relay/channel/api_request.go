@@ -326,6 +326,10 @@ func applyRSGatewayIdentityHeaders(header http.Header, c *gin.Context, info *com
 	header.Del("X-RS-NewAPI-Using-Group")
 	header.Del("X-RS-NewAPI-Group-Ratio")
 	header.Del("X-RS-NewAPI-Request-ID")
+	header.Del("X-RS-NewAPI-Billing-Version")
+	if info.RSGatewayBillingReceipt {
+		header.Set("X-RS-NewAPI-Billing-Version", "1")
+	}
 	if c == nil || c.Request == nil {
 		return
 	}

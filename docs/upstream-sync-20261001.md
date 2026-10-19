@@ -14,6 +14,14 @@
 - 七种语言已同步，缺失翻译键均为零。
 - 原定时任务改为只读检查上游更新并生成 Actions 摘要，取消自动合并及推送 main。未来上游渠道编号和任务机制变动需要先完成适配及回归。
 
+## 当前 RSGateway 视频契约
+
+RSGateway 视频入口现使用原生 `POST /v1/videos` 的 `model`、`prompt`、`seconds`、`size` 和 `input_reference`，支持 JSON 与 multipart 文件二进制转发。new-api 不再将自定义 `video-v1`、`references` 或 `content[]` 转换成供应商请求；完整请求示例见根目录 `视频统一接口.md`。
+
+协议转换、上游任务与内容读取由 realseek-gateway 负责。new-api 保留用户认证、任务归属、公开任务 ID、轮询、授权内容代理、价格快照、额度结算及幂等退款；采购倍率和用户售价倍率分别计算。原生时长和尺寸取自 `seconds` / `size`，metadata 与其他扩展字段原样转发，不覆盖这些计价数量。历史任务继续使用已保存的网关任务 ID 和密钥查询、下载。
+
+下文按日期保留先前实现与验证记录，其中 metadata/duration 别名校验属于已被上述原生契约替代的历史行为。
+
 ## 验证
 
 工具版本固定在项目 `mise.toml`：Go 1.26.1、Bun 1.4.0；前端依赖按锁文件安装。

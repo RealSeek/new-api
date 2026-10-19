@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -401,7 +402,7 @@ func TestDisabledArtifactStorePreservesPluginUpstreamContent(t *testing.T) {
 	assert.Equal(t, "bytes 0-13/14", recorder.Header().Get("Content-Range"))
 }
 
-func TestRSGatewayArtifactsExposeAndRedirectToOriginalURL(t *testing.T) {
+func TestRSGatewayArtifactsUseOwnedGatewayContent(t *testing.T) {
 	task := setupGenericTaskTest(t)
 	previousAddress := system_setting.TaskPublicAddress
 	previousMemoryCache := common.MemoryCacheEnabled
@@ -411,39 +412,91 @@ func TestRSGatewayArtifactsExposeAndRedirectToOriginalURL(t *testing.T) {
 		system_setting.TaskPublicAddress = previousAddress
 		common.MemoryCacheEnabled = previousMemoryCache
 	})
-	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Update("type", constant.ChannelTypeRSGateway).Error)
+	var expectedUpstreamID atomic.Value
+	var requests atomic.Int64
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		assert.Equal(t, "/v1/videos/"+expectedUpstreamID.Load().(string)+"/content", r.URL.Path)
+		assert.Equal(t, "Bearer key", r.Header.Get("Authorization"))
+		assert.Equal(t, "bytes=0-3", r.Header.Get("Range"))
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Range", "bytes 0-3/10")
+		w.Header().Set("Set-Cookie", "gateway=secret")
+		w.Header().Set("WWW-Authenticate", "Bearer gateway")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("data"))
+	}))
+	t.Cleanup(gateway.Close)
+	service.InitHttpClient()
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", task.ChannelId).Updates(map[string]any{
+		"type": constant.ChannelTypeRSGateway, "base_url": gateway.URL,
+	}).Error)
 	task.Platform = constant.TaskPlatform("rs-gateway")
 	task.Properties = model.Properties{OriginModelName: "seedance-2.5"}
-	task.PrivateData.Execution = &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
-		Key: "rs-gateway", Name: "RS Gateway", Version: "1.5.3", APIVersion: 1,
-	}}
-	originalURL := "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/video.mp4?X-Tos-Signature=original%2Fsignature&X-Tos-Expires=86400"
-	task.SetData(map[string]any{"result": map[string]any{"url": originalURL}})
-	require.NoError(t, model.DB.Save(task).Error)
-
-	listing := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(listing)
-	c.Set("id", task.UserId)
-	c.Params = gin.Params{{Key: "key", Value: task.TaskID}}
-	c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts", nil)
-	GetTaskArtifacts(c)
-	require.Equal(t, http.StatusOK, listing.Code)
-	var response struct {
-		Artifacts []taskArtifactResponse `json:"artifacts"`
+	for _, tc := range []struct{ name, version, upstreamID string }{
+		{"persisted task", "1.5.3", "gateway-old-task"},
+		{"native task", "1.6.0", "video_gwm_native-task"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expectedUpstreamID.Store(tc.upstreamID)
+			task.PrivateData = model.TaskPrivateData{
+				Key: "key", UpstreamTaskID: tc.upstreamID,
+				Execution: &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
+					Key: "rs-gateway", Name: "RS Gateway", Version: tc.version, APIVersion: 1,
+				}},
+			}
+			task.SetData(map[string]any{
+				"id": tc.upstreamID, "seconds": "8", "size": "1280x720",
+				"result": map[string]any{"url": "https://cdn.example/video.mp4?signature=private"},
+			})
+			require.NoError(t, model.DB.Save(task).Error)
+			listing := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(listing)
+			c.Set("id", task.UserId)
+			c.Params = gin.Params{{Key: "key", Value: task.TaskID}}
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts", nil)
+			GetTaskArtifacts(c)
+			require.Equal(t, http.StatusOK, listing.Code)
+			var response struct {
+				Artifacts []taskArtifactResponse `json:"artifacts"`
+			}
+			require.NoError(t, common.Unmarshal(listing.Body.Bytes(), &response))
+			require.Len(t, response.Artifacts, 1)
+			assert.Empty(t, response.Artifacts[0].DirectURL)
+			assert.Contains(t, response.Artifacts[0].ContentURL, "/v1/tasks/"+task.TaskID+"/artifacts/video/content")
+			assert.NotContains(t, listing.Body.String(), "cdn.example")
+			assert.NotContains(t, listing.Body.String(), "signature=private")
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				content := httptest.NewRecorder()
+				c, _ = gin.CreateTestContext(content)
+				c.Set("id", task.UserId)
+				c.Params = gin.Params{{Key: "key", Value: task.TaskID}, {Key: "artifact_key", Value: "video"}}
+				c.Request = httptest.NewRequest(method, "/v1/tasks/"+task.TaskID+"/artifacts/video/content", nil)
+				c.Request.Header.Set("Range", "bytes=0-3")
+				TaskArtifactContent(c)
+				assert.Equal(t, http.StatusPartialContent, content.Code)
+				if method == http.MethodHead {
+					assert.Empty(t, content.Body.String())
+				} else {
+					assert.Equal(t, "data", content.Body.String())
+				}
+				assert.Empty(t, content.Header().Get("Location"))
+				assert.Equal(t, "private, no-store", content.Header().Get("Cache-Control"))
+				assert.Equal(t, "bytes 0-3/10", content.Header().Get("Content-Range"))
+				assert.Empty(t, content.Header().Get("Set-Cookie"))
+				assert.Empty(t, content.Header().Get("WWW-Authenticate"))
+			}
+			beforeDenied := requests.Load()
+			denied := httptest.NewRecorder()
+			c, _ = gin.CreateTestContext(denied)
+			c.Set("id", task.UserId+1)
+			c.Params = gin.Params{{Key: "key", Value: task.TaskID}, {Key: "artifact_key", Value: "video"}}
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts/video/content", nil)
+			TaskArtifactContent(c)
+			assert.Equal(t, http.StatusNotFound, denied.Code)
+			assert.Equal(t, beforeDenied, requests.Load(), "another user's request must not reach the gateway")
+		})
 	}
-	require.NoError(t, common.Unmarshal(listing.Body.Bytes(), &response))
-	require.Len(t, response.Artifacts, 1)
-	assert.Equal(t, originalURL, response.Artifacts[0].DirectURL)
-
-	content := httptest.NewRecorder()
-	c, _ = gin.CreateTestContext(content)
-	c.Set("id", task.UserId)
-	c.Params = gin.Params{{Key: "key", Value: task.TaskID}, {Key: "artifact_key", Value: "video"}}
-	c.Request = httptest.NewRequest(http.MethodGet, "/v1/tasks/"+task.TaskID+"/artifacts/video/content", nil)
-	TaskArtifactContent(c)
-	assert.Equal(t, http.StatusFound, content.Code)
-	assert.Equal(t, originalURL, content.Header().Get("Location"))
-	assert.Equal(t, "private, no-store", content.Header().Get("Cache-Control"))
 }
 
 func TestRSGatewayArtifactsKeepProviderURLsOffOtherModels(t *testing.T) {

@@ -3,6 +3,7 @@ package billingexpr
 import (
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -10,7 +11,11 @@ import (
 type RequestInput struct {
 	Headers map[string]string
 	Body    []byte
-	Usage   map[string]any
+	// FrozenParams contains only request parameters referenced by a durable
+	// billing snapshot. A non-nil map replaces Body lookups, including missing keys.
+	FrozenParams map[string]any `json:",omitempty"`
+	PricingTime  *time.Time     `json:",omitempty"`
+	Usage        map[string]any
 	// ImageCount is a validated billing quantity, separate from the frozen
 	// request's n. Settlement can replace it with the actual returned count.
 	ImageCount *int

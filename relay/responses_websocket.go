@@ -245,6 +245,10 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		// so neither policy record belongs here.
 		if info != nil && billingPrepared {
 			if info.ChannelType == appconstant.ChannelTypeRSGateway {
+				if info.RSGatewayBillingReceipt {
+					service.QueueRSGatewayReceipt(info.RequestId)
+					return
+				}
 				if gatewayUsage != nil {
 					usage := gatewayUsage.Usage()
 					interrupted := info.StreamStatus.EndReason != relaycommon.StreamEndReasonDone
@@ -652,6 +656,24 @@ func buildResponsesWSCreatePayload(c *gin.Context, info *relaycommon.RelayInfo, 
 	event, err := buildResponsesWSCreateEvent(jsonData, generate, streamID)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	if info.ChannelType == appconstant.ChannelTypeRSGateway {
+		if err := service.PrepareRSGatewayReceipt(c, info); err != nil {
+			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		var envelope map[string]common.RawMessage
+		if err := common.Unmarshal(event, &envelope); err != nil {
+			return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		requestID, err := common.Marshal(info.RequestId)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		envelope["x_rs_newapi_request_id"] = requestID
+		event, err = common.Marshal(envelope)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 	}
 	return event, nil
 }

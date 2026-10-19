@@ -159,6 +159,8 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// RSGatewayBillingReceipt hands final settlement to the durable receipt worker.
+	RSGatewayBillingReceipt bool
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64

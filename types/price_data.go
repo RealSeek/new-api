@@ -14,22 +14,24 @@ type GroupRatioInfo struct {
 }
 
 type PriceData struct {
-	FreeModel            bool
-	ModelPrice           float64
-	ModelRatio           float64
-	CompletionRatio      float64
-	CacheRatio           float64
-	CacheCreationRatio   float64
-	CacheCreation5mRatio float64
-	CacheCreation1hRatio float64
-	ImageRatio           float64
-	AudioRatio           float64
-	AudioCompletionRatio float64
-	otherRatios          map[string]float64
-	UsePrice             bool
-	Quota                int // 按次计费的最终额度（MJ / Task）
-	QuotaToPreConsume    int // 按量计费的预消耗额度
-	GroupRatioInfo       GroupRatioInfo
+	FreeModel                       bool
+	ModelPrice                      float64
+	ModelRatio                      float64
+	CompletionRatio                 float64
+	CacheRatio                      float64
+	CacheCreationRatio              float64
+	CacheCreation5mRatio            float64
+	CacheCreation1hRatio            float64
+	ImageRatio                      float64
+	AudioRatio                      float64
+	AudioCompletionRatio            float64
+	QuotaPerUnit                    *float64 `json:",omitempty"`
+	GeminiInputAudioPricePerMillion *float64 `json:",omitempty"`
+	otherRatios                     map[string]float64
+	UsePrice                        bool
+	Quota                           int // 按次计费的最终额度（MJ / Task）
+	QuotaToPreConsume               int // 按量计费的预消耗额度
+	GroupRatioInfo                  GroupRatioInfo
 	// ImageResolution 记录图片按分辨率计费命中的档位（1k/2k/4k），用于消费日志。
 	ImageResolution string
 }

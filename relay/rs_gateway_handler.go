@@ -156,6 +156,10 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		if settled {
 			return
 		}
+		if info.RSGatewayBillingReceipt {
+			service.QueueRSGatewayReceipt(info.RequestId)
+			return
+		}
 		if info.Billing != nil {
 			info.Billing.Refund(c)
 			return
@@ -167,6 +171,11 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 	if !priceData.FreeModel {
 		if apiErr := service.PreConsumeBilling(c, priceData.QuotaToPreConsume, info); apiErr != nil {
 			return apiErr
+		}
+	}
+	if imageRequest == nil {
+		if err := service.PrepareRSGatewayReceipt(c, info); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 	}
 	response, err := adaptor.DoRequest(c, info, common.NewReplayableBodyReader(storage))
@@ -205,6 +214,9 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 	var imageUsage *dto.Usage
 	streamInterrupted := false
 	defer func() {
+		if info.RSGatewayBillingReceipt {
+			return
+		}
 		usage := imageUsage
 		if imageRequest != nil {
 			if usage == nil {

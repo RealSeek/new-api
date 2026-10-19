@@ -10,7 +10,7 @@
 | Anthropic 兼容       | `{{BASE_URL}}`    | `/v1/messages`                               | Anthropic SDK、Claude Code                      |
 | Gemini 原生          | `{{BASE_URL}}`    | `/v1beta/models/{model}:generateContent`     | Google Gen AI SDK、Gemini CLI                   |
 | 图片生成             | `{{BASE_URL}}/v1` | `/v1/images/generations`、`/v1/images/edits` | 生图工具和自定义调用                            |
-| 视频生成（video-v1） | `{{BASE_URL}}/v1` | `/v1/videos`                                 | 创建、查询、下载视频任务                        |
+| 视频生成（OpenAI 格式） | `{{BASE_URL}}/v1` | `/v1/videos`                                 | 创建、查询、下载视频任务                        |
 
 各格式的 Base URL 可以在下方直接复制：
 
@@ -39,7 +39,7 @@
 | 日常对话、聊天客户端     | `DeepSeek`、`kimi`、`glm`、`qwen` 等国产模型分组，或 `codex-*` | OpenAI       | [聊天客户端](/docs/chat-clients) |
 | 角色扮演、酒馆类聊天     | `酒馆`（按次计费，禁止用于 AI 编程）                           | OpenAI       | [聊天客户端](/docs/chat-clients) |
 | 图片生成                 | `生图`                                                         | 图片接口     | [图片生成](/docs/images)         |
-| 视频生成                 | `满血视频`、`特价视频`                                         | video-v1     | [视频生成](/docs/videos)         |
+| 视频生成                 | `满血视频`、`特价视频`                                         | OpenAI 视频  | [视频生成](/docs/videos)         |
 | 网页版对话与创作         | 登录后按引导配置                                               | 无需手动配置 | [AI 工作台](/docs/workbench)     |
 
 各分组的倍率、模型和可用率见 [分组说明](/docs/groups)，模型价格见 [模型广场](/pricing)。

@@ -102,17 +102,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			}
 			defer form.RemoveAll()
 			for key, values := range form.Value {
-				if len(values) != 1 {
+				if len(values) != 1 && (key == "model" || key == "prompt" || key == "seconds" || key == "callback_url") {
 					return service.TaskErrorWrapperLocal(fmt.Errorf("%s must be provided once", key), "invalid_request", http.StatusBadRequest)
 				}
-				body[key] = values[0]
-			}
-			if raw, ok := body["metadata"].(string); ok {
-				var metadata map[string]any
-				if err := common.UnmarshalJsonStr(raw, &metadata); err != nil {
-					return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+				if len(values) == 1 {
+					body[key] = values[0]
+				} else {
+					body[key] = values
 				}
-				body["metadata"] = metadata
 			}
 		} else if err := common.UnmarshalBodyReusable(c, &body); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -256,12 +253,15 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	return a.submit.URL, pluginruntime.ValidateRequestURL(a.submit.URL, info.ChannelBaseUrl, a.plugin.Meta.AllowedHosts)
 }
 
-func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
+func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
 	if a.submit == nil {
 		return fmt.Errorf("plugin submit request was not built")
 	}
 	for name, value := range a.submit.Headers {
 		req.Header.Set(name, value)
+	}
+	if a.submit.BodyType == "multipart" {
+		req.Header.Set("Content-Type", c.GetHeader("Content-Type"))
 	}
 	return nil
 }
@@ -1468,16 +1468,12 @@ func (a *TaskAdaptor) usageRatios(ctx context.Context, models []string, hook str
 func (a *TaskAdaptor) validateResolvedUsageRequest(request any, models ...string) error {
 	schema, _ := a.plugin.Meta.UsageForModels(models...)
 	value := jsonValue(request)
-	// Seedance's top-level duration=-1 is a generation option, never a negative
-	// billing quantity. Keep all nested and non-Seedance multiplier checks.
-	seedance := a.plugin.Meta.Key == "rs-gateway" && a.info != nil && relaycommon.IsSeedance2VideoModel(a.info.UpstreamModelName)
-	if fields, ok := value.(map[string]any); ok && seedance {
-		duration, present := fields["duration"]
-		number, numeric := usageNumber(duration, true)
-		if present && numeric && number == -1 {
-			fields = maps.Clone(fields)
-			delete(fields, "duration")
-			value = fields
+	if fields, ok := value.(map[string]any); ok && a.plugin.Meta.Key == "rs-gateway" && a.info != nil && a.info.ChannelType == constant.ChannelTypeRSGateway {
+		// Only the native request's seconds is a direct usage multiplier.
+		// Metadata and unknown provider fields are forwarded as opaque data.
+		value = map[string]any{}
+		if seconds, present := fields["seconds"]; present {
+			value = map[string]any{"seconds": seconds}
 		}
 	}
 	return a.validateResolvedUsageValue(value, schema)

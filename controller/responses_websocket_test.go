@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/alicebob/miniredis/v2"
@@ -273,16 +274,78 @@ func TestResponsesWSRequestRunnerSharesRedisSuccessLimitWithHTTP(t *testing.T) {
 }
 
 type responsesWSBillingTest struct {
-	httpUpstream http.HandlerFunc
-	httpDone     chan struct{}
-	user         *model.User
-	token        *model.Token
-	channel      *model.Channel
-	client       *websocket.Conn
-	done         chan struct{}
-	upstreamDone chan struct{}
-	connections  atomic.Int32
-	gatewayURL   string
+	httpUpstream   http.HandlerFunc
+	httpDone       chan struct{}
+	user           *model.User
+	token          *model.Token
+	channel        *model.Channel
+	client         *websocket.Conn
+	done           chan struct{}
+	upstreamDone   chan struct{}
+	connections    atomic.Int32
+	receiptQueries atomic.Int32
+	gatewayURL     string
+	receiptMu      sync.Mutex
+	receipts       map[string]struct {
+		body          service.RSGatewayBillingReceipt
+		authorization string
+	}
+}
+
+func (fixture *responsesWSBillingTest) recordGatewayReceipt(t *testing.T, requestID, authorization, responseID string, events ...string) {
+	t.Helper()
+	if requestID == "" {
+		return
+	}
+	receipt := service.RSGatewayBillingReceipt{Version: 1, RequestID: requestID, Complete: true}
+	attempt := service.RSGatewayBillingAttempt{PhysicalID: requestID + ":physical", Role: "hedge", State: "failed"}
+	var usage service.RSGatewayBillingUsage
+	for _, body := range events {
+		var event struct {
+			Type     string `json:"type"`
+			Response *struct {
+				ID    string     `json:"id"`
+				Usage *dto.Usage `json:"usage"`
+			} `json:"response"`
+		}
+		require.NoError(t, common.Unmarshal([]byte(body), &event))
+		if event.Response == nil || responseID != "" && event.Response.ID != responseID {
+			continue
+		}
+		if observed := event.Response.Usage; observed != nil {
+			attempt.UsageObserved = true
+			if observed.InputTokens > 0 {
+				usage.InputTokens = int64(observed.InputTokens)
+			}
+			if observed.OutputTokens > 0 {
+				usage.OutputTokens = int64(observed.OutputTokens)
+			}
+		}
+		if event.Type == "response.completed" || event.Type == "response.done" {
+			receipt.Success, attempt.Role, attempt.State = true, "winner", "succeeded"
+		}
+	}
+	if attempt.UsageObserved {
+		included := true
+		usage.InputIncludesCache = &included
+		attempt.Usage = &usage
+	}
+	receipt.Attempts = []service.RSGatewayBillingAttempt{attempt}
+	fixture.receiptMu.Lock()
+	fixture.receipts[requestID] = struct {
+		body          service.RSGatewayBillingReceipt
+		authorization string
+	}{receipt, authorization}
+	fixture.receiptMu.Unlock()
+}
+
+func (fixture *responsesWSBillingTest) recordGatewayWSReceipt(t *testing.T, request []byte, authorization, responseID string, events ...string) {
+	t.Helper()
+	var envelope struct {
+		RequestID string `json:"x_rs_newapi_request_id"`
+	}
+	require.NoError(t, common.Unmarshal(request, &envelope))
+	fixture.recordGatewayReceipt(t, envelope.RequestID, authorization, responseID, events...)
 }
 
 func (fixture *responsesWSBillingTest) closeAndWait(t *testing.T) {
@@ -300,6 +363,7 @@ func (fixture *responsesWSBillingTest) closeAndWait(t *testing.T) {
 			t.Error("upstream connection was not closed")
 		}
 	}
+	require.NoError(t, service.ReconcileRSGatewayBillingOnce(context.Background()))
 	// Health classification is synchronous at the request boundary; only the
 	// Redis write is asynchronous, see waitPerfCounters.
 }
@@ -358,13 +422,36 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
 	require.NoError(t, model.DB.Model(token).Update("remain_quota", 3000).Error)
 
-	fixture := &responsesWSBillingTest{user: user, token: token, done: make(chan struct{}), upstreamDone: make(chan struct{}), httpDone: make(chan struct{}, 1)}
+	fixture := &responsesWSBillingTest{user: user, token: token, done: make(chan struct{}), upstreamDone: make(chan struct{}), httpDone: make(chan struct{}, 1), receipts: make(map[string]struct {
+		body          service.RSGatewayBillingReceipt
+		authorization string
+	})}
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	common.RDB, common.RedisEnabled = redisClient, true
 	t.Cleanup(func() { require.NoError(t, redisClient.Close()) })
 	var upstreamClosed sync.Once
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/internal/new-api/billing/") {
+			fixture.receiptQueries.Add(1)
+			fixture.receiptMu.Lock()
+			receipt, ok := fixture.receipts[strings.TrimPrefix(r.URL.Path, "/internal/new-api/billing/")]
+			fixture.receiptMu.Unlock()
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Header.Get("Authorization") != receipt.authorization {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			body, err := common.Marshal(receipt.body)
+			require.NoError(t, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(body)
+			return
+		}
 		if !websocket.IsWebSocketUpgrade(r) {
 			if fixture.httpUpstream != nil {
 				fixture.httpUpstream(w, r)
@@ -674,11 +761,14 @@ func TestResponsesWebSocketDialsNativeResponsesChannelTypes(t *testing.T) {
 			observe := func(r *http.Request) {
 				targets <- upstreamTarget{Path: r.URL.Path, Authorization: r.Header.Get("Authorization"), QueryKey: r.URL.Query().Get("api_key")}
 			}
-			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, r *http.Request) {
+			var fixture *responsesWSBillingTest
+			fixture = newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, r *http.Request) {
 				observe(r)
-				if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {
+				_, request, err := ws.ReadMessage()
+				if !assert.NoError(t, err) {
 					return
 				}
+				fixture.recordGatewayWSReceipt(t, request, r.Header.Get("Authorization"), "first", terminal)
 				if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(terminal))) {
 					return
 				}
@@ -686,6 +776,7 @@ func TestResponsesWebSocketDialsNativeResponsesChannelTypes(t *testing.T) {
 			})
 			fixture.httpUpstream = func(w http.ResponseWriter, r *http.Request) {
 				observe(r)
+				fixture.recordGatewayReceipt(t, r.Header.Get("X-RS-NewAPI-Request-ID"), r.Header.Get("Authorization"), "first", terminal)
 				w.Header().Set("Content-Type", "text/event-stream")
 				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", terminal)
 			}
@@ -759,7 +850,8 @@ func TestResponsesWebSocketDisconnectSettlesDeliveredOutputOnce(t *testing.T) {
 
 func TestRSGatewayResponsesWebSocketPreservesPayloadAndSettlesEachTurn(t *testing.T) {
 	requests := make(chan map[string]any, 2)
-	fixture := newResponsesWSBillingTest(t, `tier("input", p * 2)`, func(ws *websocket.Conn, _ *http.Request) {
+	var fixture *responsesWSBillingTest
+	fixture = newResponsesWSBillingTest(t, `tier("input", p * 2)`, func(ws *websocket.Conn, r *http.Request) {
 		for _, id := range []string{"gateway-first", "gateway-second"} {
 			_, body, err := ws.ReadMessage()
 			if !assert.NoError(t, err) {
@@ -771,18 +863,21 @@ func TestRSGatewayResponsesWebSocketPreservesPayloadAndSettlesEachTurn(t *testin
 			}
 			requests <- request
 			terminal := fmt.Sprintf(`{"type":"response.completed","response":{"id":%q,"status":"completed","usage":{"input_tokens":1000,"output_tokens":10}}}`, id)
+			var events []string
 			if id == "gateway-second" {
 				// Late usage from the first response cannot enter the second bill.
-				for _, event := range []string{
+				events = []string{
 					`{"type":"response.created","response":{"id":"gateway-second","status":"in_progress","usage":{"input_tokens":1000}}}`,
 					`{"type":"response.completed","response":{"id":"gateway-first","usage":{"input_tokens":9000}}}`,
-				} {
+				}
+				for _, event := range events {
 					if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(event))) {
 						return
 					}
 				}
 				terminal = `{"type":"response.completed","response":{"id":"gateway-second","status":"completed"}}`
 			}
+			fixture.recordGatewayWSReceipt(t, body, r.Header.Get("Authorization"), id, append(events, terminal)...)
 			if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(terminal))) {
 				return
 			}
@@ -790,7 +885,7 @@ func TestRSGatewayResponsesWebSocketPreservesPayloadAndSettlesEachTurn(t *testin
 		_, _, _ = ws.ReadMessage()
 	})
 	require.NoError(t, model.DB.Model(fixture.channel).Update("type", constant.ChannelTypeRSGateway).Error)
-	for range 2 {
+	for index := range 2 {
 		require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi","store":false,"temperature":0,"custom_field":{"enabled":false,"value":0}}`)))
 		event := readResponsesWSTestEvent(t, fixture.client)
 		if event["type"] == "response.created" {
@@ -798,6 +893,7 @@ func TestRSGatewayResponsesWebSocketPreservesPayloadAndSettlesEachTurn(t *testin
 		}
 		require.Equal(t, "response.completed", event["type"], "%v", event)
 		request := <-requests
+		assert.Equal(t, fmt.Sprintf("responses-ws-billing-ws-%d", index), request["x_rs_newapi_request_id"])
 		assert.Equal(t, false, request["store"])
 		assert.Equal(t, float64(0), request["temperature"])
 		assert.Equal(t, map[string]any{"enabled": false, "value": float64(0)}, request["custom_field"])
@@ -824,10 +920,17 @@ func TestRSGatewayResponsesWebSocketRefundsFailedRequests(t *testing.T) {
 		{"disconnected without usage", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
-				if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {
+			var fixture *responsesWSBillingTest
+			fixture = newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, r *http.Request) {
+				_, request, err := ws.ReadMessage()
+				if !assert.NoError(t, err) {
 					return
 				}
+				var events []string
+				if tc.event != "" {
+					events = []string{tc.event}
+				}
+				fixture.recordGatewayWSReceipt(t, request, r.Header.Get("Authorization"), "gateway-failed", events...)
 				if tc.accepted {
 					if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.created","response":{"id":"gateway-failed","status":"in_progress"}}`))) {
 						return
@@ -860,11 +963,15 @@ func TestRSGatewayResponsesWebSocketRefundsFailedRequests(t *testing.T) {
 }
 
 func TestRSGatewayResponsesWebSocketFinalizesFreeRequestLedger(t *testing.T) {
-	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0))`, func(ws *websocket.Conn, _ *http.Request) {
-		if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {
+	var fixture *responsesWSBillingTest
+	fixture = newResponsesWSBillingTest(t, `tier("request", fixed(0))`, func(ws *websocket.Conn, r *http.Request) {
+		_, request, err := ws.ReadMessage()
+		if !assert.NoError(t, err) {
 			return
 		}
-		if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.completed","response":{"id":"free-response","status":"completed"}}`))) {
+		terminal := `{"type":"response.completed","response":{"id":"free-response","status":"completed"}}`
+		fixture.recordGatewayWSReceipt(t, request, r.Header.Get("Authorization"), "free-response", terminal)
+		if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(terminal))) {
 			return
 		}
 		_, _, _ = ws.ReadMessage()
@@ -881,6 +988,57 @@ func TestRSGatewayResponsesWebSocketFinalizesFreeRequestLedger(t *testing.T) {
 	require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
 	assert.Equal(t, 100000, fixture.user.Quota)
 	assert.Equal(t, 3000, fixture.token.RemainQuota)
+}
+
+func TestRSGatewayHTTPFailuresKeepDurableSettlementPending(t *testing.T) {
+	for _, scenario := range []string{"request URL cannot be created", "connection closes before a gateway marker"} {
+		t.Run(scenario, func(t *testing.T) {
+			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
+			require.NoError(t, model.DB.Model(fixture.channel).Update("type", constant.ChannelTypeRSGateway).Error)
+			if scenario == "request URL cannot be created" {
+				require.NoError(t, model.DB.Model(fixture.channel).Update("base_url", ":invalid-gateway-url").Error)
+			} else {
+				fixture.httpUpstream = func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "responses-http-billing", r.Header.Get("X-RS-NewAPI-Request-ID"))
+					assert.Equal(t, "1", r.Header.Get("X-RS-NewAPI-Billing-Version"))
+					connection, _, err := w.(http.Hijacker).Hijack()
+					if assert.NoError(t, err) {
+						_ = connection.Close()
+					}
+				}
+			}
+			request, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(`{"model":"ws-billing","input":"hi","stream":true}`))
+			require.NoError(t, err)
+			request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+			request.Header.Set("Content-Type", "application/json")
+			response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
+			require.NoError(t, err)
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			assert.Equal(t, http.StatusBadGateway, response.StatusCode)
+			assert.Contains(t, string(body), "responses-http-billing", "the client error retains the request correlation")
+			select {
+			case <-fixture.httpDone:
+			case <-time.After(3 * time.Second):
+				t.Fatal("failed HTTP request did not finish")
+			}
+			fixture.closeAndWait(t)
+			var ledger model.RSGatewaySettlement
+			require.NoError(t, model.DB.First(&ledger, "request_id = ?", "responses-http-billing").Error)
+			assert.Equal(t, "pending", ledger.State)
+			assert.NotEmpty(t, ledger.ContextJSON)
+			assert.Empty(t, ledger.ReceiptHash)
+			require.NoError(t, model.DB.First(fixture.user, fixture.user.Id).Error)
+			require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
+			assert.Equal(t, 99000, fixture.user.Quota, "unconfirmed requests retain only their reservation")
+			assert.Equal(t, 2000, fixture.token.RemainQuota)
+			assert.Zero(t, fixture.user.UsedQuota, "no fabricated final charge without a receipt")
+			if scenario == "connection closes before a gateway marker" {
+				assert.Equal(t, int32(1), fixture.receiptQueries.Load(), "an actual 404 receipt lookup remains pending")
+			}
+		})
+	}
 }
 
 func TestResponsesWebSocketCancelErrorDoesNotFinishActiveRequest(t *testing.T) {

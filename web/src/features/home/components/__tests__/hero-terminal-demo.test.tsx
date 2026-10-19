@@ -22,5 +22,7 @@ it("shows image edits and video request examples", () => {
   fireEvent.click(screen.getByRole("button", { name: /Video$/ }));
   act(() => vi.advanceTimersByTime(220));
   expect(screen.getByText("/v1/videos")).toBeInTheDocument();
-  expect(document.body.textContent).toContain("video-v1");
+  expect(document.body.textContent).toContain('"seconds": "8"');
+  expect(document.body.textContent).toContain('"size": "1280x720"');
+  expect(document.body.textContent).not.toContain("contract_version");
 });

@@ -8,153 +8,185 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRSGatewayPluginPreservesArbitraryVideoRequest(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	registry := jsplugin.NewRegistry()
-	plugin, err := registry.RegisterFactory(source, jsplugin.Options{})
-	require.NoError(t, err)
-	body := map[string]any{"model": "custom-video", "prompt": "a wave", "seconds": 5, "parameters": map[string]any{"seed": 0, "watermark": false}}
-	ctx := map[string]any{"requestBody": body, "upstreamModel": "mapped-video", "baseUrl": "https://gateway.example/", "apiKey": "channel-key"}
-	ctx["requestHeaders"] = map[string]any{"Idempotency-Key": "art-video-job-1"}
-	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
-	require.NoError(t, err)
-	request := value.(map[string]any)
-	assert.Equal(t, "https://gateway.example/v1/videos", request["url"])
-	assert.Equal(t, "mapped-video", request["body"].(map[string]any)["model"])
-	assert.Equal(t, body["parameters"], request["body"].(map[string]any)["parameters"])
-	assert.Equal(t, "art-video-job-1", request["headers"].(map[string]any)["Idempotency-Key"])
-	value, err = plugin.Engine.Call(t.Context(), "parseTaskResult", ctx, map[string]any{"id": "task-1", "status": "running"})
-	require.NoError(t, err)
-	assert.Equal(t, "IN_PROGRESS", value.(map[string]any)["status"])
-	value, err = plugin.Engine.Call(t.Context(), "parseSubmitResponse", ctx, map[string]any{"statusCode": 202, "body": map[string]any{"id": "private/task", "status": "queued"}})
-	require.NoError(t, err)
-	assert.Equal(t, "private/task", value.(map[string]any)["taskId"])
-	ctx["artifactKey"], ctx["upstreamTaskId"], ctx["clientRequest"] = "video", "private/task", map[string]any{"method": "GET"}
-	value, err = plugin.Engine.Call(t.Context(), "buildContentRequest", ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "https://gateway.example/v1/videos/private%2Ftask/content", value.(map[string]any)["url"])
-	body["metadata"] = map[string]any{"duration": 3601}
-	_, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
-	require.Error(t, err)
-}
-
-func TestRSGatewayVideoFailureUsesGatewayReason(t *testing.T) {
+func TestRSGatewayNativeVideoContract(t *testing.T) {
 	source, err := Source("rs-gateway")
 	require.NoError(t, err)
 	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name   string
-		body   map[string]any
-		reason string
-	}{
-		{"minimax raw nested error", map[string]any{"status": "failed", "task": map[string]any{"status": "failed", "error": map[string]any{"code": "content_review_required", "message": "supplier private error"}}}, "视频生成失败，请稍后重试"},
-		{"gateway error", map[string]any{"status": "failed", "error": map[string]any{"message": "请求内容未通过安全检查，请调整描述后重试"}}, "请求内容未通过安全检查，请调整描述后重试"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			value, err := plugin.Engine.Call(t.Context(), "parseTaskResult", map[string]any{}, tc.body)
-			require.NoError(t, err)
-			result := value.(map[string]any)
-			assert.Equal(t, "FAILURE", result["status"])
-			assert.Equal(t, tc.reason, result["reason"])
-			rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"}, map[string]any{}, map[string]any{
-				"task_id": "public-task", "status": result["status"], "fail_reason": result["reason"], "data": tc.body,
-			})
-			require.NoError(t, err)
-			assert.Equal(t, tc.reason, rendered.(map[string]any)["error"].(map[string]any)["message"])
+
+	t.Run("native JSON preserves extensions and model mapping", func(t *testing.T) {
+		body := map[string]any{
+			"model": "public-video", "prompt": "a wave", "seconds": "8", "size": "1280x720",
+			"input_reference": map[string]any{"image_url": "https://cdn.example/reference.png"},
+			"parameters":      map[string]any{"seed": 0, "watermark": false},
+			"metadata":        "opaque metadata; not a JSON document",
+		}
+		decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "public-video", "body": map[string]any{"kind": "json", "value": body},
 		})
-	}
-}
+		require.NoError(t, err)
+		assert.Equal(t, body, decoded.(map[string]any)["requestBody"])
+		value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+			"requestBody": body, "upstreamModel": "mapped-video", "baseUrl": "https://gateway.example/", "apiKey": "channel-key",
+			"requestHeaders": map[string]any{"Idempotency-Key": "art-video-job-1"},
+		})
+		require.NoError(t, err)
+		request := value.(map[string]any)
+		assert.Equal(t, "https://gateway.example/v1/videos", request["url"])
+		forwarded := request["body"].(map[string]any)
+		assert.Equal(t, "mapped-video", forwarded["model"])
+		assert.Equal(t, "public-video", body["model"])
+		assert.Equal(t, body["input_reference"], forwarded["input_reference"])
+		assert.Equal(t, body["parameters"], forwarded["parameters"])
+		assert.Equal(t, body["metadata"], forwarded["metadata"])
+		assert.Equal(t, body["prompt"], forwarded["prompt"])
+		assert.NotContains(t, forwarded, "content")
+		assert.Equal(t, "art-video-job-1", request["headers"].(map[string]any)["Idempotency-Key"])
+	})
 
-func TestRSGatewayVideoContentUsesReturnedSignedURL(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	for _, field := range []string{"result", "metadata"} {
-		for _, method := range []string{"GET", "HEAD"} {
-			t.Run(field+"/"+method, func(t *testing.T) {
-				url := "https://cdn.example/video.mp4?signature=signed%2Fvalue&expires=86400"
-				value, err := plugin.Engine.Call(t.Context(), "buildContentRequest", map[string]any{
-					"artifactKey": "video", "upstreamTaskId": "private/task",
-					"baseUrl": "https://gateway.example", "apiKey": "channel-secret", "model": "seedance-2.5",
-					"data":          map[string]any{field: map[string]any{"url": url}},
-					"clientRequest": map[string]any{"method": method},
-				})
-				require.NoError(t, err)
-				request := value.(map[string]any)
-				assert.Equal(t, url, request["url"])
-				assert.Equal(t, "GET", request["method"])
-				assert.Equal(t, true, request["credentialless"])
-				assert.NotContains(t, request, "headers")
-				rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
-					map[string]any{}, map[string]any{
-						"task_id": "public-task", "status": "SUCCESS",
-						"properties": map[string]any{"origin_model_name": "seedance-2.5"},
-						"data":       map[string]any{field: map[string]any{"url": url}},
-					})
-				require.NoError(t, err)
-				assert.Equal(t, url, rendered.(map[string]any)["result"].(map[string]any)["url"])
+	t.Run("multipart preserves fields and file references", func(t *testing.T) {
+		decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "seedance-2.5", "body": map[string]any{"kind": "multipart", "fields": map[string]any{
+				"model": []string{"seedance-2.5"}, "prompt": []string{"from files"}, "seconds": []string{"8"}, "size": []string{"1280x720"},
+				"custom_field": []string{"first", "second"}, "metadata": []string{`{"enabled":false,"seed":0}`},
+			}},
+		})
+		require.NoError(t, err)
+		value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+			"requestBody": decoded.(map[string]any)["requestBody"], "upstreamModel": "mapped-video", "baseUrl": "https://gateway.example", "apiKey": "channel-key",
+			"requestHeaders": map[string]any{"Content-Type": "multipart/form-data; boundary=original-boundary"},
+			"files":          []any{map[string]any{"ref": "request_file:input_reference", "field": "input_reference", "filename": "reference.png"}},
+		})
+		require.NoError(t, err)
+		request := value.(map[string]any)
+		assert.Equal(t, "multipart", request["bodyType"])
+		assert.NotContains(t, request, "body")
+		assert.NotContains(t, request["headers"], "Content-Type", "the host creates the actual multipart boundary")
+		assert.Contains(t, request["parts"], map[string]any{"name": "custom_field", "value": "first"})
+		assert.Contains(t, request["parts"], map[string]any{"name": "custom_field", "value": "second"})
+		assert.Contains(t, request["parts"], map[string]any{"name": "metadata", "value": `{"enabled":false,"seed":0}`})
+		assert.Contains(t, request["parts"], map[string]any{"name": "input_reference", "fileRef": "request_file:input_reference", "filename": "reference.png"})
+	})
+
+	t.Run("billing duration cannot differ from the native request", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			body    map[string]any
+			message string
+		}{
+			{"removed custom protocol", map[string]any{"contract_version": "video-v1", "prompt": "a wave"}, "video-v1 is no longer supported"},
+			{"fractional", map[string]any{"prompt": "a wave", "seconds": 8.5}, "duration must be between"},
+			{"oversized", map[string]any{"prompt": "a wave", "seconds": "3601"}, "duration must be between"},
+			{"negative", map[string]any{"prompt": "a wave", "seconds": "-1"}, "duration must be between"},
+			{"boolean", map[string]any{"prompt": "a wave", "seconds": true}, "duration must be between"},
+			{"hex string", map[string]any{"prompt": "a wave", "seconds": "0x8"}, "duration must be between"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": tc.body, "upstreamModel": "video", "baseUrl": "https://gateway.example"})
+				require.ErrorContains(t, err, tc.message)
 			})
 		}
-	}
-}
+	})
 
-func TestRSGatewayOnlyFullSeedanceExposesTheProviderURL(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	url := "https://cdn.example/video.mp4?signature=signed%2Fvalue&expires=86400"
-	for _, tc := range []struct{ model, upstreamModel string }{
-		{model: "[c]seedance-2.0", upstreamModel: "[c]seedance-2.0"},
-		{model: "[c]seedance-2.5", upstreamModel: "[c]seedance-2.5"},
-		{model: "[NSFW]seedance-2.0", upstreamModel: "[NSFW]seedance-2.0"},
-		{model: "[NSFW]seedance-2.5", upstreamModel: "[NSFW]seedance-2.5"},
-		{model: "MiniMax-H3", upstreamModel: "MiniMax-H3"},
-		{model: "[c]MiniMaxH3", upstreamModel: "[c]MiniMaxH3"},
-		{model: "grok-imagine-video-1.5", upstreamModel: "grok-imagine-video-1.5"},
-		// 公开名和实际路由必须都是满血 Seedance，否则同样不返回上游地址。
-		{model: "seedance-2.5", upstreamModel: "[c]seedance-2.5"},
-		{model: "[c]seedance-2.5", upstreamModel: "seedance-2.5"},
-	} {
-		t.Run(tc.model+" -> "+tc.upstreamModel, func(t *testing.T) {
+	t.Run("completion preserves extensions with local media access", func(t *testing.T) {
+		localURL := "https://newapi.example/v1/tasks/public-task/artifacts/video/content?access=local-access"
+		body := map[string]any{
+			"id": "private-task", "status": "completed", "seconds": "8", "size": "1280x720",
+			"usage":    map[string]any{"completion_tokens": 123456, "seconds": 8},
+			"metadata": map[string]any{"custom": map[string]any{"seed": 0, "enabled": false}, "url": "https://gateway.example/video?access=private"},
+			"result":   map[string]any{"url": "https://cdn.example/signed.mp4?signature=private", "last_frame_url": "https://cdn.example/last.png", "format": "mp4"},
+		}
+		value, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
+			map[string]any{"model": "public-video", "artifacts": map[string]any{"video": map[string]any{"url": localURL}}},
+			map[string]any{"task_id": "public-task", "status": "SUCCESS", "data": body})
+		require.NoError(t, err)
+		result := value.(map[string]any)
+		assert.Equal(t, "public-task", result["id"])
+		assert.NotContains(t, result, "task_id")
+		assert.Equal(t, "public-video", result["model"])
+		usage := result["usage"].(map[string]any)
+		assert.EqualValues(t, 123456, usage["completion_tokens"])
+		assert.EqualValues(t, 8, usage["seconds"])
+		assert.Equal(t, body["seconds"], result["seconds"])
+		assert.Equal(t, body["size"], result["size"])
+		assert.Equal(t, localURL, result["result"].(map[string]any)["url"])
+		assert.Equal(t, "mp4", result["result"].(map[string]any)["format"])
+		assert.NotContains(t, result["result"], "last_frame_url")
+		custom := result["metadata"].(map[string]any)["custom"].(map[string]any)
+		assert.EqualValues(t, 0, custom["seed"])
+		assert.Equal(t, false, custom["enabled"])
+		assert.Equal(t, localURL, result["metadata"].(map[string]any)["url"])
+		assert.Equal(t, "private-task", body["id"], "rendering must not mutate the upstream snapshot")
+	})
+
+	t.Run("content always uses the ownership checked channel task", func(t *testing.T) {
+		for _, method := range []string{"GET", "HEAD"} {
 			value, err := plugin.Engine.Call(t.Context(), "buildContentRequest", map[string]any{
-				"artifactKey": "video", "upstreamTaskId": "private/task",
-				"baseUrl": "https://gateway.example", "apiKey": "channel-secret",
-				"model": tc.model, "upstreamModel": tc.upstreamModel,
-				"data":          map[string]any{"metadata": map[string]any{"url": url}},
-				"clientRequest": map[string]any{"method": "GET"},
+				"artifactKey": "video", "upstreamTaskId": "private/task", "baseUrl": "https://gateway.example", "apiKey": "channel-secret",
+				"model": "seedance-2.5", "data": map[string]any{"result": map[string]any{"url": "https://cdn.example/signed.mp4"}},
+				"clientRequest": map[string]any{"method": method},
 			})
 			require.NoError(t, err)
 			request := value.(map[string]any)
 			assert.Equal(t, "https://gateway.example/v1/videos/private%2Ftask/content", request["url"])
-			assert.NotContains(t, request, "credentialless")
+			assert.Equal(t, method, request["method"])
 			assert.Equal(t, "Bearer channel-secret", request["headers"].(map[string]any)["Authorization"])
+			assert.NotContains(t, request, "credentialless")
+		}
+	})
 
-			rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
-				map[string]any{"artifacts": map[string]any{"video": map[string]any{"url": "https://gateway.example/v1/tasks/public-task/artifacts/video/content?access=test"}}}, map[string]any{
-					"task_id": "public-task", "status": "SUCCESS",
-					"properties": map[string]any{"origin_model_name": tc.model, "upstream_model_name": tc.upstreamModel},
-					"data": map[string]any{
-						"url": url, "video_url": url, "content": map[string]any{"url": url},
-						"task": map[string]any{"content": map[string]any{"url": url}}, "video": map[string]any{"url": url},
-						"metadata": map[string]any{"url": url, "last_frame_url": "https://cdn.example/last.png", "duration": 5},
-					},
-				})
+	t.Run("gateway failure reason remains visible", func(t *testing.T) {
+		message := "请求内容未通过安全检查，请调整描述后重试"
+		value, err := plugin.Engine.Call(t.Context(), "parseTaskResult", map[string]any{}, map[string]any{"status": "failed", "error": map[string]any{"message": message}})
+		require.NoError(t, err)
+		assert.Equal(t, "FAILURE", value.(map[string]any)["status"])
+		assert.Equal(t, message, value.(map[string]any)["reason"])
+	})
+
+	t.Run("callback remains local", func(t *testing.T) {
+		body := map[string]any{"model": "video", "prompt": "a wave", "seconds": "8", "callback_url": "https://hooks.example/video"}
+		value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": body, "upstreamModel": "video", "baseUrl": "https://gateway.example"})
+		require.NoError(t, err)
+		assert.NotContains(t, value.(map[string]any)["body"], "callback_url")
+		value, err = plugin.Engine.Call(t.Context(), "parseSubmitResponse", map[string]any{"requestBody": body}, map[string]any{"body": map[string]any{"id": "gateway-task"}})
+		require.NoError(t, err)
+		state := value.(map[string]any)["state"].(map[string]any)
+		assert.Equal(t, body["callback_url"], state["callback"].(map[string]any)["url"])
+	})
+}
+
+func TestRSGatewayNativeVideoBillingFacts(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	value, err := plugin.Engine.Call(t.Context(), "extractUsage", map[string]any{
+		"upstreamModel": "[NSFW]seedance-2.5", "requestBody": map[string]any{"prompt": "a wave", "seconds": "5", "size": "1920x1080"},
+	})
+	require.NoError(t, err)
+	facts := value.(map[string]any)
+	assert.EqualValues(t, 1, facts["requests"])
+	assert.EqualValues(t, 5, facts["seconds"])
+	assert.Equal(t, "1080p", facts["resolution"])
+	assert.EqualValues(t, 243000, facts["tokens"])
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+		want map[string]any
+	}{
+		{"measured usage wins", map[string]any{"seconds": "5", "size": "1280x720", "usage": map[string]any{"completion_tokens": 123456, "seconds": 8, "size": "1920x1080"}}, map[string]any{"tokens": 123456, "seconds": 8, "resolution": "1080p"}},
+		{"explicit zero is real usage", map[string]any{"seconds": "5", "usage": map[string]any{"completion_tokens": 0, "seconds": 0}}, map[string]any{"tokens": 0, "seconds": 0}},
+		{"native snapshot fallback", map[string]any{"seconds": "8", "size": "1280x720"}, map[string]any{"seconds": float64(8), "resolution": "720p"}},
+		{"missing usage keeps reservation", map[string]any{}, map[string]any{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value, err := plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{}, map[string]any{"status": "SUCCESS"}, tc.body)
 			require.NoError(t, err)
-			result := rendered.(map[string]any)
-			assert.Equal(t, "https://gateway.example/v1/tasks/public-task/artifacts/video/content?access=test", result["result"].(map[string]any)["url"])
-			assert.NotContains(t, result, "task")
-			assert.NotContains(t, result, "content")
-			assert.NotContains(t, result, "video")
-			assert.NotContains(t, result, "url")
-			assert.NotContains(t, result, "video_url")
-			assert.NotContains(t, result["metadata"].(map[string]any), "last_frame_url")
-			assert.NotContains(t, result["result"].(map[string]any), "last_frame_url")
-			assert.NotContains(t, result["metadata"].(map[string]any), "url")
-			assert.EqualValues(t, 5, result["metadata"].(map[string]any)["duration"])
+			facts := value.(map[string]any)
+			assert.Len(t, facts, len(tc.want))
+			for key, expected := range tc.want {
+				assert.EqualValues(t, expected, facts[key], key)
+			}
 		})
 	}
 }
@@ -165,17 +197,10 @@ func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
 	registry := jsplugin.NewRegistry()
 	nativePlugin, err := registry.RegisterFactory(nativeSource, jsplugin.Options{})
 	require.NoError(t, err)
-
 	gatewaySource, err := Source("rs-gateway")
 	require.NoError(t, err)
 	gatewayPlugin, err := registry.RegisterFactory(gatewaySource, jsplugin.Options{})
 	require.NoError(t, err)
-
-	assert.Equal(t, []string{
-		"seedance-2.0", "seedance-2.5", "doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628", "[c]seedance-2.0", "[c]seedance-2.5",
-		"[NSFW]seedance-2.0", "[NSFW]seedance-2.5",
-		"MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5",
-	}, gatewayPlugin.Meta.Models)
 	channelPlugin, found := registry.Generation().GetByChannelType(61)
 	require.True(t, found)
 	assert.Same(t, gatewayPlugin, channelPlugin)
@@ -183,324 +208,4 @@ func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
 	require.Len(t, candidates, 2)
 	assert.Same(t, nativePlugin, candidates[0].Plugin)
 	assert.Same(t, gatewayPlugin, candidates[1].Plugin)
-	for _, model := range []string{"seedance-2.0", "seedance-2.5", "doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628", "[c]seedance-2.0", "[c]MiniMaxH3", "grok-imagine-video-1.5", "[NSFW]seedance-2.5"} {
-		candidates := registry.Generation().LookupEndpointCandidates("POST", "/v1/videos", model)
-		require.NotEmpty(t, candidates, model)
-		assert.Same(t, gatewayPlugin, candidates[len(candidates)-1].Plugin)
-	}
-}
-
-func TestRSGatewayMapsFullSeedanceResolutionWithoutChangingPublicRequest(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		model, upstreamModel, resolution, want string
-	}{
-		{"seedance-2.0", "seedance-2.0-4k", "4k", "seedance-2.0"},
-		{"seedance-2.5", "seedance-2.5-720p", "720p", "seedance-2.5"},
-		{"doubao-seedance-2-0-260128", "doubao-seedance-2-0-260128", "4k", "doubao-seedance-2-0-260128"},
-		{"doubao-seedance-2-5-260628", "doubao-seedance-2-5-260628", "720p", "doubao-seedance-2-5-260628"},
-		{"[c]seedance-2.0", "[c]seedance-2.0", "720p", "[c]seedance-2.0"},
-	} {
-		request := map[string]any{
-			"contract_version": "video-v1", "model": tc.model, "prompt": "a wave",
-			"duration": 5, "resolution": tc.resolution, "ratio": "16:9",
-		}
-		value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
-			"model": tc.model, "upstreamModel": tc.upstreamModel, "requestBody": request,
-			"baseUrl": "https://gateway.example", "apiKey": "channel-key",
-		})
-		require.NoError(t, err)
-		body := value.(map[string]any)["body"].(map[string]any)
-		assert.Equal(t, tc.want, body["model"])
-		assert.Equal(t, tc.resolution, body["resolution"])
-		assert.Equal(t, tc.model, request["model"])
-	}
-}
-
-func TestRSGatewayRejectsFractionalDurationBeforeBilling(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	_, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": map[string]any{"seconds": 8.5}, "upstreamModel": "video", "baseUrl": "https://gateway.example"})
-	require.Error(t, err)
-}
-
-func TestRSGatewayReportsOneRequestForPerVideoPricing(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	ctx := map[string]any{
-		"upstreamModel": "[c]seedance-2.5",
-		"requestBody":   map[string]any{"model": "[c]seedance-2.5", "duration": 30, "resolution": "720p"},
-	}
-	value, err := plugin.Engine.Call(t.Context(), "extractUsage", ctx)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, value.(map[string]any)["requests"])
-	assert.EqualValues(t, 30, value.(map[string]any)["seconds"])
-	_, examples := plugin.Meta.UsageForModel("[c]seedance-2.5")
-	require.NotEmpty(t, examples)
-	assert.EqualValues(t, 1, examples[0].Facts["requests"])
-}
-
-func TestRSGatewayRestrictedSeedancePricesTokensFromUpstreamUsage(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	// The host resolves task usage metadata from the declared model list, so a
-	// restricted variant must be declared for the pricing editor to offer it.
-	for _, name := range []string{"[NSFW]seedance-2.0", "[NSFW]seedance-2.5"} {
-		require.Contains(t, plugin.Meta.Models, name)
-		schema, _ := plugin.Meta.UsageForModel(name)
-		require.Contains(t, schema, "tokens")
-		assert.Equal(t, "token", schema["tokens"].Unit)
-	}
-	// The Ark formula reserves the budget; an unlisted resolution reserves the
-	// largest tier instead of rejecting the request.
-	for _, tc := range []struct {
-		name, model, resolution string
-		wantTokens              float64
-	}{
-		{name: "2.0 720p", model: "[NSFW]seedance-2.0", resolution: "720p", wantTokens: 108000},
-		{name: "2.5 1080p", model: "[NSFW]seedance-2.5", resolution: "1080p", wantTokens: 243000},
-		{name: "custom resolution reserves the ceiling", model: "[NSFW]seedance-2.5", resolution: "1440p", wantTokens: 972000},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			value, err := plugin.Engine.Call(t.Context(), "extractUsage", map[string]any{
-				"upstreamModel": tc.model, "model": tc.model,
-				"requestBody": map[string]any{"model": tc.model, "prompt": "a wave", "duration": 5, "resolution": tc.resolution},
-			})
-			require.NoError(t, err)
-			facts := value.(map[string]any)
-			assert.EqualValues(t, 5, facts["seconds"])
-			assert.Equal(t, tc.resolution, facts["resolution"])
-			assert.EqualValues(t, tc.wantTokens, facts["tokens"])
-		})
-	}
-	// Completion replaces the estimate with the tokens the gateway reports.
-	value, err := plugin.Engine.Call(t.Context(), "extractUsageOnComplete",
-		map[string]any{}, map[string]any{"status": "SUCCESS"},
-		map[string]any{"usage": map[string]any{"completion_tokens": 123456, "output_seconds": 8}})
-	require.NoError(t, err)
-	facts := value.(map[string]any)
-	assert.EqualValues(t, 123456, facts["tokens"])
-	assert.EqualValues(t, 8, facts["seconds"])
-}
-
-func TestRSGatewayOfficialSeedanceAndMiniMaxRequestsKeepRequestUsage(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		name, model string
-		body        map[string]any
-		wantSeconds float64
-	}{
-		{
-			name:        "official Seedance model name",
-			model:       "doubao-seedance-2-5-260628",
-			body:        map[string]any{"model": "doubao-seedance-2-5-260628", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": -1, "resolution": "720p", "ratio": "16:9"},
-			wantSeconds: 30,
-		},
-		{
-			name:        "official MiniMax H3 body",
-			model:       "MiniMax-H3",
-			body:        map[string]any{"model": "MiniMax-H3", "content": []any{map[string]any{"type": "text", "text": "a wave"}}, "duration": 5, "resolution": "768P", "ratio": "16:9"},
-			wantSeconds: 5,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := map[string]any{"upstreamModel": tc.model, "requestBody": tc.body, "baseUrl": "https://gateway.example"}
-			value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
-			require.NoError(t, err)
-			request := value.(map[string]any)
-			forwarded := request["body"].(map[string]any)
-			assert.Equal(t, tc.model, forwarded["model"])
-			assert.Equal(t, tc.body["content"], forwarded["content"])
-			assert.EqualValues(t, tc.body["duration"], forwarded["duration"])
-			assert.Equal(t, tc.body["resolution"], forwarded["resolution"])
-			assert.Equal(t, tc.body["ratio"], forwarded["ratio"])
-			value, err = plugin.Engine.Call(t.Context(), "extractUsage", ctx)
-			require.NoError(t, err)
-			usage := value.(map[string]any)
-			assert.EqualValues(t, 1, usage["requests"])
-			assert.EqualValues(t, tc.wantSeconds, usage["seconds"])
-			value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", ctx, map[string]any{"status": "SUCCESS"}, map[string]any{"usage": map[string]any{"output_seconds": tc.wantSeconds}})
-			require.NoError(t, err)
-			assert.EqualValues(t, tc.wantSeconds, value.(map[string]any)["seconds"])
-		})
-	}
-}
-
-func TestRSGatewayVideoV1UsesOneRequestShapeForVideoModels(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-
-	for _, tc := range []struct {
-		name       string
-		model      string
-		request    map[string]any
-		wantMedia  map[string]any
-		wantOption map[string]any
-	}{
-		{
-			name:  "Seedance reference video and explicit options",
-			model: "seedance-2.5",
-			request: map[string]any{
-				"contract_version": "video-v1", "model": "seedance-2.5", "prompt": "change the background",
-				"duration": 10, "resolution": "720p", "ratio": "adaptive",
-				"references": []any{map[string]any{"type": "video", "role": "reference_video", "source": "https://cdn.example/clip.mp4"}},
-				"options":    map[string]any{"generate_audio": false, "priority": 0, "video_format": "mp4"},
-			},
-			wantMedia:  map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "https://cdn.example/clip.mp4"}},
-			wantOption: map[string]any{"generate_audio": false, "priority": 0, "output_format": "mp4"},
-		},
-		{
-			name:  "MiniMax reference image",
-			model: "MiniMax-H3",
-			request: map[string]any{
-				"contract_version": "video-v1", "model": "MiniMax-H3", "prompt": "animate the portrait",
-				"duration": 5, "resolution": "768p", "ratio": "16:9",
-				"references": []any{map[string]any{"type": "image", "role": "reference_image", "source": "https://cdn.example/portrait.png"}},
-			},
-			wantMedia: map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "https://cdn.example/portrait.png"}},
-		},
-		{
-			name:  "Grok text only",
-			model: "grok-imagine-video-1.5",
-			request: map[string]any{
-				"contract_version": "video-v1", "model": "grok-imagine-video-1.5", "prompt": "a red paper boat",
-				"duration": 5, "resolution": "720p", "ratio": "16:9",
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"},
-				map[string]any{"model": tc.model, "body": map[string]any{"kind": "json", "value": tc.request}})
-			require.NoError(t, err)
-			requestBody := decoded.(map[string]any)["requestBody"].(map[string]any)
-			assert.NotContains(t, requestBody, "contract_version")
-			assert.NotContains(t, requestBody, "references")
-			assert.NotContains(t, requestBody, "options")
-			content := requestBody["content"].([]any)
-			assert.Equal(t, map[string]any{"type": "text", "text": tc.request["prompt"]}, content[0])
-			if tc.wantMedia == nil {
-				assert.Len(t, content, 1)
-			} else {
-				assert.Equal(t, tc.wantMedia, content[1])
-			}
-
-			value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
-				"upstreamModel": tc.model, "requestBody": tc.request, "baseUrl": "https://gateway.example",
-			})
-			require.NoError(t, err)
-			forwarded := value.(map[string]any)["body"].(map[string]any)
-			assert.Equal(t, requestBody["content"], forwarded["content"])
-			assert.EqualValues(t, tc.request["duration"], forwarded["duration"])
-			for key, expected := range tc.wantOption {
-				assert.EqualValues(t, expected, forwarded[key])
-			}
-		})
-	}
-	usage, err := plugin.Engine.Call(t.Context(), "extractUsage", map[string]any{
-		"upstreamModel": "MiniMax-H3",
-		"requestBody": map[string]any{
-			"duration":   5,
-			"references": []any{map[string]any{"type": "video", "role": "reference_video", "source": "https://cdn.example/clip.mp4"}},
-		},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, true, usage.(map[string]any)["video_input"])
-	rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"},
-		map[string]any{"artifacts": map[string]any{"video": map[string]any{"url": "https://gateway.example/v1/tasks/public-task/artifacts/video/content?access=test"}}}, map[string]any{
-			"task_id": "public-task", "status": "SUCCESS",
-			"properties": map[string]any{"origin_model_name": "seedance-2.5"},
-			"data":       map[string]any{"id": "private-task", "status": "succeeded", "metadata": map[string]any{"last_frame_url": "https://cdn.example/last.png"}},
-		})
-	require.NoError(t, err)
-	result := rendered.(map[string]any)
-	assert.Equal(t, "public-task", result["id"])
-	assert.Equal(t, "completed", result["status"])
-	assert.Equal(t, "https://gateway.example/v1/tasks/public-task/artifacts/video/content?access=test", result["result"].(map[string]any)["url"])
-	assert.Equal(t, "https://cdn.example/last.png", result["result"].(map[string]any)["last_frame_url"])
-}
-
-func TestRSGatewayVideoV1RejectsUnsupportedInput(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		name, extra string
-		request     map[string]any
-	}{
-		{"mixed media formats", "content cannot be combined", map[string]any{"prompt": "a wave", "content": []any{}, "references": []any{}}},
-		{"invalid callback", "callback_url must be a valid HTTPS URL", map[string]any{"prompt": "a wave", "options": map[string]any{"callback_url": "http://example.com/hook"}}},
-		{"private asset", "reference source must be", map[string]any{"prompt": "a wave", "references": []any{map[string]any{"type": "image", "role": "reference_image", "source": "asset://private"}}}},
-		{"fixed Seedance duration", "requires duration 30 seconds", map[string]any{"model": "[c]seedance-2.5", "prompt": "a wave", "duration": 5}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
-				"upstreamModel": "seedance-2.0", "requestBody": tc.request, "baseUrl": "https://gateway.example",
-			})
-			require.ErrorContains(t, err, tc.extra)
-		})
-	}
-}
-
-func TestRSGatewayVideoV1MultipartUsesTheCanonicalContentShape(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
-		"model": "seedance-2.0",
-		"body": map[string]any{
-			"kind":   "multipart",
-			"fields": map[string]any{"prompt": []string{"from files"}, "duration": []string{"4"}, "resolution": []string{"480p"}, "ratio": []string{"16:9"}},
-			"files": []any{
-				map[string]any{"ref": "request_file:first_frame#0", "field": "first_frame", "mimeType": "image/png", "size": 3},
-				map[string]any{"ref": "request_file:last_frame#0", "field": "last_frame", "mimeType": "image/png", "size": 3},
-			},
-		},
-	})
-	require.NoError(t, err)
-	requestBody := decoded.(map[string]any)["requestBody"].(map[string]any)
-	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
-		"model": "seedance-2.0", "upstreamModel": "seedance-2.0", "requestBody": requestBody,
-		"files": []any{
-			map[string]any{"ref": "request_file:first_frame#0", "field": "first_frame", "mimeType": "image/png", "size": 3},
-			map[string]any{"ref": "request_file:last_frame#0", "field": "last_frame", "mimeType": "image/png", "size": 3},
-		}, "baseUrl": "https://gateway.example",
-	})
-	require.NoError(t, err)
-	body := value.(map[string]any)["body"].(map[string]any)
-	content := body["content"].([]any)
-	assert.Equal(t, "first_frame", content[1].(map[string]any)["role"])
-	assert.Equal(t, "last_frame", content[2].(map[string]any)["role"])
-	assert.Equal(t, "dataUrl", content[1].(map[string]any)["image_url"].(map[string]any)["url"].(map[string]any)["encoding"])
-}
-
-func TestRSGatewayVideoCallbackIsStoredButNeverForwardedUpstream(t *testing.T) {
-	source, err := Source("rs-gateway")
-	require.NoError(t, err)
-	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
-	require.NoError(t, err)
-	request := map[string]any{"contract_version": "video-v1", "model": "seedance-2.0", "prompt": "a wave", "duration": 4,
-		"options": map[string]any{"callback_url": "https://hooks.example/video"}}
-	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": request, "upstreamModel": "seedance-2.0", "baseUrl": "https://gateway.example"})
-	require.NoError(t, err)
-	assert.NotContains(t, value.(map[string]any)["body"].(map[string]any), "callback_url")
-	parsed, err := plugin.Engine.Call(t.Context(), "parseSubmitResponse", map[string]any{"requestBody": map[string]any{"callback_url": "https://hooks.example/video"}}, map[string]any{"body": map[string]any{"id": "upstream-task"}})
-	require.NoError(t, err)
-	state := parsed.(map[string]any)["state"].(map[string]any)
-	assert.Equal(t, "https://hooks.example/video", state["callback"].(map[string]any)["url"])
 }
