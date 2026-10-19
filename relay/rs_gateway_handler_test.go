@@ -227,9 +227,14 @@ func TestClassifyRSGatewayRequestError(t *testing.T) {
 }
 
 func TestRSGatewayRequestIsStream(t *testing.T) {
-	assert.True(t, rsGatewayRequestIsStream([]byte(`{"model":"gpt-5.6-sol","stream":true}`)))
-	assert.False(t, rsGatewayRequestIsStream([]byte(`{"model":"gpt-5.6-sol"}`)))
-	assert.False(t, rsGatewayRequestIsStream([]byte(`not-json`)))
+	assert.True(t, rsGatewayRequestIsStream("/v1/chat/completions", []byte(`{"model":"gpt-5.6-sol","stream":true}`)))
+	assert.False(t, rsGatewayRequestIsStream("/v1/chat/completions", []byte(`{"model":"gpt-5.6-sol"}`)))
+	assert.False(t, rsGatewayRequestIsStream("/v1/chat/completions", []byte(`not-json`)))
+	for _, version := range []string{"v1", "v1beta"} {
+		body := []byte(`{"contents":[{"parts":[{"text":"hello"}]}]}`)
+		assert.True(t, rsGatewayRequestIsStream("/"+version+"/models/gemini-test:streamGenerateContent", body))
+		assert.False(t, rsGatewayRequestIsStream("/"+version+"/models/gemini-test:generateContent", body))
+	}
 }
 
 func TestRSGatewayFirstResponseTimeOnlyRecordsOnce(t *testing.T) {

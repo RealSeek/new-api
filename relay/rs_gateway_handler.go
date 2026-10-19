@@ -125,7 +125,7 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 		recordError("读取请求体失败", http.StatusBadRequest)
 		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
-	info.IsStream = rsGatewayRequestIsStream(requestBody)
+	info.IsStream = rsGatewayRequestIsStream(c.Request.URL.Path, requestBody)
 	var imageRequest *dto.ImageRequest
 	meta := &types.TokenCountMeta{}
 	if info.RelayMode == relayconstant.RelayModeImagesGenerations || info.RelayMode == relayconstant.RelayModeImagesEdits {
@@ -409,11 +409,14 @@ func (t *rsGatewayUsageTracker) Usage() *dto.Usage {
 	return &usage
 }
 
-func rsGatewayRequestIsStream(body []byte) bool {
+func rsGatewayRequestIsStream(path string, body []byte) bool {
+	if strings.HasSuffix(path, ":streamGenerateContent") {
+		return true
+	}
 	var request struct {
 		Stream bool `json:"stream"`
 	}
-	return json.Unmarshal(body, &request) == nil && request.Stream
+	return common.Unmarshal(body, &request) == nil && request.Stream
 }
 
 func walkRSGatewayUsage(value interface{}, visit func(dto.Usage)) {
