@@ -45,6 +45,7 @@ type RSGatewayBillingAttempt struct {
 	FirstByteMs   *int64                 `json:"first_byte_ms"`
 	DurationMs    *int64                 `json:"duration_ms"`
 	UsageObserved bool                   `json:"usage_observed"`
+	BillToUser    *bool                  `json:"bill_to_user,omitempty"`
 	Usage         *RSGatewayBillingUsage `json:"usage"`
 }
 
@@ -440,6 +441,7 @@ func priceRSGatewayReceipt(info *relaycommon.RelayInfo, requestID string, receip
 			return 0, nil, 0, 0, errors.New("gateway receipt contains an invalid or duplicate physical attempt")
 		}
 		seen[attempt.PhysicalID] = true
+		billToUser := attempt.BillToUser == nil || *attempt.BillToUser
 		charge := rsGatewayAttemptCharge{PhysicalID: attempt.PhysicalID, Role: attempt.Role, State: attempt.State, UsageObserved: attempt.UsageObserved, BillingUnit: "token"}
 		usage := &dto.Usage{UsageSemantic: "openai"}
 		if attempt.UsageObserved {
@@ -497,7 +499,7 @@ func priceRSGatewayReceipt(info *relaycommon.RelayInfo, requestID string, receip
 			unit = billingexpr.BillingUnitRequest
 		}
 		if unit == billingexpr.BillingUnitRequest {
-			if !receipt.Success || attempt.Role != "winner" || fixedCharged {
+			if !billToUser || !receipt.Success || attempt.Role != "winner" || fixedCharged {
 				quota = 0
 			} else {
 				fixedCharged = true
@@ -507,6 +509,9 @@ func priceRSGatewayReceipt(info *relaycommon.RelayInfo, requestID string, receip
 		}
 		if quota < 0 {
 			return 0, nil, 0, 0, fmt.Errorf("gateway attempt %s produced a negative charge", attempt.PhysicalID)
+		}
+		if !billToUser {
+			quota = 0
 		}
 		charge.Quota, charge.BillingUnit = quota, string(unit)
 		charges = append(charges, charge)

@@ -399,3 +399,38 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 		assert.EqualValues(t, want, sub.AmountUsed)
 	}
 }
+
+func TestRSGatewayReceiptNonbillableMediaAttemptsKeepUsageWithoutCharging(t *testing.T) {
+	included, billable, nonbillable := true, true, false
+	for _, expression := range []string{`tier("token", p * 2 + c * 4)`, `tier("request", fixed(0.01))`} {
+		t.Run(expression, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAI,
+				PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+				TieredBillingSnapshot: &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: expression,
+					ExprHash: billingexpr.ExprHashString(expression), QuotaPerUnit: 500000, GroupRatio: 1}, BillingRequestInput: &billingexpr.RequestInput{}}
+			receipt := RSGatewayBillingReceipt{Version: 1, RequestID: "media", Complete: true, Success: false,
+				Attempts: []RSGatewayBillingAttempt{{PhysicalID: "no-image", Role: "hedge", State: "failed", BillToUser: &nonbillable,
+					UsageObserved: true, Usage: &RSGatewayBillingUsage{InputTokens: 80, OutputTokens: 10, InputIncludesCache: &included}}}}
+			quota, charges, prompt, completion, err := priceRSGatewayReceipt(info, receipt.RequestID, receipt)
+			require.NoError(t, err)
+			assert.Zero(t, quota)
+			assert.Equal(t, 80, prompt)
+			assert.Equal(t, 10, completion)
+			require.Len(t, charges, 1)
+			require.NotNil(t, charges[0].Usage)
+			assert.EqualValues(t, 80, charges[0].Usage.InputTokens)
+			receipt.Success = true
+			receipt.Attempts = append(receipt.Attempts, RSGatewayBillingAttempt{PhysicalID: "retry-image", Role: "winner", State: "succeeded",
+				BillToUser: &billable, UsageObserved: true, Usage: &RSGatewayBillingUsage{InputTokens: 20, OutputTokens: 5, InputIncludesCache: &included}})
+			quota, charges, _, _, err = priceRSGatewayReceipt(info, receipt.RequestID, receipt)
+			require.NoError(t, err)
+			assert.Zero(t, charges[0].Quota)
+			if strings.Contains(expression, "fixed") {
+				assert.Equal(t, 5000, quota)
+			} else {
+				assert.Equal(t, 30, quota)
+			}
+			assert.Equal(t, charges[1].Quota, quota)
+		})
+	}
+}
