@@ -131,12 +131,13 @@ func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	if !ok {
 		if fields, isMap := v.(map[string]any); isMap {
 			if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeRSGateway {
-				// The gateway's native OpenAI video codec only uses seconds/size.
+				// Explicit OpenAI video fields drive billing and resolution aliases.
 				// Opaque metadata and provider extensions remain on task_request for
 				// forwarding; they must not silently change the customer's price.
 				fields = map[string]any{
 					"model": fields["model"], "prompt": fields["prompt"],
 					"seconds": fields["seconds"], "size": fields["size"],
+					"resolution": fields["resolution"],
 				}
 			} else {
 				fields = maps.Clone(fields)

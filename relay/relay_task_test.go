@@ -473,6 +473,98 @@ export function parseTaskResult() { return {status:"SUCCESS"}; }
 	}
 }
 
+func TestRSGatewayResolutionAliasUsesCachedRequestBeforeSubmission(t *testing.T) {
+	saveBillingConfig(t)
+	savedAliases := model_alias_setting.ModelAliasesJSONString()
+	t.Cleanup(func() { require.NoError(t, model_alias_setting.UpdateModelAliasesByJSONString(savedAliases)) })
+	require.NoError(t, model_alias_setting.UpdateModelAliasesByJSONString(`{
+		"[c]MiniMaxH3":{"default_resolution":"720p","resolutions":{
+			"480p":"[c]MiniMaxH3-480p","720p":"[c]MiniMaxH3-720p",
+			"2k":"[c]MiniMaxH3-2k","2k-pro":"[c]MiniMaxH3-2k-pro"}}
+	}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode":          `{"[c]MiniMaxH3":"tiered_expr"}`,
+		"billing_setting.billing_expr":          `{"[c]MiniMaxH3":"tier(\"video\", u(\"seconds\") * 0.01)"}`,
+		billing_setting.PluginBillingExprOption: `{}`,
+	}))
+	source, err := plugins.Source("rs-gateway")
+	require.NoError(t, err)
+	registry := pluginruntime.NewRegistry()
+	plugin, err := registry.RegisterFactory(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	previousRegistry := pluginruntime.DefaultRegistry
+	pluginruntime.DefaultRegistry = registry
+	t.Cleanup(func() { pluginruntime.DefaultRegistry = previousRegistry })
+	service.InitHttpClient()
+	for _, tc := range []struct {
+		name, resolution, metadataResolution, variant, factResolution string
+		invalid                                                       bool
+	}{
+		{name: "explicit 480p overrides opaque metadata", resolution: "480p", metadataResolution: "720p", variant: "[c]MiniMaxH3-480p", factResolution: "480p"},
+		{name: "explicit 2k", resolution: "2k", variant: "[c]MiniMaxH3-2k", factResolution: "2k"},
+		{name: "explicit pro quality", resolution: "2k-pro", variant: "[c]MiniMaxH3-2k-pro", factResolution: "2k-pro"},
+		{name: "omitted resolution uses configured default", variant: "[c]MiniMaxH3-720p", factResolution: "720p"},
+		{name: "opaque metadata cannot select a billing variant", metadataResolution: "480p", variant: "[c]MiniMaxH3-720p", factResolution: "720p"},
+		{name: "unsupported explicit resolution is rejected", resolution: "4k", metadataResolution: "720p", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := map[string]any{"model": "[c]MiniMaxH3", "prompt": "a wave", "seconds": "5"}
+			if tc.resolution != "" {
+				body["resolution"] = tc.resolution
+			}
+			if tc.metadataResolution != "" {
+				body["metadata"] = map[string]any{"resolution": tc.metadataResolution}
+			}
+			encoded, err := common.Marshal(body)
+			require.NoError(t, err)
+			captured := make(chan map[string]any, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/videos", r.URL.Path)
+				var forwarded map[string]any
+				assert.NoError(t, common.DecodeJson(r.Body, &forwarded))
+				captured <- forwarded
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"upstream-job","status":"queued"}`))
+			}))
+			defer server.Close()
+			c, info := newTaskSubmitContext(t, "[c]MiniMaxH3", "")
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(encoded))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set("task_request", body)
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeRSGateway)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			c.Set("group", "default")
+			info.OriginModelName, info.UserGroup, info.UsingGroup = "[c]MiniMaxH3", "default", "default"
+			info.Billing = &imageReservation{limit: 1 << 30}
+			c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Generation: registry.Generation(), Plugin: plugin})
+
+			result, taskErr := RelayTaskSubmit(c, info)
+
+			unchanged, err := common.Marshal(body)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(encoded), string(unchanged))
+			if tc.invalid {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, "invalid_resolution", taskErr.Code)
+				assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+				assert.Nil(t, result)
+				assert.Empty(t, captured)
+				return
+			}
+			require.Nil(t, taskErr, "submission error: %+v", taskErr)
+			require.NotNil(t, result)
+			require.Len(t, captured, 1)
+			forwarded := <-captured
+			assert.Equal(t, tc.variant, forwarded["model"])
+			assert.Equal(t, body["resolution"], forwarded["resolution"])
+			assert.Equal(t, body["metadata"], forwarded["metadata"], "metadata remains opaque and forwarded")
+			assert.Equal(t, tc.variant, info.UpstreamModelName)
+			require.NotNil(t, info.TieredBillingSnapshot)
+			assert.Equal(t, tc.factResolution, info.TieredBillingSnapshot.UsageFacts["resolution"])
+		})
+	}
+}
+
 func TestSeedanceGatewayPerSecondSubmissionAndSettlement(t *testing.T) {
 	database := setupRelayChannelDB(t)
 	require.NoError(t, database.AutoMigrate(&model.Ability{}, &model.Model{}, &model.Vendor{}))

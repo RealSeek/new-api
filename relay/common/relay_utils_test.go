@@ -241,6 +241,37 @@ func TestPluginTaskRequestNormalizesDurationAliases(t *testing.T) {
 	}
 }
 
+func TestRSGatewayTaskRequestPreservesResolutionWithoutUsingOpaqueMetadata(t *testing.T) {
+	for _, resolution := range []string{"480p", "2k-pro", "4k", ""} {
+		t.Run(resolution, func(t *testing.T) {
+			body := map[string]any{
+				"model": "[c]MiniMaxH3", "prompt": "a wave", "seconds": 5,
+				"duration": 900, "metadata": map[string]any{"resolution": "720p", "duration": 800},
+			}
+			if resolution != "" {
+				body["resolution"] = resolution
+			}
+			before, err := jsoncommon.Marshal(body)
+			require.NoError(t, err)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			jsoncommon.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeRSGateway)
+			c.Set("task_request", body)
+
+			request, err := GetTaskRequest(c)
+
+			require.NoError(t, err)
+			assert.Equal(t, resolution, request.Resolution)
+			assert.Equal(t, "5", request.Seconds)
+			assert.Equal(t, 5, request.Duration, "seconds must supply duration instead of the opaque override")
+			assert.Empty(t, request.Metadata)
+			assert.Equal(t, 5, ResolveTaskDuration(request, 4))
+			after, err := jsoncommon.Marshal(body)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(before), string(after), "billing projection must not mutate the forwarded request")
+		})
+	}
+}
+
 func TestIsSeedance2VideoModelCoversRestrictedVariants(t *testing.T) {
 	for _, tc := range []struct {
 		model string
