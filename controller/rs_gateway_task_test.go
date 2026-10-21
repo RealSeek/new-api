@@ -11,12 +11,14 @@ import (
 	"net/textproto"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/relay"
 	taskjsplugin "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -24,6 +26,75 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestRSGatewayUncertainVideoSubmissionDispatchesOnce(t *testing.T) {
+	source, err := os.ReadFile("../plugins/tasks/rs-gateway/plugin.js")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(string(source), jsplugin.Options{})
+	require.NoError(t, err)
+	withTieredBillingConfig(t, map[string]string{"rs-retry-video": "tiered_expr"},
+		map[string]string{"rs-retry-video": `tier("video", 0)`})
+	previousRetries := common.RetryTimes
+	common.RetryTimes = 3
+	t.Cleanup(func() { common.RetryTimes = previousRetries })
+	service.InitHttpClient()
+
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		code   string
+	}{
+		{name: "connection lost after request accepted", code: "do_request_failed"},
+		{name: "upstream unavailable", status: http.StatusServiceUnavailable, body: `{"error":{"message":"no providers available"}}`, code: "fail_to_fetch_task"},
+		{name: "accepted response is invalid JSON", status: http.StatusAccepted, body: `{"id":`, code: "plugin_submit_response_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var dispatched atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, readErr := io.ReadAll(r.Body)
+				assert.NoError(t, readErr)
+				assert.Equal(t, "/v1/videos", r.URL.Path)
+				dispatched.Add(1)
+				if tc.status == 0 {
+					connection, _, hijackErr := w.(http.Hijacker).Hijack()
+					if assert.NoError(t, hijackErr) {
+						_ = connection.Close()
+					}
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(server.Close)
+			c := taskSubmissionTestContext()
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos",
+				strings.NewReader(`{"model":"rs-retry-video","prompt":"a wave","seconds":"4"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set(jsplugin.ContextKeyPinnedPlugin, jsplugin.PinnedPlugin{Plugin: plugin})
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "rs-retry-video")
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelId, 1)
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeRSGateway)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, "gateway-key")
+			events := []string{}
+			billing := &taskSubmissionTestBilling{events: &events}
+			info := taskSubmissionRelayInfo(billing)
+			info.OriginModelName = "rs-retry-video"
+			info.LockedChannel = &model.Channel{Id: 1, Type: constant.ChannelTypeRSGateway, Name: "RS Gateway"}
+
+			outcome, taskErr := executeTaskSubmissionWith(c, info, relay.RelayTaskSubmit)
+
+			assert.Nil(t, outcome)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, tc.code, taskErr.Code)
+			assert.Equal(t, int32(1), dispatched.Load(), "an uncertain create must not be submitted again")
+			assert.Len(t, c.GetStringSlice("use_channel"), 1)
+			assert.Equal(t, []string{"refund"}, events)
+		})
+	}
+}
 
 func TestRSGatewayVideoDurationValidation(t *testing.T) {
 	source, err := os.ReadFile("../plugins/tasks/rs-gateway/plugin.js")

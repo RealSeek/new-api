@@ -59,10 +59,11 @@ type Pricing struct {
 }
 
 type PricingChannelVideoCapabilities struct {
-	ChannelID    int                         `json:"channel_id"`
-	ChannelName  string                      `json:"channel_name"`
-	Groups       []string                    `json:"groups"`
-	Capabilities *dto.VideoModelCapabilities `json:"capabilities"`
+	ChannelID       int                         `json:"channel_id"`
+	ChannelName     string                      `json:"channel_name"`
+	RequestProtocol string                      `json:"request_protocol,omitempty"`
+	Groups          []string                    `json:"groups"`
+	Capabilities    *dto.VideoModelCapabilities `json:"capabilities"`
 }
 
 type ResolutionAliasPrice struct {
@@ -409,6 +410,9 @@ func updatePricing() {
 		entry, exists := entries[channel.Id]
 		if !exists {
 			entry = PricingChannelVideoCapabilities{ChannelID: channel.Id, ChannelName: channel.Name}
+			if channel.Type == constant.ChannelTypeRSGateway {
+				entry.RequestProtocol = "openai_video"
+			}
 			if capabilities, configured := videoSettings[channel.Id].VideoModelCapabilities[ability.Model]; configured {
 				entry.Capabilities = &capabilities
 			}

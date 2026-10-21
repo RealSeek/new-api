@@ -77,7 +77,8 @@ func TestPricingVideoCapabilitiesByChannel(t *testing.T) {
 		}
 	}
 	require.Len(t, video.ChannelVideoCapabilities, 2)
-	assert.Equal(t, PricingChannelVideoCapabilities{ChannelID: 136, ChannelName: "channel-136", Groups: []string{"default", "premium"}, Capabilities: &limits}, video.ChannelVideoCapabilities[0])
+	assert.Equal(t, PricingChannelVideoCapabilities{ChannelID: 136, ChannelName: "channel-136", RequestProtocol: "openai_video", Groups: []string{"default", "premium"}, Capabilities: &limits}, video.ChannelVideoCapabilities[0])
+	assert.Equal(t, "openai_video", video.ChannelVideoCapabilities[1].RequestProtocol)
 	assert.Nil(t, video.ChannelVideoCapabilities[1].Capabilities)
 	encoded, err := common.Marshal(video)
 	require.NoError(t, err)

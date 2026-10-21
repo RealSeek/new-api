@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.6.0",
+  version: "1.7.0",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -62,15 +62,30 @@ function multipartRequest(ctx) {
   return validateVideoRequest(body);
 }
 
+function automaticDurationLimit(ctx) {
+  const modelName = ctx.upstreamModel || ctx.model || "";
+  const seedance = seedanceModel(ctx);
+  if (seedance && !/^\[c\]/i.test(modelName)) return seedance[1] === "seedance-2.5" ? 30 : 15;
+  // HHCoding's quality aliases use a different contract from native MiniMax-H3.
+  if (/^(?:\[c\])?MiniMaxH3(?:-(?:480p|720p|2k(?:-pro)?))?(?:-sec)?$/i.test(modelName)) return 15;
+  return 0;
+}
+
+function videoDurationSeconds(ctx) {
+  const seconds = (ctx.requestBody || {}).seconds;
+  if (seconds !== undefined &&
+      (!(typeof seconds === "number" || (typeof seconds === "string" && /^(?:-1|\d+)$/.test(seconds.trim()))) ||
+       !Number.isInteger(Number(seconds)) || (Number(seconds) !== -1 && (Number(seconds) <= 0 || Number(seconds) > 3600)))) {
+    throw new Error("duration must be between 1 and 3600 seconds, or -1 for supported automatic duration");
+  }
+  if (Number(seconds) === -1 && !automaticDurationLimit(ctx)) throw new Error("automatic duration is not declared for this model");
+  return seconds === undefined ? undefined : Number(seconds);
+}
+
 export function buildSubmitRequest(ctx) {
   const body = Object.assign({}, validateVideoRequest(ctx.requestBody), { model: ctx.upstreamModel || ctx.model });
   delete body.callback_url;
-  const seconds = body.seconds;
-  if (seconds !== undefined &&
-      (!(typeof seconds === "number" || (typeof seconds === "string" && /^\d+$/.test(seconds.trim()))) ||
-       !Number.isInteger(Number(seconds)) || Number(seconds) <= 0 || Number(seconds) > 3600)) {
-    throw new Error("duration must be between 1 and 3600 seconds");
-  }
+  videoDurationSeconds(ctx);
   const base = ctx.baseUrl.replace(/\/$/, "");
   const path = ctx.action === "remix" ? "/v1/videos/" + encodeURIComponent(ctx.originTaskId) + "/remix" : "/v1/videos";
   const headers = { Authorization: "Bearer " + ctx.apiKey };
@@ -96,15 +111,16 @@ export function extractUsage(ctx) {
   if (ctx.usagePurpose === "billing_ratios") return null;
   const model = seedanceModel(ctx);
   const body = ctx.requestBody || {};
-  const seconds = Number(body.seconds === undefined ? (model ? (model[1] === "seedance-2.5" ? 30 : 15) : 4) : body.seconds);
-  const dimensions = /^(\d+)x(\d+)$/i.exec(String(body.size || "1280x720"));
+  const requestedSeconds = videoDurationSeconds(ctx) ?? (model ? (model[1] === "seedance-2.5" ? 30 : 15) : 4);
+  const seconds = requestedSeconds === -1 ? automaticDurationLimit(ctx) : requestedSeconds;
+  const dimensions = /^(\d+)x(\d+)$/i.exec(String(body.size || ""));
   const edge = dimensions ? Math.min(Number(dimensions[1]), Number(dimensions[2])) : 0;
-  const resolution = edge > 0 ? (edge <= 480 ? "480p" : edge <= 720 ? "720p" : edge <= 1080 ? "1080p" : "4k") : "4k";
-  const facts = { resolution, requests: 1, seconds, video_input: ctx.action === "remix", web_search_calls: 0 };
+  const resolution = typeof body.resolution === "string" ? body.resolution.toLowerCase() : edge > 0 ? (edge <= 480 ? "480p" : edge <= 720 ? "720p" : edge <= 1080 ? "1080p" : "4k") : "720p";
+  const facts = { resolution, requests: 1, seconds, video_input: ctx.action === "remix" || Array.isArray(body.videos) && body.videos.length > 0, web_search_calls: Array.isArray(body.tools) && body.tools.some(tool => tool && tool.type === "web_search") ? 1 : 0 };
   if (!model) return facts;
   // Retain the existing Seedance pricing reservation, not its provider wire
   // conversion. Completion replaces estimated tokens with upstream usage.
-  const pixels = dimensions ? Number(dimensions[1]) * Number(dimensions[2]) : SEEDANCE_RESOLUTION_PIXELS["4k"];
+  const pixels = dimensions ? Number(dimensions[1]) * Number(dimensions[2]) : SEEDANCE_RESOLUTION_PIXELS[resolution] || SEEDANCE_RESOLUTION_PIXELS["4k"];
   return { ...facts, tokens: Math.ceil(seconds * pixels * 24 / 1024) };
 }
 
@@ -113,9 +129,8 @@ export function extractUsageOnComplete(_ctx, result, body) {
   const usage = body.usage || {};
   const facts = {};
   // Missing usage keeps the reservation; explicit zero remains a real zero.
-  if (usage.seconds !== undefined) facts.seconds = usage.seconds;
-  else if (usage.output_seconds !== undefined) facts.seconds = usage.output_seconds;
-  else if (body.seconds !== undefined) facts.seconds = Number(body.seconds);
+  const actualSeconds = usage.seconds ?? usage.output_seconds ?? body.seconds;
+  if (actualSeconds !== undefined && Number.isFinite(Number(actualSeconds)) && Number(actualSeconds) >= 0) facts.seconds = Number(actualSeconds);
   if (usage.completion_tokens !== undefined) facts.tokens = usage.completion_tokens;
   else if (usage.output_tokens !== undefined) facts.tokens = usage.output_tokens;
   const dimensions = /^(\d+)x(\d+)$/i.exec(String(usage.size || body.size || ""));

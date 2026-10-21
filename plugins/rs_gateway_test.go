@@ -77,14 +77,39 @@ func TestRSGatewayNativeVideoContract(t *testing.T) {
 			{"removed custom protocol", map[string]any{"contract_version": "video-v1", "prompt": "a wave"}, "video-v1 is no longer supported"},
 			{"fractional", map[string]any{"prompt": "a wave", "seconds": 8.5}, "duration must be between"},
 			{"oversized", map[string]any{"prompt": "a wave", "seconds": "3601"}, "duration must be between"},
-			{"negative", map[string]any{"prompt": "a wave", "seconds": "-1"}, "duration must be between"},
+			{"unsupported automatic duration", map[string]any{"prompt": "a wave", "seconds": "-1"}, "automatic duration is not declared"},
+			{"other negative", map[string]any{"prompt": "a wave", "seconds": "-2"}, "duration must be between"},
 			{"boolean", map[string]any{"prompt": "a wave", "seconds": true}, "duration must be between"},
 			{"hex string", map[string]any{"prompt": "a wave", "seconds": "0x8"}, "duration must be between"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				_, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"requestBody": tc.body, "upstreamModel": "video", "baseUrl": "https://gateway.example"})
 				require.ErrorContains(t, err, tc.message)
+				if tc.name != "removed custom protocol" {
+					_, err = plugin.Engine.Call(t.Context(), "extractUsage", map[string]any{"requestBody": tc.body, "upstreamModel": "video"})
+					require.ErrorContains(t, err, tc.message)
+				}
 			})
+		}
+	})
+
+	t.Run("Seedance automatic duration preserves the request and reserves its model maximum", func(t *testing.T) {
+		for _, tc := range []struct {
+			model string
+			limit int
+		}{
+			{"seedance-2.0", 15}, {"doubao-seedance-2-5-260628", 30},
+		} {
+			ctx := map[string]any{"model": tc.model, "upstreamModel": tc.model, "baseUrl": "https://gateway.example", "requestBody": map[string]any{"prompt": "@参考图0 moves", "seconds": "-1", "resolution": "720p", "aspect_ratio": "adaptive", "videos": []string{"https://cdn.example/input.mp4"}}}
+			request, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "-1", request.(map[string]any)["body"].(map[string]any)["seconds"])
+			usage, err := plugin.Engine.Call(t.Context(), "extractUsage", ctx)
+			require.NoError(t, err)
+			facts := usage.(map[string]any)
+			assert.EqualValues(t, tc.limit, facts["seconds"])
+			assert.EqualValues(t, tc.limit*1280*720*24/1024, facts["tokens"])
+			assert.Equal(t, true, facts["video_input"])
 		}
 	})
 
@@ -178,6 +203,8 @@ func TestRSGatewayNativeVideoBillingFacts(t *testing.T) {
 		{"explicit zero is real usage", map[string]any{"seconds": "5", "usage": map[string]any{"completion_tokens": 0, "seconds": 0}}, map[string]any{"tokens": 0, "seconds": 0}},
 		{"native snapshot fallback", map[string]any{"seconds": "8", "size": "1280x720"}, map[string]any{"seconds": float64(8), "resolution": "720p"}},
 		{"missing usage keeps reservation", map[string]any{}, map[string]any{}},
+		{"automatic duration is not measured usage", map[string]any{"seconds": "-1", "resolution": "720p"}, map[string]any{}},
+		{"negative measured duration is not billable", map[string]any{"usage": map[string]any{"seconds": -1}}, map[string]any{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			value, err := plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{}, map[string]any{"status": "SUCCESS"}, tc.body)
@@ -189,6 +216,28 @@ func TestRSGatewayNativeVideoBillingFacts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRSGatewayHHCodingAutomaticDuration(t *testing.T) {
+	source, err := Source("rs-gateway")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+	for _, name := range []string{"MiniMaxH3", "[c]MiniMaxH3", "MiniMaxH3-480p", "MiniMaxH3-720p-sec", "[c]MiniMaxH3-2k-sec", "MiniMaxH3-2k-pro-sec"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := map[string]any{"upstreamModel": name, "baseUrl": "https://gateway.example", "requestBody": map[string]any{"prompt": "a wave", "seconds": "-1", "resolution": "720p"}}
+			request, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "-1", request.(map[string]any)["body"].(map[string]any)["seconds"])
+			usage, err := plugin.Engine.Call(t.Context(), "extractUsage", ctx)
+			require.NoError(t, err)
+			facts := usage.(map[string]any)
+			assert.EqualValues(t, 15, facts["seconds"])
+			assert.NotContains(t, facts, "tokens", "an HHCoding reservation cannot invent token usage")
+		})
+	}
+	_, err = plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{"upstreamModel": "MiniMax-H3", "requestBody": map[string]any{"prompt": "a wave", "seconds": -1}})
+	require.ErrorContains(t, err, "automatic duration is not declared")
 }
 
 func TestRSGatewayClaimsMiniMaxH3VideoEndpoint(t *testing.T) {
