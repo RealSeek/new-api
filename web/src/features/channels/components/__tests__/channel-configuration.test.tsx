@@ -48,6 +48,12 @@ import {
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
+import {
+  channelFormSchema,
+  transformChannelToFormDefaults,
+  transformFormDataToCreatePayload,
+  transformFormDataToUpdatePayload,
+} from '../../lib/channel-form'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelsProvider } from '../channels-provider'
@@ -263,6 +269,125 @@ afterEach(() => {
     writable: true,
     value: 1024,
   })
+})
+
+test.each([
+  { enabled: true, groups: [] },
+  { enabled: true, groups: ['满血视频'] },
+  { enabled: false, groups: ['满血视频'] },
+])(
+  'roundtrips gateway URL passthrough enabled=$enabled groups=$groups through create and update settings',
+  ({ enabled, groups }) => {
+    editingChannel.type = CHANNEL_TYPE_RS_GATEWAY
+    editingChannel.models = 'seedance-2.0,seedance-2.5'
+    const setting = {
+      media_url_passthrough: enabled,
+      media_url_passthrough_models: ['seedance-2.0'],
+      media_url_passthrough_groups: groups,
+    }
+    editingChannel.setting = JSON.stringify(setting)
+    const values = transformChannelToFormDefaults(editingChannel)
+    expect(channelFormSchema.safeParse(values).success).toBe(true)
+    for (const payload of [
+      transformFormDataToCreatePayload(values).channel,
+      transformFormDataToUpdatePayload(values, editingChannel.id),
+    ]) {
+      expect(JSON.parse(payload.setting || '{}')).toMatchObject(setting)
+      expect(
+        transformChannelToFormDefaults({ ...editingChannel, ...payload })
+      ).toMatchObject(setting)
+    }
+  }
+)
+
+test('gateway URL passthrough requires a channel model and preserves selections across switch changes', async () => {
+  editingChannel.type = CHANNEL_TYPE_RS_GATEWAY
+  editingChannel.models = 'seedance-2.0,seedance-2.5'
+  editingChannel.model_mapping = JSON.stringify({
+    'seedance-2.0': 'upstream-seedance',
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  const toggle = await screen.findByRole('switch', {
+    name: 'Preserve upstream URLs',
+  })
+  expect(toggle).not.toBeChecked()
+  expect(
+    screen.queryByRole('combobox', {
+      name: 'Select at least one channel model',
+    })
+  ).not.toBeInTheDocument()
+  await user.click(toggle)
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  expect(
+    await screen.findByText('Select at least one channel model')
+  ).toBeVisible()
+  expect(put).not.toHaveBeenCalled()
+
+  await user.click(
+    screen.getByRole('combobox', { name: 'Select at least one channel model' })
+  )
+  expect(
+    await screen.findByRole('option', { name: 'seedance-2.5' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('option', { name: 'upstream-seedance' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('option', { name: 'seedance-2.0' }))
+  await user.keyboard('{Escape}')
+  await user.click(
+    screen.getByRole('combobox', { name: 'URL passthrough groups' })
+  )
+  await user.click(await screen.findByRole('option', { name: 'premium' }))
+  await user.keyboard('{Escape}')
+  await user.click(toggle)
+  expect(
+    screen.queryByRole('combobox', {
+      name: 'Select at least one channel model',
+    })
+  ).not.toBeInTheDocument()
+  await user.click(toggle)
+  await user.click(
+    screen.getByRole('combobox', { name: 'Select at least one channel model' })
+  )
+  expect(
+    await screen.findByRole('option', { name: 'seedance-2.0' })
+  ).toHaveAttribute('aria-selected', 'true')
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0][1] as { setting: string }
+  expect(JSON.parse(payload.setting)).toMatchObject({
+    media_url_passthrough: true,
+    media_url_passthrough_models: ['seedance-2.0'],
+    media_url_passthrough_groups: ['premium'],
+  })
+})
+
+test('other channel types hide gateway URL passthrough controls and omit its settings', async () => {
+  editingChannel.setting = JSON.stringify({
+    media_url_passthrough: true,
+    media_url_passthrough_models: ['custom-model'],
+    media_url_passthrough_groups: [],
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  expect(
+    screen.queryByRole('switch', { name: 'Preserve upstream URLs' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0][1] as { setting: string }
+  expect(JSON.parse(payload.setting)).not.toHaveProperty(
+    'media_url_passthrough'
+  )
 })
 
 // Editing opens the sheet on the left, so the sheet spans x = 0..900 and the

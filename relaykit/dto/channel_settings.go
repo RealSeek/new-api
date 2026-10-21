@@ -12,14 +12,17 @@ import (
 )
 
 type ChannelSettings struct {
-	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
-	ForceFormat               bool   `json:"force_format,omitempty"`
-	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
-	Proxy                     string `json:"proxy"`
-	PassThroughBodyEnabled    bool   `json:"pass_through_body_enabled,omitempty"`
-	ResponsesWebSocketEnabled bool   `json:"responses_websocket_enabled,omitempty"`
-	SystemPrompt              string `json:"system_prompt,omitempty"`
-	SystemPromptOverride      bool   `json:"system_prompt_override,omitempty"`
+	TaskPluginKey             string   `json:"task_plugin_key,omitempty"`
+	ForceFormat               bool     `json:"force_format,omitempty"`
+	ThinkingToContent         bool     `json:"thinking_to_content,omitempty"`
+	Proxy                     string   `json:"proxy"`
+	PassThroughBodyEnabled    bool     `json:"pass_through_body_enabled,omitempty"`
+	MediaURLPassthrough       bool     `json:"media_url_passthrough,omitempty"`
+	MediaURLPassthroughModels []string `json:"media_url_passthrough_models,omitempty"`
+	MediaURLPassthroughGroups []string `json:"media_url_passthrough_groups,omitempty"`
+	ResponsesWebSocketEnabled bool     `json:"responses_websocket_enabled,omitempty"`
+	SystemPrompt              string   `json:"system_prompt,omitempty"`
+	SystemPromptOverride      bool     `json:"system_prompt_override,omitempty"`
 	// TaskExtendPluginKeys lists the task plugins a New API channel (type 60)
 	// is extended with. The upstream gateway may host many plugins, so the
 	// channel serves every listed plugin's models while the request still pins
@@ -32,6 +35,12 @@ type ChannelSettings struct {
 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
+}
+
+// AllowsMediaURLPassthrough matches the client-facing model and selected task group.
+func (s ChannelSettings) AllowsMediaURLPassthrough(model, group string) bool {
+	return s.MediaURLPassthrough && slices.Contains(s.MediaURLPassthroughModels, model) &&
+		(len(s.MediaURLPassthroughGroups) == 0 || slices.Contains(s.MediaURLPassthroughGroups, group))
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,

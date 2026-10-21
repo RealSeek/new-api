@@ -762,13 +762,16 @@ export function ChannelMutateDrawer({
 
   // Transform groups to multi-select options
   const groupOptions = useMemo(() => {
-    if (!groupsData?.data) return []
-    const allGroups = new Set([...groupsData.data, ...(currentGroups || [])])
+    const allGroups = new Set([
+      ...(groupsData?.data || []),
+      ...(currentGroups || []),
+      ...(formValues.media_url_passthrough_groups || []),
+    ])
     return [...allGroups].map((group) => ({
       value: group,
       label: group,
     }))
-  }, [groupsData, currentGroups])
+  }, [groupsData, currentGroups, formValues.media_url_passthrough_groups])
 
   // Parse current models as array
   const currentModelsArray = useMemo(
@@ -3539,6 +3542,86 @@ export function ChannelMutateDrawer({
           models={currentModelsArray}
           disabled={sensitiveLocked}
         />
+        {isRSGateway && (
+          <fieldset
+            disabled={sensitiveLocked || isSubmitting}
+            className='border-border/60 space-y-4 rounded-lg border p-4 disabled:opacity-60'
+          >
+            <FormField
+              control={form.control}
+              name='media_url_passthrough'
+              render={({ field }) => (
+                <FormItem className={sideDrawerSwitchItemClassName()}>
+                  <div className='space-y-1'>
+                    <FormLabel>{t('Preserve upstream URLs')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Return upstream media URLs. Signed links may expire; the hostname depends on the upstream provider.'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      disabled={sensitiveLocked || isSubmitting}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            {formValues.media_url_passthrough && (
+              <>
+                <FormField
+                  control={form.control}
+                  name='media_url_passthrough_models'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel required>
+                        {t('URL passthrough models')}
+                      </FormLabel>
+                      <FormControl>
+                        <MultiSelect
+                          options={currentModelsArray.map((model) => ({
+                            value: model,
+                            label: model,
+                          }))}
+                          selected={field.value ?? []}
+                          onChange={field.onChange}
+                          placeholder={t('Select at least one channel model')}
+                          disabled={sensitiveLocked || isSubmitting}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='media_url_passthrough_groups'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('URL passthrough groups')}</FormLabel>
+                      <FormControl>
+                        <MultiSelect
+                          options={groupOptions}
+                          selected={field.value ?? []}
+                          onChange={field.onChange}
+                          placeholder={t('URL passthrough groups')}
+                          disabled={sensitiveLocked || isSubmitting}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Leave empty to apply to all groups.')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
+          </fieldset>
+        )}
       </ChannelModelsSection>
     </div>
   )

@@ -2,7 +2,7 @@ export const meta = {
   apiVersion: 1,
   key: "rs-gateway",
   name: "RS Gateway",
-  version: "1.7.0",
+  version: "1.8.0",
   description: { en: "Video tasks managed by RS Gateway", zh: "由 RS Gateway 管理的视频任务" },
   author: { name: "RealSeek" },
   channelTypes: [61],
@@ -30,6 +30,13 @@ const SEEDANCE_RESOLUTION_PIXELS = { "480p": 854 * 480, "720p": 1280 * 720, "108
 function seedanceModel(ctx) {
   const match = /^(?:\[c\]|\[nsfw\])?(?:doubao-)?seedance-2[._-]([05])(?:-?\d{6})?(?:-(?:fast|mini))?(?:-(480p|720p|1080p|4k))?$/i.exec(ctx.upstreamModel || ctx.model || "");
   return match ? [match[0], "seedance-2." + match[1], match[2]] : null;
+}
+
+function upstreamMediaURL(ctx, data) {
+  if (!ctx.preserveUpstreamMediaURL) return "";
+  const candidates = [(data.metadata || {}).content_url, (data.result || {}).url, (data.metadata || {}).url, data.url];
+  return candidates.find(value => typeof value === "string" &&
+    /^https?:\/\/[^/?#\s]+(?:[/?#]|$)/i.test(value)) || "";
 }
 
 function validateCallbackURL(value) {
@@ -89,6 +96,7 @@ export function buildSubmitRequest(ctx) {
   const base = ctx.baseUrl.replace(/\/$/, "");
   const path = ctx.action === "remix" ? "/v1/videos/" + encodeURIComponent(ctx.originTaskId) + "/remix" : "/v1/videos";
   const headers = { Authorization: "Bearer " + ctx.apiKey };
+  if (ctx.preserveUpstreamMediaURL) headers["X-Media-Result-Url"] = "upstream";
   for (const name of Object.keys(ctx.requestHeaders || {})) {
     if (name.toLowerCase() === "idempotency-key") headers["Idempotency-Key"] = ctx.requestHeaders[name];
   }
@@ -157,7 +165,7 @@ export function buildQueryRequest(ctx) {
   return {
     url: ctx.baseUrl.replace(/\/$/, "") + "/v1/videos/" + encodeURIComponent(ctx.taskId),
     method: "GET",
-    headers: { Authorization: "Bearer " + ctx.apiKey },
+    headers: { Authorization: "Bearer " + ctx.apiKey, ...(ctx.preserveUpstreamMediaURL ? { "X-Media-Result-Url": "upstream" } : {}) },
   };
 }
 
@@ -191,6 +199,8 @@ export function listArtifacts(task) {
 
 export function buildContentRequest(ctx) {
   if (ctx.artifactKey !== "video") throw new Error("artifact_not_found");
+  const directURL = upstreamMediaURL(ctx, ctx.data || {});
+  if (directURL) return { url: directURL, method: "GET", credentialless: true };
   return {
     url: ctx.baseUrl.replace(/\/$/, "") + "/v1/videos/" + encodeURIComponent(ctx.upstreamTaskId) + "/content",
     method: ctx.clientRequest.method,
@@ -198,17 +208,17 @@ export function buildContentRequest(ctx) {
   };
 }
 
-// Keep native response extensions while making media links use the host's
+// Preserve native media URLs only under host policy; otherwise use the host's
 // ownership-checked artifact endpoint. Preview links need their own artifact.
-function publicVideoSnapshot(value, contentURL) {
-  if (Array.isArray(value)) return value.map(item => publicVideoSnapshot(item, contentURL));
+function publicVideoSnapshot(value, contentURL, preserveUpstreamMediaURL) {
+  if (Array.isArray(value)) return value.map(item => publicVideoSnapshot(item, contentURL, preserveUpstreamMediaURL));
   if (!value || typeof value !== "object") return value;
   const result = {};
   for (const [key, item] of Object.entries(value)) {
     if (["last_frame_url", "thumbnail_url", "preview_url"].includes(key)) continue;
     if (["url", "video_url", "download_url", "content_url"].includes(key) && typeof item === "string") {
-      if (contentURL) result[key] = contentURL;
-    } else result[key] = publicVideoSnapshot(item, contentURL);
+      if (contentURL) result[key] = preserveUpstreamMediaURL ? item : contentURL;
+    } else result[key] = publicVideoSnapshot(item, contentURL, preserveUpstreamMediaURL);
   }
   return result;
 }
@@ -223,16 +233,17 @@ export const protocols = {
     render(ctx, task) {
       const statuses = { NOT_START: "queued", SUBMITTED: "queued", QUEUED: "queued", IN_PROGRESS: "in_progress", SUCCESS: "completed", FAILURE: "failed" };
       const properties = task.properties || {};
-      const localURL = ((ctx.artifacts || {}).video || {}).url;
-      const result = Object.assign(publicVideoSnapshot(task.data || {}, localURL), {
+      const directURL = upstreamMediaURL(ctx, task.data || {});
+      const contentURL = directURL || ((ctx.artifacts || {}).video || {}).url;
+      const result = Object.assign(publicVideoSnapshot(task.data || {}, contentURL, Boolean(directURL)), {
         id: task.task_id,
         model: ctx.model || properties.origin_model_name || "",
         status: statuses[task.status] || "unknown",
       });
       delete result.task_id;
       if (task.status === "SUCCESS") {
-        if (!localURL) throw new Error("video content URL is unavailable");
-        result.result = Object.assign({}, result.result || {}, { url: localURL });
+        if (!contentURL) throw new Error("video content URL is unavailable");
+        result.result = Object.assign({}, result.result || {}, { url: contentURL });
       }
       if (task.status === "FAILURE") result.error = { code: "video_generation_failed", message: task.fail_reason || "视频生成失败，请稍后重试" };
       return result;

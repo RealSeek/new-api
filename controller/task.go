@@ -189,6 +189,13 @@ func projectTaskArtifacts(task *model.Task) ([]relaychannel.TaskArtifact, error)
 	if adaptor == nil {
 		return nil, errTaskArtifactPluginUnavailable
 	}
+	if task.Platform == constant.TaskPlatform("rs-gateway") {
+		var err error
+		adaptor, err = initTaskArtifactAdaptor(task)
+		if err != nil {
+			return nil, err
+		}
+	}
 	provider, ok := adaptor.(relaychannel.TaskArtifactProvider)
 	if !ok {
 		return []relaychannel.TaskArtifact{}, nil

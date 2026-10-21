@@ -897,9 +897,25 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	preserveUpstreamMediaURL := false
+	if a.plugin.Meta.Key == "rs-gateway" {
+		setting := kitdto.ChannelSettings{}
+		if a.info != nil && a.info.HasChannelMeta() {
+			setting = a.info.ChannelSetting
+		}
+		if task.ChannelId != 0 {
+			channelModel, err := model.CacheGetChannel(task.ChannelId)
+			if err != nil {
+				return nil, fmt.Errorf("load task channel: %w", err)
+			}
+			setting = channelModel.GetSetting()
+		}
+		preserveUpstreamMediaURL = setting.AllowsMediaURLPassthrough(task.Properties.OriginModelName, task.Group)
+	}
 	renderContext := map[string]any{
 		"protocol": "openai_video", "operation": "retrieve",
 		"model": task.Properties.OriginModelName, "upstreamModel": task.Properties.UpstreamModelName,
+		"preserveUpstreamMediaURL": preserveUpstreamMediaURL,
 	}
 	if a.plugin.Meta.Key == "rs-gateway" && task.Status == model.TaskStatusSuccess {
 		contentURL, err := service.BuildTaskArtifactContentURL(task.TaskID, "video")
@@ -942,7 +958,7 @@ func (a *TaskAdaptor) ListArtifacts(task *model.Task) ([]channel.TaskArtifact, e
 	if !a.hasHook(context.Background(), "listArtifacts") {
 		return nil, nil
 	}
-	ctx, err := taskArtifactContext(task)
+	ctx, err := a.taskArtifactContext(task)
 	if err != nil {
 		return nil, err
 	}
@@ -963,7 +979,7 @@ func (a *TaskAdaptor) BuildContentRequest(task *model.Task, artifactKey string, 
 	if !taskArtifactKeyPattern.MatchString(artifactKey) {
 		return nil, fmt.Errorf("invalid artifact key")
 	}
-	ctx, err := taskArtifactContext(task)
+	ctx, err := a.taskArtifactContext(task)
 	if err != nil {
 		return nil, err
 	}
@@ -1026,7 +1042,7 @@ func (a *TaskAdaptor) BuildContentRequest(task *model.Task, artifactKey string, 
 	}, nil
 }
 
-func taskArtifactContext(task *model.Task) (map[string]any, error) {
+func (a *TaskAdaptor) taskArtifactContext(task *model.Task) (map[string]any, error) {
 	if task == nil {
 		return nil, fmt.Errorf("task is required")
 	}
@@ -1047,11 +1063,13 @@ func taskArtifactContext(task *model.Task) (map[string]any, error) {
 		}
 	}
 	return map[string]any{
-		"taskId":          task.TaskID,
-		"status":          string(task.Status),
-		"action":          task.Action,
-		"model":           task.Properties.OriginModelName,
-		"upstreamModel":   task.Properties.UpstreamModelName,
+		"taskId":        task.TaskID,
+		"status":        string(task.Status),
+		"action":        task.Action,
+		"model":         task.Properties.OriginModelName,
+		"upstreamModel": task.Properties.UpstreamModelName,
+		"preserveUpstreamMediaURL": a.plugin.Meta.Key == "rs-gateway" && a.info != nil && a.info.HasChannelMeta() &&
+			a.info.ChannelSetting.AllowsMediaURLPassthrough(task.Properties.OriginModelName, task.Group),
 		"data":            data,
 		"state":           state,
 		"producerVersion": producerVersion,
@@ -1060,14 +1078,15 @@ func taskArtifactContext(task *model.Task) (map[string]any, error) {
 
 func (a *TaskAdaptor) queryContext(task *model.Task, key, baseURL, proxy string) (map[string]any, error) {
 	ctx := map[string]any{
-		"taskId":        "",
-		"publicTaskId":  "",
-		"action":        "",
-		"model":         "",
-		"upstreamModel": "",
-		"baseUrl":       baseURL,
-		"data":          nil,
-		"state":         nil,
+		"taskId":                   "",
+		"publicTaskId":             "",
+		"action":                   "",
+		"model":                    "",
+		"upstreamModel":            "",
+		"preserveUpstreamMediaURL": false,
+		"baseUrl":                  baseURL,
+		"data":                     nil,
+		"state":                    nil,
 	}
 	if task != nil {
 		originModel := task.Properties.OriginModelName
@@ -1080,6 +1099,8 @@ func (a *TaskAdaptor) queryContext(task *model.Task, key, baseURL, proxy string)
 		ctx["action"] = constant.NormalizeTaskAction(task.Action)
 		ctx["model"] = originModel
 		ctx["upstreamModel"] = upstreamModel
+		ctx["preserveUpstreamMediaURL"] = a.plugin.Meta.Key == "rs-gateway" && a.info != nil && a.info.HasChannelMeta() &&
+			a.info.ChannelSetting.AllowsMediaURLPassthrough(originModel, task.Group)
 		if len(task.Data) > 0 {
 			var data any
 			if err := common.Unmarshal(task.Data, &data); err != nil {
@@ -1422,6 +1443,7 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 	ctx["publicTaskId"] = info.PublicTaskID
 	ctx["model"] = info.OriginModelName
 	ctx["upstreamModel"] = info.UpstreamModelName
+	ctx["preserveUpstreamMediaURL"] = a.plugin.Meta.Key == "rs-gateway" && info.ChannelSetting.AllowsMediaURLPassthrough(info.OriginModelName, info.UsingGroup)
 	ctx["baseUrl"] = info.ChannelBaseUrl
 	ctx["userSetting"] = info.UserSetting
 	if err := a.applyUpstreamCredentials(ctx, info.ChannelType, info.ApiKey, info.ChannelSetting.Proxy); err != nil {

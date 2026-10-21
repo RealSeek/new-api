@@ -50,6 +50,31 @@ func TestChannelValidateSettingsRejectsInvalidHTTPTransport(t *testing.T) {
 	}
 }
 
+func TestChannelValidateMediaURLPassthrough(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		setting   dto.ChannelSettings
+		wantError bool
+	}{
+		{name: "default off"},
+		{name: "enabled without models", setting: dto.ChannelSettings{MediaURLPassthrough: true}, wantError: true},
+		{name: "enabled for exact model and all groups", setting: dto.ChannelSettings{MediaURLPassthrough: true, MediaURLPassthroughModels: []string{"public-video"}}},
+		{name: "enabled for selected group", setting: dto.ChannelSettings{MediaURLPassthrough: true, MediaURLPassthroughModels: []string{"public-video"}, MediaURLPassthroughGroups: []string{"video-users"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			channel := &Channel{}
+			channel.SetSetting(tt.setting)
+			err := channel.ValidateSettings()
+			if tt.wantError {
+				require.ErrorContains(t, err, "media_url_passthrough requires at least one model")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.setting, channel.GetSetting())
+		})
+	}
+}
+
 func TestAdvancedCustomChannelRequiresModelListRouteOnlyWhenUpdateChecksEnabled(t *testing.T) {
 	inferenceRoute := dto.AdvancedCustomRoute{
 		IncomingPath: "/v1/chat/completions",

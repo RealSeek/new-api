@@ -1177,14 +1177,30 @@ func taskPluginProtocolRendererContext(
 	artifactContentURL func(taskID, artifactKey string) (string, error),
 ) (map[string]any, error) {
 	rendererContext := request.JSValue()
-	if task == nil || task.Status != model.TaskStatusSuccess {
+	rendererContext["preserveUpstreamMediaURL"] = false
+	if task == nil {
+		return rendererContext, nil
+	}
+	if task.Status != model.TaskStatusSuccess {
 		return rendererContext, nil
 	}
 	if pinned.Plugin == nil {
 		return nil, errors.New("task artifact projection is unavailable")
 	}
 
-	artifacts, err := taskjsplugin.New(pinned.Plugin).ListArtifacts(task)
+	adaptor := taskjsplugin.New(pinned.Plugin)
+	if pinned.Plugin.Meta.Key == "rs-gateway" && task.ChannelId != 0 {
+		channelModel, err := model.CacheGetChannel(task.ChannelId)
+		if err != nil {
+			return nil, fmt.Errorf("load task channel: %w", err)
+		}
+		setting := channelModel.GetSetting()
+		rendererContext["preserveUpstreamMediaURL"] = setting.AllowsMediaURLPassthrough(task.Properties.OriginModelName, task.Group)
+		adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId: task.ChannelId, ChannelType: channelModel.Type, ChannelSetting: setting,
+		}})
+	}
+	artifacts, err := adaptor.ListArtifacts(task)
 	if err != nil {
 		return nil, fmt.Errorf("project task artifacts: %w", err)
 	}

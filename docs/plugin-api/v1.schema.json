@@ -121,13 +121,14 @@
     "taskQueryContext": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["taskId", "publicTaskId", "action", "model", "upstreamModel", "baseUrl", "authHeader", "upstream", "data", "state"],
+      "required": ["taskId", "publicTaskId", "action", "model", "upstreamModel", "preserveUpstreamMediaURL", "baseUrl", "authHeader", "upstream", "data", "state"],
       "properties": {
         "taskId": {"type": "string"},
         "publicTaskId": {"type": "string"},
         "action": {"type": "string"},
         "model": {"type": "string"},
         "upstreamModel": {"type": "string"},
+        "preserveUpstreamMediaURL": {"type": "boolean"},
         "baseUrl": {"type": "string"},
         "apiKey": {"type": "string"},
         "authHeader": {"type": "string"},

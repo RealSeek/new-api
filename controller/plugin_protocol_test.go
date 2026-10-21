@@ -572,10 +572,11 @@ func TestServeTaskPluginProtocolStreamInjectsHostArtifactCapabilities(t *testing
 		return pluginProtocolTestOutcome(info, pinned.Plugin.Meta.Key, "task_stream_artifact", nil), nil
 	}
 	task := &model.Task{
-		TaskID:   "task_stream_artifact",
-		Platform: constant.TaskPlatform(pinned.Plugin.Meta.Key),
-		UserId:   71,
-		Status:   model.TaskStatusSuccess,
+		TaskID:    "task_stream_artifact",
+		Platform:  constant.TaskPlatform(pinned.Plugin.Meta.Key),
+		ChannelId: 404,
+		UserId:    71,
+		Status:    model.TaskStatusSuccess,
 	}
 	task.SetData(map[string]any{
 		"output": map[string]any{

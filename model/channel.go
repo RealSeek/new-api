@@ -1002,6 +1002,9 @@ func (channel *Channel) ValidateSettings() error {
 	if err := channelParams.ValidateHTTPTransport(); err != nil {
 		return err
 	}
+	if channelParams.MediaURLPassthrough && len(channelParams.MediaURLPassthroughModels) == 0 {
+		return fmt.Errorf("media_url_passthrough requires at least one model")
+	}
 	channelOtherSettings := &dto.ChannelOtherSettings{}
 	if channel.OtherSettings != "" {
 		err := common.UnmarshalJsonStr(channel.OtherSettings, channelOtherSettings)

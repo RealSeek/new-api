@@ -274,6 +274,9 @@ export const channelFormSchema = z
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
     key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
     // Channel extra settings (stored in setting JSON, not sent directly)
+    media_url_passthrough: z.boolean().optional(),
+    media_url_passthrough_models: z.array(z.string()).optional(),
+    media_url_passthrough_groups: z.array(z.string()).optional(),
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
     proxy: z
@@ -307,6 +310,17 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (
+      data.type === CHANNEL_TYPE_RS_GATEWAY &&
+      data.media_url_passthrough === true &&
+      !data.media_url_passthrough_models?.length
+    ) {
+      addRequiredIssue(
+        ctx,
+        'media_url_passthrough_models',
+        'Select at least one channel model'
+      )
+    }
     if (
       [
         3,
@@ -469,6 +483,9 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
   // Channel extra settings
+  media_url_passthrough: false,
+  media_url_passthrough_models: [],
+  media_url_passthrough_groups: [],
   force_format: false,
   thinking_to_content: false,
   proxy: '',
@@ -513,6 +530,9 @@ export function transformChannelToFormDefaults(
   let extraSettings = {
     task_plugin_key: '',
     task_extend_plugin_keys: [] as string[],
+    media_url_passthrough: false,
+    media_url_passthrough_models: [] as string[],
+    media_url_passthrough_groups: [] as string[],
     force_format: false,
     thinking_to_content: false,
     proxy: '',
@@ -534,6 +554,9 @@ export function transformChannelToFormDefaults(
       extraSettings = {
         task_plugin_key: parsed.task_plugin_key || '',
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
+        media_url_passthrough: parsed.media_url_passthrough === true,
+        media_url_passthrough_models: parsed.media_url_passthrough_models ?? [],
+        media_url_passthrough_groups: parsed.media_url_passthrough_groups ?? [],
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
@@ -661,6 +684,18 @@ export function transformChannelToFormDefaults(
  */
 export function buildSettingJSON(formData: ChannelFormValues): string {
   const settingObj: Record<string, unknown> = {
+    media_url_passthrough:
+      formData.type === CHANNEL_TYPE_RS_GATEWAY
+        ? formData.media_url_passthrough === true
+        : undefined,
+    media_url_passthrough_models:
+      formData.type === CHANNEL_TYPE_RS_GATEWAY
+        ? (formData.media_url_passthrough_models ?? [])
+        : undefined,
+    media_url_passthrough_groups:
+      formData.type === CHANNEL_TYPE_RS_GATEWAY
+        ? (formData.media_url_passthrough_groups ?? [])
+        : undefined,
     task_plugin_key:
       formData.type === CHANNEL_TYPE_TASK_PLUGIN
         ? formData.task_plugin_key?.trim() || ''

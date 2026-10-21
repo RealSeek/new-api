@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,8 +28,10 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const mockPlugin = `
@@ -591,6 +594,17 @@ func TestTaskAdaptorMapsJSContract(t *testing.T) {
 }
 
 func TestTaskAdaptorRSGatewayVideoURLsUseConfiguredDomain(t *testing.T) {
+	previousDB, previousCache := model.DB, common.MemoryCacheEnabled
+	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "media-policy.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDatabase, err := database.DB()
+	require.NoError(t, err)
+	require.NoError(t, database.AutoMigrate(&model.Channel{}))
+	model.DB, common.MemoryCacheEnabled = database, false
+	t.Cleanup(func() {
+		model.DB, common.MemoryCacheEnabled = previousDB, previousCache
+		require.NoError(t, sqlDatabase.Close())
+	})
 	previousAddress, previousSecret := system_setting.ServerAddress, common.CryptoSecret
 	system_setting.ServerAddress, common.CryptoSecret = "https://gateway.example", "test-artifact-secret"
 	t.Cleanup(func() { system_setting.ServerAddress, common.CryptoSecret = previousAddress, previousSecret })
@@ -598,22 +612,127 @@ func TestTaskAdaptorRSGatewayVideoURLsUseConfiguredDomain(t *testing.T) {
 	require.NoError(t, err)
 	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
 	require.NoError(t, err)
-	for _, name := range []string{"MiniMax-H3", "[c]MiniMaxH3", "grok-imagine-video-1.5", "[c]seedance-2.5", "[NSFW]seedance-2.5", "seedance-2.5"} {
-		t.Run(name, func(t *testing.T) {
+	const upstreamURL = "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/video.mp4?X-Tos-Signature=test-signature"
+	for _, tc := range []struct {
+		name, group, model, resultURL     string
+		enabled, allGroups, optIn, direct bool
+	}{
+		{name: "default off", group: "满血视频", model: "seedance-2.5", resultURL: upstreamURL},
+		{name: "configured model and group", group: "满血视频", model: "seedance-2.5", resultURL: upstreamURL, enabled: true, optIn: true, direct: true},
+		{name: "other group keeps cached origin private", group: "default", model: "seedance-2.5", resultURL: upstreamURL, enabled: true},
+		{name: "model must match exactly", group: "满血视频", model: "seedance-2.5-fast", resultURL: upstreamURL, enabled: true},
+		{name: "empty groups allow every group", group: "default", model: "seedance-2.5", resultURL: upstreamURL, enabled: true, allGroups: true, optIn: true, direct: true},
+		{name: "client model and arbitrary HTTPS origin", group: "满血视频", model: "public-video", resultURL: "https://supplier.example/video.mp4?Signature=a%2Fb%2Bc&Expires=123", enabled: true, optIn: true, direct: true},
+		{name: "HTTP origin", group: "满血视频", model: "seedance-2.5", resultURL: strings.Replace(upstreamURL, "https:", "http:", 1), enabled: true, optIn: true, direct: true},
+		{name: "relative origin stays local", group: "满血视频", model: "seedance-2.5", resultURL: "/video.mp4", enabled: true, optIn: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			secondaryURL := tc.resultURL + "&variant=secondary"
+			data, err := common.Marshal(map[string]any{
+				"url": secondaryURL, "content_url": tc.resultURL,
+				"result":   map[string]any{"url": tc.resultURL},
+				"metadata": map[string]any{"url": secondaryURL, "content_url": tc.resultURL},
+			})
+			require.NoError(t, err)
 			task := &model.Task{
-				TaskID: "task_public", Status: model.TaskStatusSuccess,
-				Properties: model.Properties{OriginModelName: name, UpstreamModelName: name},
-				Data:       []byte(`{"url":"https://supplier.example/video.mp4","task":{"content":{"url":"https://supplier.example/video.mp4"}},"metadata":{"url":"https://supplier.example/video.mp4"}}`),
+				TaskID: "task_public", Group: tc.group, Status: model.TaskStatusSuccess,
+				Properties:  model.Properties{OriginModelName: tc.model, UpstreamModelName: "private-provider-model"},
+				PrivateData: model.TaskPrivateData{UpstreamTaskID: "video_gwm_test"},
+				Data:        data,
 			}
+			setting := dto.ChannelSettings{
+				MediaURLPassthrough:       tc.enabled,
+				MediaURLPassthroughModels: []string{"seedance-2.5", "public-video"},
+				MediaURLPassthroughGroups: []string{"满血视频"},
+			}
+			if tc.allGroups {
+				setting.MediaURLPassthroughGroups = nil
+			}
+			channelModel := &model.Channel{Type: constant.ChannelTypeRSGateway}
+			channelModel.SetSetting(setting)
+			require.NoError(t, database.Create(channelModel).Error)
+			task.ChannelId = channelModel.Id
+			info := &relaycommon.RelayInfo{
+				UsingGroup: tc.group, OriginModelName: tc.model,
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeRSGateway,
+					ChannelBaseUrl: "https://gateway-upstream.example", ApiKey: "channel-secret", UpstreamModelName: "private-provider-model", ChannelSetting: setting},
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+			}
+			adaptor := New(plugin)
+			adaptor.Init(info)
 			encoded, err := New(plugin).ConvertToOpenAIVideo(task)
 			require.NoError(t, err)
 			var result map[string]any
 			require.NoError(t, common.Unmarshal(encoded, &result))
-			if name == "seedance-2.5" {
-				assert.Equal(t, "https://supplier.example/video.mp4", result["result"].(map[string]any)["url"])
+			contentURL := result["result"].(map[string]any)["url"]
+			if tc.direct {
+				assert.Equal(t, tc.resultURL, contentURL)
+				assert.Equal(t, secondaryURL, result["url"])
+				assert.Equal(t, secondaryURL, result["metadata"].(map[string]any)["url"])
 			} else {
-				assert.NotContains(t, string(encoded), "supplier.example")
-				assert.Contains(t, result["result"].(map[string]any)["url"], "https://gateway.example/v1/tasks/task_public/artifacts/video/content?access=")
+				assert.NotContains(t, string(encoded), tc.resultURL)
+				assert.Contains(t, contentURL, "https://gateway.example/v1/tasks/task_public/artifacts/video/content?access=")
+				assert.Equal(t, contentURL, result["url"])
+				assert.Equal(t, contentURL, result["metadata"].(map[string]any)["url"])
+			}
+			assert.Equal(t, contentURL, result["content_url"])
+			assert.Equal(t, contentURL, result["metadata"].(map[string]any)["content_url"])
+			assert.Equal(t, data, []byte(task.Data), "rendering must preserve the persisted snapshot")
+
+			queryHeaders := make(chan string, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/videos/video_gwm_test", r.URL.Path)
+				queryHeaders <- r.Header.Get("X-Media-Result-Url")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer upstream.Close()
+			info.ChannelBaseUrl = upstream.URL
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"`+tc.model+`","prompt":"a wave","seconds":"5"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Request.Header.Set("X-Media-Result-Url", "upstream")
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			submit := httptest.NewRequest(http.MethodPost, upstream.URL+"/v1/videos", nil)
+			require.NoError(t, adaptor.BuildRequestHeader(c, submit, info))
+			wantHeader := ""
+			if tc.optIn {
+				wantHeader = "upstream"
+			}
+			assert.Equal(t, wantHeader, submit.Header.Get("X-Media-Result-Url"))
+			// Fetch and content must use the stored task group, even if the
+			// current adaptor's submit group would request direct delivery.
+			info.UsingGroup = "满血视频"
+			response, err := adaptor.FetchTask(upstream.URL, "channel-secret", task, "")
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Len(t, queryHeaders, 1)
+			assert.Equal(t, wantHeader, <-queryHeaders)
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				request, err := adaptor.BuildContentRequest(task, "video", channel.TaskArtifactClientRequest{Method: method})
+				require.NoError(t, err)
+				if tc.direct {
+					assert.True(t, request.Credentialless)
+					assert.Empty(t, request.Headers)
+					assert.Equal(t, http.MethodGet, request.Method)
+					assert.Equal(t, tc.resultURL, request.URL)
+				} else {
+					assert.False(t, request.Credentialless)
+					assert.Equal(t, method, request.Method)
+					assert.Equal(t, "Bearer channel-secret", request.Headers["Authorization"])
+					assert.Equal(t, upstream.URL+"/v1/videos/video_gwm_test/content", request.URL)
+				}
+			}
+			if tc.name == "configured model and group" {
+				info.ChannelSetting.MediaURLPassthrough = false
+				channelModel.SetSetting(info.ChannelSetting)
+				require.NoError(t, database.Model(channelModel).Update("setting", channelModel.Setting).Error)
+				encoded, err = New(plugin).ConvertToOpenAIVideo(task)
+				require.NoError(t, err)
+				assert.NotContains(t, string(encoded), tc.resultURL)
+				request, err := adaptor.BuildContentRequest(task, "video", channel.TaskArtifactClientRequest{Method: http.MethodGet})
+				require.NoError(t, err)
+				assert.False(t, request.Credentialless)
+				assert.Equal(t, upstream.URL+"/v1/videos/video_gwm_test/content", request.URL)
 			}
 		})
 	}
@@ -637,6 +756,7 @@ func TestTaskAdaptorPreservesSoraVideoResponseFields(t *testing.T) {
 		t.Run(string(tc.status), func(t *testing.T) {
 			task := &model.Task{
 				TaskID:      "task_public",
+				ChannelId:   404,
 				Status:      tc.status,
 				Progress:    "42%",
 				CreatedAt:   100,
