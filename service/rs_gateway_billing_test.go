@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -164,7 +165,7 @@ func TestRSGatewayReceiptUsageAndBillingMetadata(t *testing.T) {
 			loser := charges[1].Billing.Snapshot()
 			assert.Equal(t, "short", winner["matched_tier"])
 			assert.Equal(t, "long", loser["matched_tier"])
-			assert.Equal(t, map[string]float64{"p": 55, "c": 10, "len": 80, "cr": 20, "cc": 5, "cc1h": 0,
+			assert.Equal(t, map[string]float64{"p": 55, "c": 10, "len": 80, "cr": 20, "cc": 5, "cc1h": 0, "cc12h": 0,
 				"img": 0, "img_cr": 0, "img_o": 0, "ai": 0, "ao": 0}, winner["billing_tokens"])
 			assert.Equal(t, test.input, charges[0].Usage.InputTokens)
 			assert.Equal(t, *test.includesCache, *charges[0].Usage.InputIncludesCache)
@@ -277,6 +278,7 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	t.Cleanup(server.Close)
 	const initial, reserved, want = 10000, 20, 190
 	user := model.User{Username: "receipt_" + strings.ReplaceAll(requestID, "-", ""), Quota: initial}
+	user.SetSetting(dto.UserSetting{RecordIpLog: true})
 	require.NoError(t, db.Create(&user).Error)
 	token := model.Token{UserId: user.Id, Key: "t-" + requestID, Name: "receipt", RemainQuota: initial}
 	require.NoError(t, db.Create(&token).Error)
@@ -318,8 +320,14 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 		source = &SubscriptionFunding{userId: user.Id, subscriptionId: sub.Id}
 	}
 	info.Billing = &BillingSession{relayInfo: info, funding: source, preConsumedQuota: reserved, tokenConsumed: reserved}
-	c := &gin.Context{}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	const clientIP = "203.0.113.23"
+	c.Request.RemoteAddr = clientIP + ":12345"
 	c.Set("username", user.Username)
+	if funding == "wallet" {
+		info.UserSetting = user.GetSetting()
+	}
 	if funding == "subscription" {
 		info.RelayFormat = types.RelayFormatClaude
 		info.RequestURLPath = "/v1/messages?beta=true"
@@ -335,6 +343,12 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	assert.NotContains(t, ledger.ContextJSON, key)
 	assert.NotContains(t, ledger.ContextJSON, "private=value")
 	assert.NotContains(t, ledger.ContextJSON, "beta=true")
+	if funding == "wallet" {
+		assert.Contains(t, ledger.ContextJSON, clientIP)
+	} else {
+		// Receipts saved before client IP snapshots must also settle safely.
+		assert.NotContains(t, ledger.ContextJSON, "ClientIP")
+	}
 	assert.Empty(t, ledger.ReceiptHash)
 	responseStatus.Store(http.StatusNotFound)
 	QueueRSGatewayReceipt(requestID)
@@ -358,6 +372,11 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	assert.Equal(t, 15, logs[0].CompletionTokens)
 	assert.Equal(t, 7, logs[0].UseTime, "receipt polling delay and hedge completion do not inflate model duration")
 	assert.True(t, logs[0].IsStream)
+	if funding == "wallet" {
+		assert.Equal(t, clientIP, logs[0].Ip)
+	} else {
+		assert.Empty(t, logs[0].Ip)
+	}
 	assert.Empty(t, logs[0].Content, "settlement diagnostics are not model response content")
 	var other map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))

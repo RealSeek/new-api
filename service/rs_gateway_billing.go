@@ -67,6 +67,7 @@ type rsGatewayBillingContext struct {
 	BaseURL            string
 	KeyHash            string
 	Username           string
+	ClientIP           string `json:",omitempty"`
 	TokenName          string
 	ModelName          string
 	UsingGroup         string
@@ -111,6 +112,9 @@ func PrepareRSGatewayReceipt(c *gin.Context, info *relaycommon.RelayInfo) error 
 		FinalRequestFormat: info.GetFinalRequestRelayFormat(),
 		Price:              info.PriceData, OtherRatios: info.PriceData.OtherRatios(), Tiered: info.TieredBillingSnapshot,
 		RequestInput: input, SubscriptionID: info.SubscriptionId,
+	}
+	if info.UserSetting.RecordIpLog {
+		snapshot.ClientIP = c.ClientIP()
 	}
 	quotaPerUnit := common.QuotaPerUnit
 	audioPrice := operation_setting.GetGeminiInputAudioPricePerMillionTokens(snapshot.ModelName)
@@ -410,6 +414,7 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 		ModelName: snapshot.ModelName, TokenName: snapshot.TokenName, Quota: quota,
 		TokenId:        record.TokenId,
 		UseTimeSeconds: int(durationMs / 1000), IsStream: snapshot.IsStream, Group: snapshot.UsingGroup, Other: other,
+		ClientIP: &snapshot.ClientIP,
 	})
 	return nil
 }
