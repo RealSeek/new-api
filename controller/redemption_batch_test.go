@@ -85,7 +85,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				common.SetDatabaseTypes(previousMain, previousLog)
 				common.RedisEnabled = previousRedis
 			})
-			for _, table := range []any{&model.User{}, &model.Redemption{}} {
+			for _, table := range []any{&model.User{}, &model.UserAccessToken{}, &model.Redemption{}} {
 				require.False(t, db.Migrator().HasTable(table), "use an empty test database")
 				require.NoError(t, db.AutoMigrate(table))
 				t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
@@ -93,9 +93,9 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 			require.False(t, logDB.Migrator().HasTable(&model.AuditLog{}), "use an empty test log database")
 			require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
 			t.Cleanup(func() { require.NoError(t, logDB.Migrator().DropTable(&model.AuditLog{})) })
-			token := "redemption-audit-test-token"
-			admin := model.User{Username: "redemption-audit-admin", Password: "unused", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AccessToken: &token}
+			admin := model.User{Username: "redemption-audit-admin", Password: "unused", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default"}
 			require.NoError(t, db.Create(&admin).Error)
+			token, _ := createScopedAccessToken(t, admin.Id, common.GetTimestamp()+3600, "redemption:write")
 			codes := make([]model.Redemption, 16)
 			for index := range codes {
 				codes[index] = model.Redemption{Name: "selected", Key: fmt.Sprintf("%032d", index+1), Quota: 100, Status: common.RedemptionCodeStatusEnabled}
@@ -120,6 +120,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 					request := httptest.NewRequest(http.MethodPost, "/api/redemption/batch", bytes.NewBufferString(body))
 					request.Header.Set("Authorization", "Bearer "+token)
 					router.ServeHTTP(response, request)
+					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 					var result struct {
 						Success bool `json:"success"`
 					}
@@ -149,7 +150,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				request := httptest.NewRequest(http.MethodPost, "/api/redemption/batch", bytes.NewReader(payload))
 				request.Header.Set("Authorization", "Bearer "+token)
 				router.ServeHTTP(response, request)
-				assert.Equal(t, http.StatusOK, response.Code)
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 				var result struct {
 					Success bool  `json:"success"`
 					Data    int64 `json:"data"`
