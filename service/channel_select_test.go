@@ -5,7 +5,10 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,6 +100,62 @@ func TestAppendVideoCapabilitiesFilter(t *testing.T) {
 	assert.Equal(t, 1, filters[0].ReferenceVideos)
 	assert.Equal(t, 1, filters[0].ReferenceAudios)
 	assert.True(t, filters[0].FaceRequired)
+}
+
+func TestVideoChannelSelectionWithRSGatewayReferences(t *testing.T) {
+	const modelName = "[c]MiniMaxH3"
+	channel := &model.Channel{Type: constant.ChannelTypeRSGateway}
+	channel.SetOtherSettings(kitdto.ChannelOtherSettings{
+		VideoModelCapabilities: map[string]kitdto.VideoModelCapabilities{
+			modelName: {ReferenceImages: 9, ReferenceAudios: 3},
+		},
+	})
+	for _, tc := range []struct {
+		name    string
+		body    map[string]any
+		allowed bool
+	}{
+		{
+			name: "reference images and audio stay eligible without frame support",
+			body: map[string]any{
+				"images": []any{
+					map[string]any{"url": "https://media.example/reference.png", "role": "reference_image"},
+					map[string]any{"url": "https://media.example/another.png"},
+				},
+				"audios": []any{"https://media.example/reference.mp3"},
+			},
+			allowed: true,
+		},
+		{
+			name: "first frame requires frame support",
+			body: map[string]any{"images": []any{
+				map[string]any{"url": "https://media.example/first.png", "role": "first_frame"},
+			}},
+		},
+		{
+			name: "top level audio references respect channel limit",
+			body: map[string]any{"audios": []any{
+				"https://media.example/1.mp3", "https://media.example/2.mp3",
+				"https://media.example/3.mp3", "https://media.example/4.mp3",
+			}},
+		},
+		{
+			name: "top level video requires video support",
+			body: map[string]any{"videos": []any{"https://media.example/reference.mp4"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(nil)
+			AppendVideoCapabilitiesFilter(c, tc.body)
+			allowed, kind := model.ChannelSatisfiesFilters(channel, modelName, GetChannelConstraints(c).Filters)
+			assert.Equal(t, tc.allowed, allowed)
+			if tc.allowed {
+				assert.Empty(t, kind)
+			} else {
+				assert.Equal(t, dto.FilterVideoCapabilities, kind)
+			}
+		})
+	}
 }
 
 func channelSelectTaskPluginSource(key string, channelType int) string {

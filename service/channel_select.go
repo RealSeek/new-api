@@ -94,7 +94,15 @@ func AppendVideoCapabilitiesFilter(c *gin.Context, request any) {
 	}
 	if filter.ReferenceImages == 0 && filter.FirstLastFrames == 0 {
 		if images, ok := body["images"].([]any); ok {
-			filter.FirstLastFrames = len(images)
+			for _, value := range images {
+				image, object := value.(map[string]any)
+				role, _ := image["role"].(string)
+				if !object || role == "first_frame" || role == "last_frame" {
+					filter.FirstLastFrames++
+				} else {
+					filter.ReferenceImages++
+				}
+			}
 		}
 		if metadata["first_frame_image"] != nil {
 			filter.FirstLastFrames++
@@ -102,6 +110,14 @@ func AppendVideoCapabilitiesFilter(c *gin.Context, request any) {
 		if metadata["last_frame_image"] != nil {
 			filter.FirstLastFrames++
 		}
+	}
+	if filter.ReferenceVideos == 0 {
+		videos, _ := body["videos"].([]any)
+		filter.ReferenceVideos = len(videos)
+	}
+	if filter.ReferenceAudios == 0 {
+		audios, _ := body["audios"].([]any)
+		filter.ReferenceAudios = len(audios)
 	}
 	filter.FaceRequired, _ = body["face_required"].(bool)
 	if !filter.FaceRequired {
