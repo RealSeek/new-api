@@ -37,8 +37,7 @@ import {
   getEndpointTypeLabels,
   getQuotaTypeLabels,
 } from '../constants'
-import { isTaskPricingCategory } from '../lib/dynamic-price'
-import { parseTags } from '../lib/filters'
+import { getModelQuotaType, parseTags } from '../lib/filters'
 import type { PricingModel, PricingVendor } from '../types'
 
 type FilterOption = {
@@ -156,7 +155,7 @@ export const PricingSidebar = memo(function PricingSidebar(
     const vendors = new Map<string, number>()
     const tags = new Map<string, number>()
     const endpoints = new Map<string, number>()
-    const quotas = { token: 0, request: 0, task: 0 }
+    const quotas = { token: 0, request: 0, second: 0, task: 0 }
     for (const model of props.models) {
       if (model.vendor_name) {
         vendors.set(
@@ -172,13 +171,8 @@ export const PricingSidebar = memo(function PricingSidebar(
       for (const endpoint of new Set(model.supported_endpoint_types ?? [])) {
         endpoints.set(endpoint, (endpoints.get(endpoint) ?? 0) + 1)
       }
-      if (isTaskPricingCategory(model)) {
-        quotas.task++
-      } else if (model.quota_type === 0) {
-        quotas.token++
-      } else if (model.quota_type === 1) {
-        quotas.request++
-      }
+      const quotaType = getModelQuotaType(model)
+      if (quotaType) quotas[quotaType]++
     }
     return { vendors, tags, endpoints, quotas }
   }, [props.models])
@@ -237,7 +231,7 @@ export const PricingSidebar = memo(function PricingSidebar(
     {
       value: QUOTA_TYPES.SECOND,
       label: quotaTypeLabels[QUOTA_TYPES.SECOND],
-      count: props.models.filter((model) => model.quota_type === 2).length,
+      count: counts.quotas.second,
     },
   ]
 

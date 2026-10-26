@@ -18,8 +18,9 @@ const (
 )
 
 // ClassifyRelayOutcome decides whether one finished relay counts as a health
-// sample. Business rejections and client cancellations are not samples; the
-// classification is independent of retries, channel disabling and billing.
+// sample. Business rejections and explicit client cancellations are not samples.
+// Upstream aborts and read failures remain failures when the request context is
+// canceled. Classification is independent of retries, channel disabling and billing.
 func ClassifyRelayOutcome(ctx context.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) Outcome {
 	if info == nil || info.PerformanceBusinessRejection {
 		return OutcomeIgnored

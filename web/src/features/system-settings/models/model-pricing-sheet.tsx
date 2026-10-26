@@ -119,6 +119,7 @@ import {
   laneConfigs,
   ratioFieldByLane,
   toNumberOrNull,
+  usesTaskModelPricing,
   type ImagePriceConfig,
   type ImagePriceTier,
   type LaneKey,
@@ -389,6 +390,9 @@ export const ModelPricingEditorPanel = forwardRef<
     Record<string, string>
   >({})
   const [editorReloadToken, setEditorReloadToken] = useState(0)
+  const [ordinaryPricingModel, setOrdinaryPricingModel] = useState<
+    string | null
+  >(null)
   const autoSwitchedForRef = useRef<string | null>(null)
   const isEditMode = !!editData
   const hasLegacyPricing =
@@ -485,36 +489,39 @@ export const ModelPricingEditorPanel = forwardRef<
   const taskUsageExamples =
     usageExamplesByModel.get(watchedValues.name.trim()) ??
     pluginVariants?.find((variant) => !variant.stale)?.usage_examples
-  const defaultTaskBillingExpr = useMemo(
-    () => {
-      if (!taskUsageSchema) return ''
-      if (taskPricingUnit) {
-        return taskPricingExpression(
-          taskPricingUnit,
-          taskUsageSchema,
-          editData,
-          billingExpr === DEFAULT_TOKEN_BILLING_EXPR ? '' : billingExpr
-        )
-      }
-      return generateTaskExprFromConfig(
-        createDefaultTaskVisualConfig(taskUsageSchema),
-        taskUsageSchema
+  const usesTaskPricing =
+    Boolean(taskPricingUnit) ||
+    (ordinaryPricingModel !== watchedValues.name &&
+      usesTaskModelPricing(editData, taskUsageSchema, pluginVariants))
+  const defaultTaskBillingExpr = useMemo(() => {
+    if (!taskUsageSchema) return ''
+    if (taskPricingUnit) {
+      return taskPricingExpression(
+        taskPricingUnit,
+        taskUsageSchema,
+        editData,
+        billingExpr === DEFAULT_TOKEN_BILLING_EXPR ? '' : billingExpr
       )
-    },
-    [billingExpr, editData, taskPricingUnit, taskUsageSchema]
-  )
-  const initialBillingExpr =
-    editData?.billingExpr ||
-    (editData?.taskPricingUnit && taskUsageSchema
-      ? taskPricingExpression(
-          editData.taskPricingUnit,
-          taskUsageSchema,
-          editData
-        )
-      : initialPricingMode === 'tiered_expr'
-        ? DEFAULT_TOKEN_BILLING_EXPR
-        : '')
+    }
+    return generateTaskExprFromConfig(
+      createDefaultTaskVisualConfig(taskUsageSchema),
+      taskUsageSchema
+    )
+  }, [billingExpr, editData, taskPricingUnit, taskUsageSchema])
+  let initialBillingExpr = DEFAULT_TOKEN_BILLING_EXPR
+  if (editData?.billingExpr) {
+    initialBillingExpr = editData.billingExpr
+  } else if (editData?.taskPricingUnit && taskUsageSchema) {
+    initialBillingExpr = taskPricingExpression(
+      editData.taskPricingUnit,
+      taskUsageSchema,
+      editData
+    )
+  } else if (initialPricingMode !== 'tiered_expr') {
+    initialBillingExpr = ''
+  }
   const resolvedBillingExpr =
+    usesTaskPricing &&
     taskUsageSchema &&
     (!billingExpr || billingExpr === DEFAULT_TOKEN_BILLING_EXPR)
       ? defaultTaskBillingExpr
@@ -528,6 +535,7 @@ export const ModelPricingEditorPanel = forwardRef<
     conversionGeneration.current += 1
     setConversionReason('')
     setPluginExpressions(editData?.pluginBillingExpr ?? {})
+    setOrdinaryPricingModel(null)
     setWasConverted(false)
     setConversionPreview(null)
     const nextLaneState = createInitialLaneState(editData)
@@ -1233,8 +1241,34 @@ export const ModelPricingEditorPanel = forwardRef<
     [form, validatePricingValues, buildSubmitData]
   )
 
+  const configureOrdinaryPricing = () => {
+    const inheritedExpression = combineBillingExpr(
+      resolvedBillingExpr,
+      requestRuleExpr
+    )
+    setPluginExpressions((current) => {
+      const next = { ...current }
+      for (const variant of pluginVariants ?? []) {
+        if (!variant.stale && !Object.hasOwn(next, variant.plugin_key)) {
+          next[variant.plugin_key] = inheritedExpression
+        }
+      }
+      return next
+    })
+    setOrdinaryPricingModel(watchedValues.name)
+    setTaskPricingUnit(null)
+    setPricingMode('tiered_expr')
+    setBillingExpr(
+      taskUsageSchema?.image_count?.unit === 'count'
+        ? 'tier("image", fixed(0)) * image_count'
+        : DEFAULT_TOKEN_BILLING_EXPR
+    )
+    setRequestRuleExpr('')
+    setEditorReloadToken((token) => token + 1)
+  }
+
   let expressionEditor: ReactNode
-  if (taskUsageSchema) {
+  if (usesTaskPricing && taskUsageSchema) {
     expressionEditor = (
       <TaskUsagePricingEditor
         currency={currency}
@@ -1246,9 +1280,7 @@ export const ModelPricingEditorPanel = forwardRef<
         billingUnit={taskPricingUnit ?? undefined}
         onBillingExprChange={setBillingExpr}
         onRequestRuleExprChange={setRequestRuleExpr}
-        onBillingUnitChange={
-          taskPricingUnit ? setTaskPricingUnit : undefined
-        }
+        onBillingUnitChange={taskPricingUnit ? setTaskPricingUnit : undefined}
       />
     )
   } else if (imageResolutionPricing) {
@@ -1367,465 +1399,480 @@ export const ModelPricingEditorPanel = forwardRef<
                     pricingMode === 'tiered_expr' ? 'tiered_expr' : 'ratio'
                   }
                   currency={currency}
+                  ordinaryPricing={!usesTaskPricing}
+                  onConfigureOrdinaryPricing={configureOrdinaryPricing}
                 >
                   {(!configuredTaskUsageSchema || taskPricingUnit) &&
                     !imageResolutionPricing && (
-                    <div className='rounded-lg border p-3'>
-                      <div className='flex items-start gap-2'>
-                        <Checkbox
-                          id={taskPricingToggleId}
-                          checked={taskPricingUnit !== null}
-                          onCheckedChange={(checked) => {
-                            if (checked !== true) {
-                              const previousUnit = taskPricingUnit
-                              setTaskPricingUnit(null)
-                              setPricingMode(
-                                previousUnit === 'second'
-                                  ? 'per-second'
-                                  : 'per-request'
+                      <div className='rounded-lg border p-3'>
+                        <div className='flex items-start gap-2'>
+                          <Checkbox
+                            id={taskPricingToggleId}
+                            checked={taskPricingUnit !== null}
+                            onCheckedChange={(checked) => {
+                              if (checked !== true) {
+                                const previousUnit = taskPricingUnit
+                                setTaskPricingUnit(null)
+                                setPricingMode(
+                                  previousUnit === 'second'
+                                    ? 'per-second'
+                                    : 'per-request'
+                                )
+                                return
+                              }
+                              handleTaskPricingUnitChange(
+                                pricingMode === 'per-second'
+                                  ? 'second'
+                                  : 'request'
                               )
-                              return
-                            }
-                            handleTaskPricingUnitChange(
-                              pricingMode === 'per-second'
-                                ? 'second'
-                                : 'request'
-                            )
-                          }}
-                        />
-                        <div className='grid gap-1'>
-                          <label
-                            htmlFor={taskPricingToggleId}
-                            className='text-sm font-medium'
-                          >
-                            {t('Task billing')}
-                          </label>
+                            }}
+                          />
+                          <div className='grid gap-1'>
+                            <label
+                              htmlFor={taskPricingToggleId}
+                              className='text-sm font-medium'
+                            >
+                              {t('Task billing')}
+                            </label>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    )}
                   {taskPricingUnit ? (
-                    <FieldGroup className='gap-5'>{expressionEditor}</FieldGroup>
+                    <FieldGroup className='gap-5'>
+                      {expressionEditor}
+                    </FieldGroup>
                   ) : (
-                  <Tabs
-                    key={editorReloadToken}
-                    value={pricingMode}
-                    onValueChange={handleModeChange}
-                    className='gap-4'
-                  >
-                    <TabsList className='grid w-full grid-cols-4'>
-                      <TabsTrigger value='tiered_expr'>
-                        {t('Expression')}
-                      </TabsTrigger>
-                      <TabsTrigger value='per-second'>
-                        {t('Per-second')}
-                      </TabsTrigger>
-                      <TabsTrigger value='per-token'>
-                        {t('Per-token')}
-                      </TabsTrigger>
-                      <TabsTrigger value='per-request'>
-                        {t('Per-request')}
-                      </TabsTrigger>
-                    </TabsList>
+                    <Tabs
+                      key={editorReloadToken}
+                      value={pricingMode}
+                      onValueChange={handleModeChange}
+                      className='gap-4'
+                    >
+                      <TabsList className='w-full flex-wrap group-data-horizontal/tabs:h-auto'>
+                        <TabsTrigger value='tiered_expr'>
+                          {t('Expression')}
+                        </TabsTrigger>
+                        <TabsTrigger value='per-second'>
+                          {t('Per-second')}
+                        </TabsTrigger>
+                        <TabsTrigger value='per-token'>
+                          {t('Per-token')}
+                        </TabsTrigger>
+                        <TabsTrigger value='per-request'>
+                          {t('Per-request')}
+                        </TabsTrigger>
+                      </TabsList>
 
-                    {(pricingMode === 'per-token' ||
-                      pricingMode === 'per-request') && (
-                      <Alert className='p-4'>
-                        <AlertDescription className='space-y-3 text-sm text-inherit'>
-                          <p className='font-medium'>
-                            {t(
-                              'Legacy prices remain editable. Conversion to an expression is optional.'
-                            )}
-                          </p>
-                          <Button
-                            type='button'
-                            className='w-full sm:w-auto'
-                            disabled={
-                              conversion.isPending ||
-                              Boolean(billingExpr.trim())
-                            }
-                            onClick={() => void convertPricing()}
-                          >
-                            {conversion.isPending
-                              ? t('Preparing conversion...')
-                              : t('Convert to expression')}
-                          </Button>
-                          {billingExpr.trim() && (
-                            <p>
+                      {(pricingMode === 'per-token' ||
+                        pricingMode === 'per-request') && (
+                        <Alert className='p-4'>
+                          <AlertDescription className='space-y-3 text-sm text-inherit'>
+                            <p className='font-medium'>
                               {t(
-                                'An expression draft already exists. Open the Expression tab to keep editing it.'
+                                'Legacy prices remain editable. Conversion to an expression is optional.'
                               )}
                             </p>
+                            <Button
+                              type='button'
+                              className='w-full sm:w-auto'
+                              disabled={
+                                conversion.isPending ||
+                                Boolean(billingExpr.trim())
+                              }
+                              onClick={() => void convertPricing()}
+                            >
+                              {conversion.isPending
+                                ? t('Preparing conversion...')
+                                : t('Convert to expression')}
+                            </Button>
+                            {billingExpr.trim() && (
+                              <p>
+                                {t(
+                                  'An expression draft already exists. Open the Expression tab to keep editing it.'
+                                )}
+                              </p>
+                            )}
+                            {conversionReason && (
+                              <p role='status'>{t(conversionReason)}</p>
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      {wasConverted && (
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'After conversion, expression reservation and rounding rules apply. Effective unit prices are preserved; individual rounded charges may differ.'
                           )}
-                          {conversionReason && (
-                            <p role='status'>{t(conversionReason)}</p>
-                          )}
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                    {wasConverted && (
-                      <p className='text-muted-foreground text-xs'>
-                        {t(
-                          'After conversion, expression reservation and rounding rules apply. Effective unit prices are preserved; individual rounded charges may differ.'
-                        )}
-                      </p>
-                    )}
+                        </p>
+                      )}
 
-                    <TabsContent
-                      value='per-token'
-                      className='@container/pricing-fields min-w-0 pt-0'
-                    >
-                      {taskUsageSchema &&
-                        Object.keys(taskUsageSchema).length > 0 && (
-                          <Alert className='mb-4'>
-                            <AlertDescription className='flex flex-col gap-3 text-xs'>
-                              <p>
-                                {t(
-                                  'This is a task model billed by usage (e.g. seconds, resolution). Prices entered here act as a per-call base rate, not per-token prices.'
-                                )}
-                              </p>
-                              <p>
-                                {t(
-                                  'Tip: after configuring one model, select others in the table and use bulk copy.'
-                                )}
-                              </p>
+                      <TabsContent
+                        value='per-token'
+                        className='@container/pricing-fields min-w-0 pt-0'
+                      >
+                        {taskUsageSchema &&
+                          Object.keys(taskUsageSchema).length > 0 && (
+                            <Alert className='mb-4'>
+                              <AlertDescription className='flex flex-col gap-3 text-xs'>
+                                <p>
+                                  {t(
+                                    'This is a task model billed by usage (e.g. seconds, resolution). Prices entered here act as a per-call base rate, not per-token prices.'
+                                  )}
+                                </p>
+                                <p>
+                                  {t(
+                                    'Tip: after configuring one model, select others in the table and use bulk copy.'
+                                  )}
+                                </p>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  className='w-fit'
+                                  onClick={() =>
+                                    handleModeChange('tiered_expr')
+                                  }
+                                >
+                                  {t('Configure task pricing')}
+                                </Button>
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                        <p className='text-muted-foreground mb-3 text-xs'>
+                          {embedded && (
+                            <>
+                              {t('{{currency}} price per 1M tokens.', {
+                                currency: currency.label,
+                              })}{' '}
+                            </>
+                          )}
+                          {t(
+                            'Unset legacy prices use the billing engine defaults.'
+                          )}
+                        </p>
+                        <div
+                          className={cn(
+                            'grid min-w-0 gap-3',
+                            embedded &&
+                              '@min-[560px]/pricing-fields:grid-cols-2'
+                          )}
+                        >
+                          <Field
+                            className={cn(
+                              'min-w-0',
+                              embedded && 'rounded-lg border p-3'
+                            )}
+                          >
+                            <FieldLabel htmlFor={promptPriceId}>
+                              {t('Input price')}
+                            </FieldLabel>
+                            <FieldDescription
+                              id={`${promptPriceId}-description`}
+                              className={embedded ? 'text-xs' : undefined}
+                            >
+                              {t('{{currency}} price per 1M input tokens.', {
+                                currency: currency.label,
+                              })}
+                            </FieldDescription>
+                            <PriceInput
+                              currency={currency}
+                              id={promptPriceId}
+                              aria-describedby={`${promptPriceId}-description`}
+                              value={promptPrice}
+                              placeholder='3'
+                              onChange={handlePromptPriceChange}
+                            />
+                          </Field>
+
+                          {laneConfigs.map((lane) => {
+                            const disabled =
+                              lane.key === 'audioOutput' &&
+                              (!laneEnabled.audioInput ||
+                                !hasValue(lanePrices.audioInput))
+                            return (
+                              <PriceLane
+                                currency={currency}
+                                key={lane.key}
+                                compact={embedded}
+                                title={t(lane.titleKey)}
+                                description={t(lane.descriptionKey)}
+                                placeholder={lane.placeholder}
+                                value={lanePrices[lane.key]}
+                                enabled={laneEnabled[lane.key]}
+                                disabled={disabled}
+                                disabledReason={
+                                  disabled
+                                    ? t(
+                                        'Audio output price requires an audio input price.'
+                                      )
+                                    : undefined
+                                }
+                                onEnabledChange={(checked) =>
+                                  handleLaneToggle(lane.key, checked)
+                                }
+                                onChange={(value) =>
+                                  handleLanePriceChange(lane.key, value)
+                                }
+                              />
+                            )
+                          })}
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value='per-request' className='pt-0'>
+                        <FieldGroup className='gap-5'>
+                          <FormField
+                            control={form.control}
+                            name='price'
+                            render={({ field }) => (
+                              <FormItem className='contents'>
+                                <Field>
+                                  <FormLabel>{t('Fixed price')}</FormLabel>
+                                  <InputGroup className='has-[[data-pricing-error]]:h-auto has-[[data-pricing-error]]:flex-wrap'>
+                                    <InputGroupAddon>
+                                      {currency.symbol}
+                                    </InputGroupAddon>
+                                    <FormControl>
+                                      <PricingAmountInput
+                                        {...field}
+                                        value={field.value ?? ''}
+                                        currency={currency}
+                                        grouped
+                                        placeholder='0.01'
+                                        onChange={field.onChange}
+                                      />
+                                    </FormControl>
+                                    <InputGroupAddon align='inline-end'>
+                                      {t('per request')}
+                                    </InputGroupAddon>
+                                  </InputGroup>
+                                  <FieldDescription>
+                                    {t(
+                                      'Cost in USD per request, regardless of tokens used.'
+                                    )}
+                                  </FieldDescription>
+                                  <FormMessage />
+                                </Field>
+                              </FormItem>
+                            )}
+                          />
+                          <div className='space-y-3'>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='image-model-toggle'
+                                checked={imageModelEnabled}
+                                onCheckedChange={(checked) =>
+                                  setImageModelEnabled(checked === true)
+                                }
+                              />
+                              <label
+                                htmlFor='image-model-toggle'
+                                className='text-sm font-medium'
+                              >
+                                {t('Image model (price by resolution)')}
+                              </label>
+                            </div>
+                            {imageModelEnabled && (
+                              <div className='space-y-3'>
+                                {IMAGE_PRICE_TIERS.map((tier) => (
+                                  <Field key={tier}>
+                                    <FieldLabel>
+                                      {tier.toUpperCase()}
+                                    </FieldLabel>
+                                    <InputGroup>
+                                      <InputGroupAddon>$</InputGroupAddon>
+                                      <InputGroupInput
+                                        inputMode='decimal'
+                                        placeholder='0.05'
+                                        value={imageTierPrices[tier]}
+                                        onChange={(event) => {
+                                          const value = event.target.value
+                                          if (numericDraftRegex.test(value)) {
+                                            setImageTierPrices((prices) => ({
+                                              ...prices,
+                                              [tier]: value,
+                                            }))
+                                          }
+                                        }}
+                                      />
+                                      <InputGroupAddon align='inline-end'>
+                                        {t('per image')}
+                                      </InputGroupAddon>
+                                    </InputGroup>
+                                  </Field>
+                                ))}
+                                <FieldDescription>
+                                  {t(
+                                    'Unconfigured resolutions use the fixed price above.'
+                                  )}
+                                </FieldDescription>
+                              </div>
+                            )}
+                          </div>
+                          {form.formState.errors.price?.message && (
+                            <p
+                              className='text-destructive text-sm'
+                              role='alert'
+                            >
+                              {form.formState.errors.price.message}
+                            </p>
+                          )}
+                        </FieldGroup>
+                      </TabsContent>
+
+                      <TabsContent value='per-second' className='pt-0'>
+                        <FieldGroup className='gap-5'>
+                          <div className='grid gap-3 sm:grid-cols-2'>
+                            {[
+                              [
+                                'videoDefaultPrice',
+                                t('Price per second'),
+                                videoDefaultPrice,
+                                setVideoDefaultPrice,
+                              ],
+                              [
+                                'videoDefaultDuration',
+                                t('Default duration'),
+                                videoDefaultDuration,
+                                setVideoDefaultDuration,
+                              ],
+                              [
+                                'videoBillingStep',
+                                t('Billing step'),
+                                videoBillingStep,
+                                setVideoBillingStep,
+                              ],
+                              [
+                                'videoMinimumDuration',
+                                t('Minimum duration'),
+                                videoMinimumDuration,
+                                setVideoMinimumDuration,
+                              ],
+                            ].map(([key, label, value, setter]) => (
+                              <Field key={key as string}>
+                                <FieldLabel>{label as string}</FieldLabel>
+                                <InputGroup>
+                                  <InputGroupAddon>
+                                    {key === 'videoDefaultPrice' ? '$' : ''}
+                                  </InputGroupAddon>
+                                  <InputGroupInput
+                                    inputMode='decimal'
+                                    value={value as string}
+                                    onChange={(event) =>
+                                      (setter as (value: string) => void)(
+                                        event.target.value
+                                      )
+                                    }
+                                  />
+                                  <InputGroupAddon align='inline-end'>
+                                    {key === 'videoDefaultPrice'
+                                      ? t('per second')
+                                      : t('seconds')}
+                                  </InputGroupAddon>
+                                </InputGroup>
+                              </Field>
+                            ))}
+                          </div>
+                          <div className='space-y-3'>
+                            <div className='flex items-center justify-between'>
+                              <FieldLabel>{t('Resolution prices')}</FieldLabel>
                               <Button
                                 type='button'
                                 variant='outline'
                                 size='sm'
-                                className='w-fit'
-                                onClick={() => handleModeChange('tiered_expr')}
-                              >
-                                {t('Configure task pricing')}
-                              </Button>
-                            </AlertDescription>
-                          </Alert>
-                        )}
-                      <p className='text-muted-foreground mb-3 text-xs'>
-                        {embedded && (
-                          <>
-                            {t('{{currency}} price per 1M tokens.', {
-                              currency: currency.label,
-                            })}{' '}
-                          </>
-                        )}
-                        {t(
-                          'Unset legacy prices use the billing engine defaults.'
-                        )}
-                      </p>
-                      <div
-                        className={cn(
-                          'grid min-w-0 gap-3',
-                          embedded && '@min-[560px]/pricing-fields:grid-cols-2'
-                        )}
-                      >
-                        <Field
-                          className={cn(
-                            'min-w-0',
-                            embedded && 'rounded-lg border p-3'
-                          )}
-                        >
-                          <FieldLabel htmlFor={promptPriceId}>
-                            {t('Input price')}
-                          </FieldLabel>
-                          <FieldDescription
-                            id={`${promptPriceId}-description`}
-                            className={embedded ? 'text-xs' : undefined}
-                          >
-                            {t('{{currency}} price per 1M input tokens.', {
-                              currency: currency.label,
-                            })}
-                          </FieldDescription>
-                          <PriceInput
-                            currency={currency}
-                            id={promptPriceId}
-                            aria-describedby={`${promptPriceId}-description`}
-                            value={promptPrice}
-                            placeholder='3'
-                            onChange={handlePromptPriceChange}
-                          />
-                        </Field>
-
-                        {laneConfigs.map((lane) => {
-                          const disabled =
-                            lane.key === 'audioOutput' &&
-                            (!laneEnabled.audioInput ||
-                              !hasValue(lanePrices.audioInput))
-                          return (
-                            <PriceLane
-                              currency={currency}
-                              key={lane.key}
-                              compact={embedded}
-                              title={t(lane.titleKey)}
-                              description={t(lane.descriptionKey)}
-                              placeholder={lane.placeholder}
-                              value={lanePrices[lane.key]}
-                              enabled={laneEnabled[lane.key]}
-                              disabled={disabled}
-                              disabledReason={
-                                disabled
-                                  ? t(
-                                      'Audio output price requires an audio input price.'
-                                    )
-                                  : undefined
-                              }
-                              onEnabledChange={(checked) =>
-                                handleLaneToggle(lane.key, checked)
-                              }
-                              onChange={(value) =>
-                                handleLanePriceChange(lane.key, value)
-                              }
-                            />
-                          )
-                        })}
-                      </div>
-                    </TabsContent>
-
-                    <TabsContent value='per-request' className='pt-0'>
-                      <FieldGroup className='gap-5'>
-                        <FormField
-                          control={form.control}
-                          name='price'
-                          render={({ field }) => (
-                            <FormItem className='contents'>
-                              <Field>
-                                <FormLabel>{t('Fixed price')}</FormLabel>
-                                <InputGroup className='has-[[data-pricing-error]]:h-auto has-[[data-pricing-error]]:flex-wrap'>
-                                  <InputGroupAddon>
-                                    {currency.symbol}
-                                  </InputGroupAddon>
-                                  <FormControl>
-                                    <PricingAmountInput
-                                      {...field}
-                                      value={field.value ?? ''}
-                                      currency={currency}
-                                      grouped
-                                      placeholder='0.01'
-                                      onChange={field.onChange}
-                                    />
-                                  </FormControl>
-                                  <InputGroupAddon align='inline-end'>
-                                    {t('per request')}
-                                  </InputGroupAddon>
-                                </InputGroup>
-                                <FieldDescription>
-                                  {t(
-                                    'Cost in USD per request, regardless of tokens used.'
-                                  )}
-                                </FieldDescription>
-                                <FormMessage />
-                              </Field>
-                            </FormItem>
-                          )}
-                        />
-                        <div className='space-y-3'>
-                          <div className='flex items-center gap-2'>
-                            <Checkbox
-                              id='image-model-toggle'
-                              checked={imageModelEnabled}
-                              onCheckedChange={(checked) =>
-                                setImageModelEnabled(checked === true)
-                              }
-                            />
-                            <label
-                              htmlFor='image-model-toggle'
-                              className='text-sm font-medium'
-                            >
-                              {t('Image model (price by resolution)')}
-                            </label>
-                          </div>
-                          {imageModelEnabled && (
-                            <div className='space-y-3'>
-                              {IMAGE_PRICE_TIERS.map((tier) => (
-                                <Field key={tier}>
-                                  <FieldLabel>{tier.toUpperCase()}</FieldLabel>
-                                  <InputGroup>
-                                    <InputGroupAddon>$</InputGroupAddon>
-                                    <InputGroupInput
-                                      inputMode='decimal'
-                                      placeholder='0.05'
-                                      value={imageTierPrices[tier]}
-                                      onChange={(event) => {
-                                        const value = event.target.value
-                                        if (numericDraftRegex.test(value)) {
-                                          setImageTierPrices((prices) => ({
-                                            ...prices,
-                                            [tier]: value,
-                                          }))
-                                        }
-                                      }}
-                                    />
-                                    <InputGroupAddon align='inline-end'>
-                                      {t('per image')}
-                                    </InputGroupAddon>
-                                  </InputGroup>
-                                </Field>
-                              ))}
-                              <FieldDescription>
-                                {t(
-                                  'Unconfigured resolutions use the fixed price above.'
-                                )}
-                              </FieldDescription>
-                            </div>
-                          )}
-                        </div>
-                        {form.formState.errors.price?.message && (
-                          <p className='text-destructive text-sm' role='alert'>
-                            {form.formState.errors.price.message}
-                          </p>
-                        )}
-                      </FieldGroup>
-                    </TabsContent>
-
-                    <TabsContent value='per-second' className='pt-0'>
-                      <FieldGroup className='gap-5'>
-                        <div className='grid gap-3 sm:grid-cols-2'>
-                          {[
-                            [
-                              'videoDefaultPrice',
-                              t('Price per second'),
-                              videoDefaultPrice,
-                              setVideoDefaultPrice,
-                            ],
-                            [
-                              'videoDefaultDuration',
-                              t('Default duration'),
-                              videoDefaultDuration,
-                              setVideoDefaultDuration,
-                            ],
-                            [
-                              'videoBillingStep',
-                              t('Billing step'),
-                              videoBillingStep,
-                              setVideoBillingStep,
-                            ],
-                            [
-                              'videoMinimumDuration',
-                              t('Minimum duration'),
-                              videoMinimumDuration,
-                              setVideoMinimumDuration,
-                            ],
-                          ].map(([key, label, value, setter]) => (
-                            <Field key={key as string}>
-                              <FieldLabel>{label as string}</FieldLabel>
-                              <InputGroup>
-                                <InputGroupAddon>
-                                  {key === 'videoDefaultPrice' ? '$' : ''}
-                                </InputGroupAddon>
-                                <InputGroupInput
-                                  inputMode='decimal'
-                                  value={value as string}
-                                  onChange={(event) =>
-                                    (setter as (value: string) => void)(
-                                      event.target.value
-                                    )
-                                  }
-                                />
-                                <InputGroupAddon align='inline-end'>
-                                  {key === 'videoDefaultPrice'
-                                    ? t('per second')
-                                    : t('seconds')}
-                                </InputGroupAddon>
-                              </InputGroup>
-                            </Field>
-                          ))}
-                        </div>
-                        <div className='space-y-3'>
-                          <div className='flex items-center justify-between'>
-                            <FieldLabel>{t('Resolution prices')}</FieldLabel>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={() =>
-                                setVideoResolutionPrices((rows) => [
-                                  ...rows,
-                                  {
-                                    id: crypto.randomUUID(),
-                                    resolution: '',
-                                    price: '',
-                                  },
-                                ])
-                              }
-                            >
-                              <Plus data-icon='inline-start' />
-                              {t('Add resolution')}
-                            </Button>
-                          </div>
-                          {videoResolutionPrices.map((row) => (
-                            <div
-                              key={row.id}
-                              className='grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2'
-                            >
-                              <Input
-                                placeholder='720p'
-                                value={row.resolution}
-                                onChange={(event) =>
-                                  setVideoResolutionPrices((rows) =>
-                                    rows.map((item) =>
-                                      item.id === row.id
-                                        ? {
-                                            ...item,
-                                            resolution: event.target.value,
-                                          }
-                                        : item
-                                    )
-                                  )
+                                onClick={() =>
+                                  setVideoResolutionPrices((rows) => [
+                                    ...rows,
+                                    {
+                                      id: crypto.randomUUID(),
+                                      resolution: '',
+                                      price: '',
+                                    },
+                                  ])
                                 }
-                              />
-                              <InputGroup>
-                                <InputGroupAddon>$</InputGroupAddon>
-                                <InputGroupInput
-                                  inputMode='decimal'
-                                  placeholder='0.38'
-                                  value={row.price}
+                              >
+                                <Plus data-icon='inline-start' />
+                                {t('Add resolution')}
+                              </Button>
+                            </div>
+                            {videoResolutionPrices.map((row) => (
+                              <div
+                                key={row.id}
+                                className='grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2'
+                              >
+                                <Input
+                                  placeholder='720p'
+                                  value={row.resolution}
                                   onChange={(event) =>
                                     setVideoResolutionPrices((rows) =>
                                       rows.map((item) =>
                                         item.id === row.id
                                           ? {
                                               ...item,
-                                              price: event.target.value,
+                                              resolution: event.target.value,
                                             }
                                           : item
                                       )
                                     )
                                   }
                                 />
-                                <InputGroupAddon align='inline-end'>
-                                  {t('per second')}
-                                </InputGroupAddon>
-                              </InputGroup>
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='icon'
-                                aria-label={t('Delete')}
-                                onClick={() =>
-                                  setVideoResolutionPrices((rows) =>
-                                    rows.filter((item) => item.id !== row.id)
-                                  )
-                                }
-                              >
-                                <Trash2 />
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                        {form.formState.errors.price?.message && (
-                          <p className='text-destructive text-sm' role='alert'>
-                            {form.formState.errors.price.message}
-                          </p>
-                        )}
-                      </FieldGroup>
-                    </TabsContent>
+                                <InputGroup>
+                                  <InputGroupAddon>$</InputGroupAddon>
+                                  <InputGroupInput
+                                    inputMode='decimal'
+                                    placeholder='0.38'
+                                    value={row.price}
+                                    onChange={(event) =>
+                                      setVideoResolutionPrices((rows) =>
+                                        rows.map((item) =>
+                                          item.id === row.id
+                                            ? {
+                                                ...item,
+                                                price: event.target.value,
+                                              }
+                                            : item
+                                        )
+                                      )
+                                    }
+                                  />
+                                  <InputGroupAddon align='inline-end'>
+                                    {t('per second')}
+                                  </InputGroupAddon>
+                                </InputGroup>
+                                <Button
+                                  type='button'
+                                  variant='ghost'
+                                  size='icon'
+                                  aria-label={t('Delete')}
+                                  onClick={() =>
+                                    setVideoResolutionPrices((rows) =>
+                                      rows.filter((item) => item.id !== row.id)
+                                    )
+                                  }
+                                >
+                                  <Trash2 />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                          {form.formState.errors.price?.message && (
+                            <p
+                              className='text-destructive text-sm'
+                              role='alert'
+                            >
+                              {form.formState.errors.price.message}
+                            </p>
+                          )}
+                        </FieldGroup>
+                      </TabsContent>
 
-                    <TabsContent value='tiered_expr' className='pt-0'>
-                      <FieldGroup className='gap-5'>
-                        {expressionEditor}
-                      </FieldGroup>
-                    </TabsContent>
-                  </Tabs>
+                      <TabsContent value='tiered_expr' className='pt-0'>
+                        <FieldGroup className='gap-5'>
+                          {expressionEditor}
+                        </FieldGroup>
+                      </TabsContent>
+                    </Tabs>
                   )}
                 </TaskPluginPricingEditor>
               </FieldGroup>
@@ -1835,7 +1882,12 @@ export const ModelPricingEditorPanel = forwardRef<
                 className='bg-muted/20 min-w-0 rounded-lg border @min-[960px]/pricing-editor:sticky @min-[960px]/pricing-editor:top-0'
               >
                 <div className='border-b px-3 py-2'>
-                  <div className='text-sm font-medium'>{t('Preview')}</div>
+                  <div className='text-sm font-medium'>
+                    {!usesTaskPricing && pluginVariants?.length ? (
+                      <>{t('Ordinary OpenAI')} · </>
+                    ) : null}
+                    {t('Preview')}
+                  </div>
                 </div>
                 <div className='divide-y'>
                   {pricingMode === 'per-token' && !effectivePreview && (

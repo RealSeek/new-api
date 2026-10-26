@@ -129,7 +129,7 @@ func SearchRedemptions(keyword string, status string, startIdx int, num int) (re
 
 func GetRedemptionById(id int) (*Redemption, error) {
 	if id == 0 {
-		return nil, errors.New("id 为空！")
+		return nil, common.NewMessage("ID is empty")
 	}
 	redemption := Redemption{Id: id}
 	var err error = nil
@@ -140,32 +140,32 @@ func GetRedemptionById(id int) (*Redemption, error) {
 func Redeem(key string, userId int) (quota int, err error) {
 	quota, redemptionIds, err := redeemKeys([]string{key}, userId)
 	if err != nil {
-		common.SysError("redemption failed: " + err.Error())
+		common.SysError(common.LogText("redemption failed: %s", err.Error()))
 		return 0, ErrRedeemFailed
 	}
-	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(quota), redemptionIds[0]))
+	RecordLog(userId, LogTypeTopup, common.NewMessage("Topped up {{quota}} with a redemption code, code ID {{id}}", map[string]any{"quota": logger.FormatQuota(quota), "id": redemptionIds[0]}))
 	return quota, nil
 }
 
 func RedeemBatch(keys []string, userId int) (quota int, err error) {
 	quota, redemptionIds, err := redeemKeys(keys, userId)
 	if err != nil {
-		common.SysError("batch redemption failed: " + err.Error())
+		common.SysError(common.LogText("batch redemption failed: %s", err.Error()))
 		return 0, ErrRedeemFailed
 	}
-	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过 %d 个兑换码充值 %s，兑换码ID %v", len(redemptionIds), logger.LogQuota(quota), redemptionIds))
+	RecordLog(userId, LogTypeTopup, common.NewMessage("Topped up {{quota}} with {{count}} redemption codes, code IDs {{ids}}", map[string]any{"quota": logger.FormatQuota(quota), "count": len(redemptionIds), "ids": fmt.Sprint(redemptionIds)}))
 	return quota, nil
 }
 
 func redeemKeys(keys []string, userId int) (int, []int, error) {
 	if len(keys) == 0 {
-		return 0, nil, errors.New("未提供兑换码")
+		return 0, nil, errors.New("redemption code not provided")
 	}
 	if len(keys) > MaxBatchRedemptionCodes {
-		return 0, nil, errors.New("兑换码数量超过上限")
+		return 0, nil, errors.New("redemption code count exceeds limit")
 	}
 	if userId == 0 {
-		return 0, nil, errors.New("无效的 user id")
+		return 0, nil, errors.New("invalid user id")
 	}
 
 	normalizedKeys := make([]string, 0, len(keys))
@@ -173,10 +173,10 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 	for _, key := range keys {
 		key = strings.TrimSpace(key)
 		if key == "" {
-			return 0, nil, errors.New("未提供兑换码")
+			return 0, nil, errors.New("redemption code not provided")
 		}
 		if _, exists := seenKeys[key]; exists {
-			return 0, nil, errors.New("兑换码不能重复")
+			return 0, nil, errors.New("duplicate redemption codes")
 		}
 		seenKeys[key] = struct{}{}
 		normalizedKeys = append(normalizedKeys, key)
@@ -193,7 +193,7 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 			return err
 		}
 		if len(redemptions) != len(normalizedKeys) {
-			return errors.New("包含无效的兑换码")
+			return errors.New("invalid redemption code")
 		}
 
 		redemptionsByKey := make(map[string]*Redemption, len(redemptions))
@@ -207,21 +207,21 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 		for _, key := range normalizedKeys {
 			redemption, exists := redemptionsByKey[key]
 			if !exists {
-				return errors.New("包含无效的兑换码")
+				return errors.New("invalid redemption code")
 			}
 			if redemption.Status != common.RedemptionCodeStatusEnabled {
-				return errors.New("包含已使用的兑换码")
+				return errors.New("redemption code already used")
 			}
 			if redemption.ExpiredTime != 0 && redemption.ExpiredTime < now {
-				return errors.New("包含已过期的兑换码")
+				return errors.New("redemption code expired")
 			}
 			if redemption.Quota <= 0 {
-				return errors.New("兑换码额度无效")
+				return errors.New("invalid redemption quota")
 			}
 
 			totalQuota64 += int64(redemption.Quota)
 			if totalQuota64 > int64(common.MaxWalletQuota) {
-				return errors.New("兑换额度超过上限")
+				return errors.New("redemption quota exceeds limit")
 			}
 			ids = append(ids, redemption.Id)
 		}
@@ -229,7 +229,7 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 		// 只有一次性抢占全部兑换码状态成功的事务才能增加用户额度。
 		result := tx.Model(&Redemption{}).
 			Where("id IN ? AND status = ?", ids, common.RedemptionCodeStatusEnabled).
-			Updates(map[string]interface{}{
+			Updates(map[string]any{
 				"redeemed_time": now,
 				"status":        common.RedemptionCodeStatusUsed,
 				"used_user_id":  userId,
@@ -238,7 +238,7 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 			return result.Error
 		}
 		if result.RowsAffected != int64(len(ids)) {
-			return errors.New("兑换码已被并发使用")
+			return errors.New("redemption code already used")
 		}
 
 		totalQuota = int(totalQuota64)
@@ -248,7 +248,7 @@ func redeemKeys(keys []string, userId int) (int, []int, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	syncCreditUserQuotaCache(userId, totalQuota, "redemption")
+	syncCreditUserQuotaCache(userId, totalQuota, common.LogText("redemption"))
 	return totalQuota, redemptionIds, nil
 }
 
@@ -290,7 +290,7 @@ func (redemption *Redemption) Delete() error {
 
 func DeleteRedemptionById(id int) (err error) {
 	if id == 0 {
-		return errors.New("id 为空！")
+		return common.NewMessage("ID is empty")
 	}
 	redemption := Redemption{Id: id}
 	err = DB.Where(redemption).First(&redemption).Error

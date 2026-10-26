@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -208,7 +207,7 @@ func loadPricingAdvancedCustomConfigs(enableAbilities []AbilityWithChannel) map[
 	for _, channelID := range channelIDs {
 		channel, err := CacheGetChannel(channelID)
 		if err != nil {
-			common.SysLog(fmt.Sprintf("load advanced custom channel settings error: channel_id=%d, error=%v", channelID, err))
+			common.SysLog(common.LogText("load advanced custom channel settings error: channel_id=%d, error=%v", channelID, err))
 			continue
 		}
 		if channel.Type != constant.ChannelTypeAdvancedCustom {
@@ -270,7 +269,7 @@ func updatePricing() {
 	//modelRatios := common.GetModelRatios()
 	enableAbilities, err := GetAllEnableAbilityWithChannels()
 	if err != nil {
-		common.SysLog(fmt.Sprintf("GetAllEnableAbilityWithChannels error: %v", err))
+		common.SysLog(common.LogText("GetAllEnableAbilityWithChannels error: %v", err))
 		return
 	}
 	// 预加载模型元数据与供应商一次，避免循环查询
@@ -387,14 +386,14 @@ func updatePricing() {
 		if !loaded {
 			channel, err = CacheGetChannel(ability.ChannelId)
 			if err != nil {
-				common.SysLog(fmt.Sprintf("pricing video capabilities: channel_id=%d, error=%v", ability.ChannelId, err))
+				common.SysLog(common.LogText("pricing video capabilities: channel_id=%d, error=%v", ability.ChannelId, err))
 				continue
 			}
 			videoChannels[channel.Id] = channel
 			var settings dto.ChannelOtherSettings
 			if channel.OtherSettings != "" {
 				if err := common.UnmarshalJsonStr(channel.OtherSettings, &settings); err != nil {
-					common.SysLog(fmt.Sprintf("pricing video capabilities: channel_id=%d, invalid settings: %v", channel.Id, err))
+					common.SysLog(common.LogText("pricing video capabilities: channel_id=%d, invalid settings: %v", channel.Id, err))
 				}
 			}
 			videoSettings[channel.Id] = settings

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -88,6 +89,29 @@ func createMiddlewarePATUser(t *testing.T, username, token string) *model.User {
 	}
 	require.NoError(t, model.DB.Create(user).Error)
 	return user
+}
+
+// Read-only API key routes (/api/usage/token, /api/log/token) are called by
+// scripts, not the web console, so their errors are translated by the backend
+// in the language the request asks for.
+func TestTokenAuthReadOnlyTranslatesErrors(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	for _, tc := range []struct {
+		acceptLanguage string
+		want           string
+	}{
+		{"zh-CN", "未提供令牌"},
+		{"en-US", "Token not provided"},
+	} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/log/token", nil)
+		c.Request.Header.Set("Accept-Language", tc.acceptLanguage)
+		TokenAuthReadOnly()(c)
+		assert.True(t, c.IsAborted(), tc.acceptLanguage)
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code, tc.acceptLanguage)
+		assert.JSONEq(t, `{"success":false,"message":"`+tc.want+`"}`, recorder.Body.String(), tc.acceptLanguage)
+	}
 }
 
 func TestUserAuthAllowsOpaqueDottedPAT(t *testing.T) {
@@ -296,6 +320,8 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	require.NoError(t, model.DB.Model(admin).Update("role", common.RoleAdminUser).Error)
 	profile, _ := createMiddlewareScopedToken(t, admin.Id, 0, "profile:read")
 	channel, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()+3600, "channel:read")
+	modelRead, _ := createMiddlewareScopedToken(t, admin.Id, 0, "model:read")
+	modelWrite, _ := createMiddlewareScopedToken(t, admin.Id, 0, "model:write")
 	expired, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()-1, "profile:read")
 
 	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"id": c.GetInt("id")}) }
@@ -305,10 +331,13 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	router.GET("/api/undeclared", UserAuth(), ok)
 	router.GET("/api/channel/", AdminAuth(), RequirePermission(authz.ChannelRead), ok)
 	router.GET("/api/pricing", TryUserAuth(), ok)
+	router.GET("/api/models/channel-descriptions", AdminAuth(), ok)
+	router.PUT("/api/models/channel-descriptions", AdminAuth(), ok)
+	router.DELETE("/api/models/channel-descriptions/:id", AdminAuth(), ok)
 
 	for _, test := range []struct {
-		name, path, token, code, reason string
-		status                          int
+		name, path, token, code, reason, method string
+		status                                  int
 	}{
 		{name: "granted scope on a never expiring token", path: "/api/user/self", token: profile, status: http.StatusOK},
 		{name: "missing scope", path: "/api/user/self", token: channel, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
@@ -316,12 +345,25 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 		{name: "session route", path: "/api/user/access_tokens", token: profile, status: http.StatusForbidden, code: "AUTH_SESSION_REQUIRED", reason: "session_required"},
 		{name: "permission route with its scope", path: "/api/channel/", token: channel, status: http.StatusOK},
 		{name: "permission route without its scope", path: "/api/channel/", token: profile, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
+		{name: "model description read", path: "/api/models/channel-descriptions", token: modelRead, status: http.StatusOK},
+		{name: "model description read without scope", path: "/api/models/channel-descriptions", token: profile, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
+		{name: "model description write", method: http.MethodPut, path: "/api/models/channel-descriptions", token: modelWrite, status: http.StatusOK},
+		{name: "model description read cannot write", method: http.MethodPut, path: "/api/models/channel-descriptions", token: modelRead, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
+		{name: "model description delete", method: http.MethodDelete, path: "/api/models/channel-descriptions/1", token: modelWrite, status: http.StatusOK},
+		{name: "model description read cannot delete", method: http.MethodDelete, path: "/api/models/channel-descriptions/1", token: modelRead, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
 		{name: "expired token", path: "/api/user/self", token: expired, status: http.StatusUnauthorized, code: "ACCESS_TOKEN_EXPIRED", reason: "expired"},
 		{name: "legacy token before the deadline", path: "/api/user/self", token: legacy, status: http.StatusOK},
 		{name: "legacy token on a session route", path: "/api/user/access_tokens", token: legacy, status: http.StatusForbidden, code: "AUTH_SESSION_REQUIRED", reason: "session_required"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			response := middlewareBearerRequest(router, test.path, test.token)
+			method := test.method
+			if method == "" {
+				method = http.MethodGet
+			}
+			request := httptest.NewRequest(method, test.path, nil)
+			request.Header.Set("Authorization", "Bearer "+test.token)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
 			assert.Equal(t, test.status, response.Code, response.Body.String())
 			if test.code != "" {
 				assert.Contains(t, response.Body.String(), `"code":"`+test.code+`"`)

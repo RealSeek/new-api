@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Upstream returned no usage and input tokens could not be estimated; settled using the pre-consumed quota',
+  'Topped up {{quota}} with {{count}} redemption codes, code IDs {{ids}}',
   'Create a Python Hello World script and run it.',
   'I will create a small script, then check its output.',
   'Created hello.py and ran it successfully. The script prints Hello, world!',
@@ -32,6 +34,8 @@ export const STATIC_I18N_KEYS = [
   'Resume playback',
   'Replay demo',
   'Playback paused',
+  'The adjusted price is outside the supported range.',
+  'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',
   'This expression cannot be expanded into a price table. View the original expression below.',
   'This operation is only supported for vLLM or SGLang channels',
@@ -226,8 +230,12 @@ export const STATIC_I18N_KEYS = [
 
   // Pricing constants
   'Name',
-  'Price: Low to High',
-  'Price: High to Low',
+  'Input Price: Low to High',
+  'Input Price: High to Low',
+  'Output Price: Low to High',
+  'Output Price: High to Low',
+  'Per-request Price: Low to High',
+  'Per-request Price: High to Low',
   'All Models',
   'Token-based',
   'Per Request',
@@ -931,4 +939,8 @@ export const STATIC_I18N_KEYS = [
   'One gateway connects chat, coding, image and video APIs. Choose a model and group for your task; your existing client can use the same gateway.',
   'Hello! What would you like to build today?',
   'This local demo can answer setup questions, show Hello World code and calculate simple arithmetic. Open the workbench for a model response to your question.',
+  // Channel priority ordering API errors.
+  'Channel priorities changed. Refresh and try again.',
+  'Invalid channel priority move',
+  'Channel priority is outside the sortable range',
 ] as const

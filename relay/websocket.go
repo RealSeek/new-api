@@ -58,7 +58,7 @@ func WssHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.
 		return newAPIError
 	}
 	if info.ChannelType != constant.ChannelTypeRSGateway {
-		service.PostWssConsumeQuota(c, info, info.UpstreamModelName, usage.(*dto.RealtimeUsage), "")
+		service.PostWssConsumeQuota(c, info, info.UpstreamModelName, usage.(*dto.RealtimeUsage), nil)
 	}
 	return nil
 }

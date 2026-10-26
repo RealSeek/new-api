@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
@@ -116,10 +117,15 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		}
 	}
 
+	recentModels := c.QueryArray("recent_model")
+	if len(recentModels) > perfmetrics.MaxRecentModels {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
 	// Performance history is keyed by the group used at request time. Do not
 	// filter it by the currently configured group ratios: removing or renaming
 	// a group must not make existing model metrics disappear from the square.
-	result, err := perfmetrics.QuerySummaryAll(hours, nil)
+	result, err := perfmetrics.QuerySummaryAll(hours, nil, recentModels...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
