@@ -220,6 +220,7 @@ func freezeRSGatewayPriceInput(snapshot *billingexpr.BillingSnapshot, source *bi
 
 var (
 	rsGatewayBillingWorker         sync.Once
+	errRSGatewayReceiptPending     = errors.New("gateway receipt HTTP 202")
 	errRSGatewayReceiptUnavailable = errors.New("gateway receipt unavailable")
 )
 
@@ -257,11 +258,11 @@ func reconcileRSGatewayBillingQueue(ctx context.Context, immediate bool) error {
 	var pending []model.RSGatewaySettlement
 	query := model.DB.WithContext(ctx).Where("state = ? AND context_json <> ? AND lease_until <= ?", "pending", "", now)
 	if immediate {
-		query = query.Where("reconcile_after = ?", 0)
+		query = query.Where("reconcile_after = ?", 0).Order("lease_until, request_id")
 	} else {
-		query = query.Where("reconcile_after > ? AND reconcile_after <= ?", 0, now)
+		query = query.Where("reconcile_after > ? AND reconcile_after <= ?", 0, now).Order("reconcile_after, request_id")
 	}
-	if err := query.Order("reconcile_after, request_id").Limit(32).Find(&pending).Error; err != nil {
+	if err := query.Limit(32).Find(&pending).Error; err != nil {
 		return err
 	}
 	var polls errgroup.Group
@@ -287,15 +288,25 @@ func reconcileRSGatewayBillingQueue(ctx context.Context, immediate bool) error {
 				if errors.Is(err, errRSGatewayReceiptUnavailable) {
 					maxDelay = int64(time.Hour / time.Second)
 				}
-				delay := min(maxDelay, max(int64(15), (common.GetTimestamp()-record.CreatedAt)/4))
-				retryAt := common.GetTimestamp() + delay
+				now = common.GetTimestamp()
+				delay := min(maxDelay, max(int64(15), (now-record.CreatedAt)/4))
+				retryAt := now + delay
+				retryLease := int64(0)
+				if record.ReconcileAfter == 0 && !errors.Is(err, errRSGatewayReceiptUnavailable) {
+					if errors.Is(err, errRSGatewayReceiptPending) {
+						delay = 2
+					}
+					// Keep completed requests in the immediate queue. The lease
+					// makes the row visible again after its retry delay.
+					retryAt, retryLease = 0, now+delay
+				}
 				common.SysError(fmt.Sprintf("gateway billing request %s remains pending (retry in %ds): %v", record.RequestId, delay, err))
 				// A request may finish while its recovery poll is in flight. Keep
 				// the new immediate priority while releasing only our own lease.
 				return model.DB.Model(&model.RSGatewaySettlement{}).
 					Where("request_id = ? AND state = ? AND lease_until = ?", record.RequestId, "pending", lease).
 					Updates(map[string]any{
-						"lease_until":     int64(0),
+						"lease_until":     retryLease,
 						"reconcile_after": gorm.Expr("CASE WHEN reconcile_after = ? THEN ? ELSE reconcile_after END", record.ReconcileAfter, retryAt),
 					}).Error
 			}
@@ -352,6 +363,9 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusAccepted {
+			return errRSGatewayReceiptPending
+		}
 		if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 			return fmt.Errorf("%w: HTTP %d", errRSGatewayReceiptUnavailable, response.StatusCode)
 		}

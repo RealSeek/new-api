@@ -388,7 +388,7 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	responseStatus.Store(http.StatusNotFound)
 	blockRejectedReceipt.Store(true)
 	require.NoError(t, db.Model(&model.RSGatewaySettlement{}).Where("request_id = ?", requestID).
-		Update("reconcile_after", common.GetTimestamp()-1).Error)
+		Updates(map[string]any{"reconcile_after": common.GetTimestamp() - 1, "lease_until": int64(0)}).Error)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	rejectedReconcile := make(chan error, 1)
@@ -455,7 +455,32 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 		}
 	}))
 	t.Cleanup(func() { require.NoError(t, db.Callback().Create().Remove(callbackName)) })
-	responseStatus.Store(http.StatusOK)
+	receiptDeferred := make(chan struct{}, 1)
+	deferredCallbackName := "receipt-pending-" + requestID
+	require.NoError(t, db.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(deferredCallbackName, func(tx *gorm.DB) {
+		if tx.Error != nil || tx.Statement.Table != (model.RSGatewaySettlement{}).TableName() {
+			return
+		}
+		// Observe the retry update after its transaction releases the single
+		// test connection; settlement Save runs inside a larger transaction.
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if !ok || updates["reconcile_after"] == nil || updates["lease_until"] == nil {
+			return
+		}
+		var current model.RSGatewaySettlement
+		if !assert.NoError(t, db.First(&current, "request_id = ?", requestID).Error) {
+			return
+		}
+		if current.State == "pending" && current.ReconcileAfter == 0 &&
+			current.LeaseUntil > common.GetTimestamp() && current.LeaseUntil < heldLease {
+			select {
+			case receiptDeferred <- struct{}{}:
+			default:
+			}
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(deferredCallbackName)) })
+	responseStatus.Store(http.StatusAccepted)
 	QueueRSGatewayReceipt(requestID)
 	reconciled := make(chan error, 2)
 	var reconcileWorkers sync.WaitGroup
@@ -464,14 +489,40 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 		releaseHistoricalOnce.Do(func() { close(releaseHistoricalReceipts) })
 		reconcileWorkers.Wait()
 	})
-	for range 2 {
-		reconcileWorkers.Go(func() { reconciled <- ReconcileRSGatewayBillingOnce(ctx) })
-	}
+	reconcileWorkers.Go(func() { reconciled <- ReconcileRSGatewayBillingOnce(ctx) })
 	select {
 	case <-historicalReceiptEntered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the historical backlog did not reach the receipt server")
 	}
+	select {
+	case <-receiptDeferred:
+	case <-time.After(5 * time.Second):
+		t.Fatal("an unfinished fresh receipt was not scheduled for another fast poll")
+	}
+	require.NoError(t, db.First(&ledger, "request_id = ?", requestID).Error)
+	assert.Equal(t, "pending", ledger.State)
+	assert.Zero(t, ledger.ReconcileAfter, "HTTP 202 must retain priority over the historical backlog")
+	assert.Greater(t, ledger.LeaseUntil, common.GetTimestamp(), "an unfinished receipt waits for its next fast poll")
+	assert.Less(t, ledger.LeaseUntil, heldLease, "the retry delay must be shorter than an active claim")
+	assert.Empty(t, ledger.ReceiptHash)
+	var pendingLogCount int64
+	require.NoError(t, db.Model(&model.Log{}).Where("request_id = ?", requestID).Count(&pendingLogCount).Error)
+	assert.Zero(t, pendingLogCount)
+	require.NoError(t, db.First(&user, user.Id).Error)
+	require.NoError(t, db.First(&token, token.Id).Error)
+	assert.Equal(t, initial-reserved, token.RemainQuota, "an unfinished receipt must retain only the reservation")
+	if funding == "wallet" {
+		assert.Equal(t, initial-reserved, user.Quota)
+	} else {
+		assert.Equal(t, initial, user.Quota)
+		require.NoError(t, db.First(&sub, sub.Id).Error)
+		assert.EqualValues(t, reserved, sub.AmountUsed)
+	}
+	responseStatus.Store(http.StatusOK)
+	require.NoError(t, db.Model(&model.RSGatewaySettlement{}).Where("request_id = ?", requestID).
+		Update("lease_until", 0).Error)
+	reconcileWorkers.Go(func() { reconciled <- ReconcileRSGatewayBillingOnce(ctx) })
 	select {
 	case <-consumeLogWritten:
 	case <-time.After(5 * time.Second):
