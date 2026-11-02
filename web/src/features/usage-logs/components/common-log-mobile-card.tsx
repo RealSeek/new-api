@@ -27,12 +27,22 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { toIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import dayjs from '@/lib/dayjs'
-import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
+import {
+  formatLogQuota,
+  formatNumber,
+  formatTimestampToDate,
+} from '@/lib/format'
 
 import type { UsageLog } from '../data/schema'
-import { formatModelName, logTokenName, parseLogOther } from '../lib/format'
+import {
+  formatModelName,
+  getTokenUsageBreakdown,
+  logTokenName,
+  parseLogOther,
+} from '../lib/format'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
@@ -40,7 +50,6 @@ import {
 } from '../lib/utils'
 import { ModelBadge, ResponseModelDetails } from './model-badge'
 import { StreamTpsCell, TimingMetricsCell } from './timing-metrics-cell'
-import { TokenUsageDisplay } from './token-usage-display'
 import { useUsageLogsContext } from './usage-logs-provider'
 
 type FieldName =
@@ -63,11 +72,13 @@ export function CommonLogMobileCard<TData>(props: {
   log: UsageLog
   cells: Map<string, Cell<TData, unknown>>
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const context = useUsageLogsContext()
   const [selectedField, setSelectedField] = useState<FieldName | null>(null)
   const log = props.log
   const other = parseLogOther(log.other)
+  const usage = getTokenUsageBreakdown(log, other)
   const displayable = isDisplayableLogType(log.type)
   const timing = isTimingLogType(log.type)
   const model = formatModelName(log)
@@ -277,8 +288,39 @@ export function CommonLogMobileCard<TData>(props: {
             )}
         </div>
       )}
-      {displayable && props.cells.has('prompt_tokens') && (
-        <TokenUsageDisplay log={log} hideEmpty />
+      {displayable && props.cells.has('prompt_tokens') && usage.hasUsage && (
+        <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs [overflow-wrap:anywhere]'>
+          <span
+            aria-label={`${t('Regular Input')}: ${formatNumber(usage.regularInput, locale)}`}
+          >
+            {t('Input')}{' '}
+            <span className='text-foreground tabular-nums'>
+              {formatNumber(usage.regularInput, locale)}
+            </span>
+          </span>
+          <span
+            aria-label={`${t('Output')}: ${formatNumber(usage.output, locale)}`}
+          >
+            {t('Output')}{' '}
+            <span className='text-foreground tabular-nums'>
+              {formatNumber(usage.output, locale)}
+            </span>
+          </span>
+          {usage.cacheRead > 0 && (
+            <span
+              aria-label={`${t('Cache Read')}: ${formatNumber(usage.cacheRead, locale)}`}
+            >
+              {t('Cache')} ↓ {formatNumber(usage.cacheRead, locale)}
+            </span>
+          )}
+          {usage.cacheWrite > 0 && (
+            <span
+              aria-label={`${t('Cache Write')}: ${formatNumber(usage.cacheWrite, locale)}`}
+            >
+              {t('Cache')} ↑ {formatNumber(usage.cacheWrite, locale)}
+            </span>
+          )}
+        </div>
       )}
       {contentCell && (
         <div className='relative min-w-0 border-t pt-2 [&_button]:min-h-8 [&_button]:w-full [&_button]:max-w-full [&_button]:pr-5 [&_button]:text-sm [&_button>span]:line-clamp-2 [&_button>span]:[overflow-wrap:anywhere] [&_button>span]:whitespace-normal'>

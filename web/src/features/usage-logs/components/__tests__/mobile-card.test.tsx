@@ -235,47 +235,57 @@ it('respects hidden columns and omits admin fields in the self view', () => {
   expect(screen.queryByText('enterprise-production')).not.toBeInTheDocument()
 })
 
-it.each([false, true])(
-  'keeps regular input and labeled cache quantities separate (desktop=%s)',
-  async (desktop) => {
-    const user = userEvent.setup()
-    renderLogs({ desktop })
-    const tokens = screen.getByRole('button', { name: 'Token usage' })
-    expect(
-      within(tokens).getByLabelText('Regular Input: 700')
-    ).toHaveTextContent('700')
-    expect(within(tokens).getByLabelText('Output: 800')).toHaveTextContent(
-      '800'
-    )
-    const read = within(tokens).getByText('Cache Read').parentElement
-    const write = within(tokens).getByText('Cache Write').parentElement
-    expect(read).toHaveTextContent('300')
-    expect(write).toHaveTextContent('200')
-    expect(read).toHaveClass('text-muted-foreground/60')
-    expect(write).toHaveClass('text-muted-foreground/60')
-    expect(tokens.querySelector('svg')).not.toBeInTheDocument()
-    expect(read?.compareDocumentPosition(write as HTMLElement)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    )
-    expect(read?.parentElement).toHaveClass('flex-wrap')
-    expect(tokens).toHaveClass('max-w-full', 'items-start')
-    await user.hover(tokens)
-    const tooltip = await screen.findByRole('tooltip')
-    expect(tooltip).toHaveTextContent(
-      'Total Input = Regular Input + Cache Read + Cache Write'
-    )
-    expect(tooltip).toHaveTextContent('1,200 = 700 + 300 + 200')
-    expect(tooltip).toHaveTextContent(
-      'Unreused Input = Total Input - Cache Read = Regular Input + Cache Write'
-    )
-    expect(tooltip).toHaveTextContent('900 = 1,200 - 300 = 700 + 200')
-    expect(tooltip).toHaveTextContent('Cache hits = Cache Read')
-    await user.keyboard('{Escape}')
-    await waitFor(() =>
-      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
-    )
-  }
-)
+it('keeps the desktop token cell as compact numbers without new visible labels or buttons', () => {
+  renderLogs({ desktop: true })
+  const main = screen.getByLabelText('Regular Input: 700').parentElement
+  expect(main).toHaveTextContent('700 / 800')
+  expect(main).toHaveClass(
+    'font-mono',
+    'text-xs',
+    'font-medium',
+    'tabular-nums',
+    'whitespace-nowrap'
+  )
+  expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  expect(screen.queryByText('Regular Input')).not.toBeInTheDocument()
+  expect(screen.queryByText('Output')).not.toBeInTheDocument()
+  const read = screen.getByLabelText('Cache Read: 300')
+  const write = screen.getByLabelText('Cache Write: 200')
+  expect(read).toHaveTextContent('Cache↓ 300')
+  expect(write).toHaveTextContent('↑ 200')
+  expect(read.parentElement).toHaveClass(
+    'flex',
+    'items-center',
+    'gap-1',
+    'text-[11px]'
+  )
+  expect(read).toHaveClass('text-muted-foreground/60')
+  expect(write).toHaveClass('text-muted-foreground/60')
+})
+
+it('retains the original mobile input output and cache arrows in a wrapping row', () => {
+  renderLogs()
+  const input = screen.getByLabelText('Regular Input: 700')
+  expect(input).toHaveTextContent('Input 700')
+  expect(screen.getByLabelText('Output: 800')).toHaveTextContent('Output 800')
+  expect(screen.getByLabelText('Cache Read: 300')).toHaveTextContent(
+    'Cache ↓ 300'
+  )
+  expect(screen.getByLabelText('Cache Write: 200')).toHaveTextContent(
+    'Cache ↑ 200'
+  )
+  expect(input.parentElement).toHaveClass(
+    'flex',
+    'flex-wrap',
+    'gap-x-3',
+    'gap-y-1',
+    'text-xs'
+  )
+  expect(
+    screen.queryByRole('button', { name: 'Token usage' })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('Regular Input')).not.toBeInTheDocument()
+})
 
 it.each([
   {
@@ -284,7 +294,6 @@ it.each([
     read: 0,
     write: 1713,
     ordinary: 4,
-    unreused: 1717,
   },
   {
     total: 21038,
@@ -292,7 +301,6 @@ it.each([
     read: 1827,
     write: 19207,
     ordinary: 4,
-    unreused: 19211,
   },
   {
     total: 67743,
@@ -300,11 +308,10 @@ it.each([
     read: 60628,
     write: 7113,
     ordinary: 2,
-    unreused: 7115,
   },
 ])(
   'shows $ordinary regular input from total $total without changing cache counts',
-  async ({ total, output, read, write, ordinary, unreused }) => {
+  ({ total, output, read, write, ordinary }) => {
     renderLogs({
       desktop: true,
       logs: [
@@ -325,15 +332,9 @@ it.each([
     if (read === 0) {
       expect(screen.queryByText('Cache Read')).not.toBeInTheDocument()
     }
-    expect(screen.getByText('Cache Write').parentElement).toHaveTextContent(
-      write.toLocaleString('en-US')
-    )
-    await userEvent
-      .setup()
-      .hover(screen.getByRole('button', { name: 'Token usage' }))
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      `${unreused.toLocaleString('en-US')} = ${total.toLocaleString('en-US')} - ${read.toLocaleString('en-US')} = ${ordinary} + ${write.toLocaleString('en-US')}`
-    )
+    expect(
+      screen.getByLabelText(`Cache Write: ${write.toLocaleString('en-US')}`)
+    ).toHaveTextContent(write.toLocaleString('en-US'))
   }
 )
 
@@ -364,8 +365,7 @@ it.each([
         },
       ],
     })
-    const tokens = screen.getByRole('button', { name: 'Token usage' })
-    expect(within(tokens).getByLabelText('Regular Input: 4')).toBeVisible()
+    expect(screen.getByLabelText('Regular Input: 4')).toBeVisible()
   }
 )
 
@@ -397,9 +397,7 @@ it.each([
       logs: [{ ...log, prompt_tokens: 52, other: JSON.stringify(cache) }],
     })
     expect(screen.getByLabelText('Regular Input: 2')).toBeVisible()
-    expect(screen.getByText('Cache Write').parentElement).toHaveTextContent(
-      '50'
-    )
+    expect(screen.getByLabelText('Cache Write: 50')).toHaveTextContent('50')
   }
 )
 
@@ -419,10 +417,8 @@ it('shows a fully cached Anthropic request even when ordinary input and output a
     ],
   })
   expect(screen.getByLabelText('Regular Input: 0')).toBeVisible()
-  expect(screen.getByText('Cache Read').parentElement).toHaveTextContent(
-    '1,827'
-  )
-  expect(screen.getByText('Cache Write').parentElement).toHaveTextContent(
+  expect(screen.getByLabelText('Cache Read: 1,827')).toHaveTextContent('1,827')
+  expect(screen.getByLabelText('Cache Write: 19,207')).toHaveTextContent(
     '19,207'
   )
 })
