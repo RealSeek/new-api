@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -255,6 +256,15 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	key := "gateway-receipt-test-key"
 	var responseStatus atomic.Int64
 	responseStatus.Store(http.StatusAccepted)
+	var requestCount atomic.Int64
+	var blockRejectedReceipt atomic.Bool
+	rejectedReceiptEntered := make(chan struct{}, 1)
+	releaseRejectedReceipt := make(chan struct{})
+	var releaseRejectedOnce sync.Once
+	historicalPrefix := "old-" + funding + "-"
+	historicalReceiptEntered := make(chan struct{}, 40)
+	releaseHistoricalReceipts := make(chan struct{})
+	var releaseHistoricalOnce sync.Once
 	cacheIncluded := true
 	firstByteMs, winnerDurationMs, hedgeDurationMs := int64(250), int64(7500), int64(9200)
 	receipt := RSGatewayBillingReceipt{Version: 1, RequestID: requestID, Complete: true, Success: true, Attempts: []RSGatewayBillingAttempt{
@@ -265,17 +275,42 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
+		if strings.HasPrefix(r.URL.Path, "/internal/new-api/billing/"+historicalPrefix) {
+			historicalReceiptEntered <- struct{}{}
+			select {
+			case <-releaseHistoricalReceipts:
+			case <-r.Context().Done():
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		assert.Equal(t, "/internal/new-api/billing/"+requestID, r.URL.Path)
+		requestCount.Add(1)
 		if status := int(responseStatus.Load()); status != http.StatusOK {
+			if blockRejectedReceipt.Load() {
+				rejectedReceiptEntered <- struct{}{}
+				select {
+				case <-releaseRejectedReceipt:
+				case <-r.Context().Done():
+					return
+				}
+			}
 			w.WriteHeader(status)
 			return
 		}
 		body, err := common.Marshal(receipt)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		releaseRejectedOnce.Do(func() { close(releaseRejectedReceipt) })
+		releaseHistoricalOnce.Do(func() { close(releaseHistoricalReceipts) })
+	})
 	const initial, reserved, want = 10000, 20, 190
 	user := model.User{Username: "receipt_" + strings.ReplaceAll(requestID, "-", ""), Quota: initial}
 	user.SetSetting(dto.UserSetting{RecordIpLog: true})
@@ -351,16 +386,118 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	}
 	assert.Empty(t, ledger.ReceiptHash)
 	responseStatus.Store(http.StatusNotFound)
+	blockRejectedReceipt.Store(true)
+	require.NoError(t, db.Model(&model.RSGatewaySettlement{}).Where("request_id = ?", requestID).
+		Update("reconcile_after", common.GetTimestamp()-1).Error)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	rejectedReconcile := make(chan error, 1)
+	var rejectedWorker sync.WaitGroup
+	rejectedWorker.Go(func() { rejectedReconcile <- ReconcileRSGatewayBillingOnce(ctx) })
+	t.Cleanup(func() {
+		cancel()
+		releaseRejectedOnce.Do(func() { close(releaseRejectedReceipt) })
+		rejectedWorker.Wait()
+	})
+	select {
+	case <-rejectedReceiptEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the due retry did not reach the receipt server")
+	}
+	require.NoError(t, db.First(&ledger, "request_id = ?", requestID).Error)
+	heldLease := ledger.LeaseUntil
+	require.Greater(t, heldLease, common.GetTimestamp())
+	requestsBeforePromotion := requestCount.Load()
 	QueueRSGatewayReceipt(requestID)
-	require.NoError(t, ReconcileRSGatewayBillingOnce(context.Background()))
+	require.NoError(t, db.First(&ledger, "request_id = ?", requestID).Error)
+	assert.Zero(t, ledger.ReconcileAfter, "request completion promotes a retry to immediate reconciliation")
+	assert.Equal(t, heldLease, ledger.LeaseUntil, "promotion must not revoke an active worker's lease")
+	require.NoError(t, ReconcileRSGatewayBillingOnce(ctx))
+	assert.Equal(t, requestsBeforePromotion, requestCount.Load(), "another worker must not poll the leased request")
+	releaseRejectedOnce.Do(func() { close(releaseRejectedReceipt) })
+	select {
+	case err := <-rejectedReconcile:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the rejected reconciliation did not release its lease")
+	}
+	blockRejectedReceipt.Store(false)
 	require.NoError(t, db.First(&ledger, "request_id = ?", requestID).Error)
 	assert.Equal(t, "pending", ledger.State, "404 cannot erase a bill or refund a reservation")
+	assert.Zero(t, ledger.ReconcileAfter, "an older failed poll must preserve a concurrent completion notification")
+	assert.Zero(t, ledger.LeaseUntil)
 	// Only persisted context remains. Changing live pricing cannot change this bill.
 	info.Billing, info.TieredBillingSnapshot = nil, nil
+	// A backlog larger than a polling page must not delay a completed request.
+	// Keep its HTTP calls blocked until the fresh request's consume log exists.
+	historical := make([]model.RSGatewaySettlement, 40)
+	historicalIDs := make([]string, len(historical))
+	for i := range historical {
+		historicalIDs[i] = historicalPrefix + common.NewRequestId()
+		historical[i] = model.RSGatewaySettlement{
+			RequestId: historicalIDs[i], UserId: user.Id, ChannelId: channel.Id,
+			State: "pending", ContextJSON: ledger.ContextJSON,
+			CreatedAt: common.GetTimestamp() - 24*60*60, ReconcileAfter: common.GetTimestamp() - 60,
+		}
+	}
+	require.NoError(t, db.Create(&historical).Error)
+	t.Cleanup(func() {
+		require.NoError(t, db.Where("request_id IN ?", historicalIDs).Delete(&model.RSGatewaySettlement{}).Error)
+	})
+	consumeLogWritten := make(chan struct{}, 1)
+	callbackName := "receipt-scheduling-" + requestID
+	require.NoError(t, db.Callback().Create().After("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if log, ok := tx.Statement.Dest.(*model.Log); ok && log.RequestId == requestID && tx.Error == nil {
+			select {
+			case consumeLogWritten <- struct{}{}:
+			default:
+			}
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, db.Callback().Create().Remove(callbackName)) })
 	responseStatus.Store(http.StatusOK)
 	QueueRSGatewayReceipt(requestID)
+	reconciled := make(chan error, 2)
+	var reconcileWorkers sync.WaitGroup
+	t.Cleanup(func() {
+		cancel()
+		releaseHistoricalOnce.Do(func() { close(releaseHistoricalReceipts) })
+		reconcileWorkers.Wait()
+	})
+	for range 2 {
+		reconcileWorkers.Go(func() { reconciled <- ReconcileRSGatewayBillingOnce(ctx) })
+	}
+	select {
+	case <-historicalReceiptEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the historical backlog did not reach the receipt server")
+	}
+	select {
+	case <-consumeLogWritten:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a blocked historical receipt prevented the completed request's consume log")
+	}
+	var freshLogCount int64
+	require.NoError(t, db.Model(&model.Log{}).Where("request_id = ?", requestID).Count(&freshLogCount).Error)
+	assert.EqualValues(t, 1, freshLogCount)
+	releaseHistoricalOnce.Do(func() { close(releaseHistoricalReceipts) })
+	for range 2 {
+		select {
+		case err := <-reconciled:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("reconciliation did not finish after historical receipts were released")
+		}
+	}
 	require.NoError(t, ReconcileRSGatewayBillingOnce(context.Background()))
-	require.NoError(t, ReconcileRSGatewayBillingOnce(context.Background()))
+	var remainingHistorical int64
+	require.NoError(t, db.Model(&model.RSGatewaySettlement{}).Where("request_id IN ? AND state = ?", historicalIDs, "pending").Count(&remainingHistorical).Error)
+	assert.EqualValues(t, len(historical), remainingHistorical, "historical errors must not discard charges or refund reservations")
+	var deferredHistorical int64
+	require.NoError(t, db.Model(&model.RSGatewaySettlement{}).
+		Where("request_id IN ? AND reconcile_after > ? AND lease_until = ?", historicalIDs, common.GetTimestamp(), 0).
+		Count(&deferredHistorical).Error)
+	assert.EqualValues(t, len(historical), deferredHistorical, "old failures release their leases and back off instead of filling every polling round")
 	require.NoError(t, db.First(&ledger, "request_id = ?", requestID).Error)
 	assert.Equal(t, "settled", ledger.State)
 	assert.EqualValues(t, want, ledger.Quota)

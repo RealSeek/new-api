@@ -26,6 +26,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/tidwall/gjson"
+	"golang.org/x/sync/errgroup"
+	"gorm.io/gorm"
 )
 
 // RSGatewayBillingReceipt is an immutable, owner-authenticated report of the
@@ -145,9 +147,10 @@ func PrepareRSGatewayReceipt(c *gin.Context, info *relaycommon.RelayInfo) error 
 	return nil
 }
 
-// QueueRSGatewayReceipt does not retain a Gin context or wait on client I/O.
+// Zero marks a completed request for the immediate queue. Its priority survives
+// process restarts and does not compete with historical receipt retries.
 func QueueRSGatewayReceipt(requestID string) {
-	if err := model.DB.Model(&model.RSGatewaySettlement{}).Where("request_id = ? AND state = ?", requestID, "pending").Update("reconcile_after", common.GetTimestamp()).Error; err != nil {
+	if err := model.DB.Model(&model.RSGatewaySettlement{}).Where("request_id = ? AND state = ?", requestID, "pending").Update("reconcile_after", int64(0)).Error; err != nil {
 		common.SysError(fmt.Sprintf("gateway billing request %s queue: %v", requestID, err))
 	}
 }
@@ -215,19 +218,26 @@ func freezeRSGatewayPriceInput(snapshot *billingexpr.BillingSnapshot, source *bi
 	return probes.frozen, probes.err
 }
 
-var rsGatewayBillingWorker sync.Once
+var (
+	rsGatewayBillingWorker         sync.Once
+	errRSGatewayReceiptUnavailable = errors.New("gateway receipt unavailable")
+)
 
 func StartRSGatewayBillingReconciler() {
 	rsGatewayBillingWorker.Do(func() {
-		go func() {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
-				if err := ReconcileRSGatewayBillingOnce(context.Background()); err != nil {
-					common.SysError("gateway billing reconcile: " + err.Error())
+		// Independent queues keep slow historical polls from delaying requests
+		// that have just finished. Each queue bounds its own concurrency.
+		for _, immediate := range []bool{true, false} {
+			go func() {
+				ticker := time.NewTicker(2 * time.Second)
+				defer ticker.Stop()
+				for range ticker.C {
+					if err := reconcileRSGatewayBillingQueue(context.Background(), immediate); err != nil {
+						common.SysError("gateway billing reconcile: " + err.Error())
+					}
 				}
-			}
-		}()
+			}()
+		}
 	})
 }
 
@@ -235,32 +245,64 @@ func StartRSGatewayBillingReconciler() {
 // database tests. A lease bounds concurrent polling; the ledger transaction is
 // the authority for duplicate delivery and money adjustments.
 func ReconcileRSGatewayBillingOnce(ctx context.Context) error {
+	var queues errgroup.Group
+	for _, immediate := range []bool{true, false} {
+		queues.Go(func() error { return reconcileRSGatewayBillingQueue(ctx, immediate) })
+	}
+	return queues.Wait()
+}
+
+func reconcileRSGatewayBillingQueue(ctx context.Context, immediate bool) error {
 	now := common.GetTimestamp()
 	var pending []model.RSGatewaySettlement
-	if err := model.DB.Where("state = ? AND context_json <> ? AND reconcile_after <= ? AND lease_until <= ?", "pending", "", now, now).Order("reconcile_after, request_id").Limit(32).Find(&pending).Error; err != nil {
+	query := model.DB.WithContext(ctx).Where("state = ? AND context_json <> ? AND lease_until <= ?", "pending", "", now)
+	if immediate {
+		query = query.Where("reconcile_after = ?", 0)
+	} else {
+		query = query.Where("reconcile_after > ? AND reconcile_after <= ?", 0, now)
+	}
+	if err := query.Order("reconcile_after, request_id").Limit(32).Find(&pending).Error; err != nil {
 		return err
 	}
+	var polls errgroup.Group
+	polls.SetLimit(4)
 	for _, record := range pending {
-		now = common.GetTimestamp()
-		lease := now + 60
-		claimed := model.DB.Model(&model.RSGatewaySettlement{}).Where("request_id = ? AND state = ? AND lease_until <= ?", record.RequestId, "pending", now).Update("lease_until", lease)
-		if claimed.Error != nil {
-			return claimed.Error
-		}
-		if claimed.RowsAffected != 1 {
-			continue
-		}
-		record.LeaseUntil = lease
-		if err := reconcileRSGatewayReceipt(ctx, record); err != nil {
-			common.SysError(fmt.Sprintf("gateway billing request %s remains pending: %v", record.RequestId, err))
-			if updateErr := model.DB.Model(&model.RSGatewaySettlement{}).Where("request_id = ? AND state = ? AND lease_until = ?", record.RequestId, "pending", lease).Updates(map[string]any{
-				"lease_until": int64(0), "reconcile_after": common.GetTimestamp() + 15,
-			}).Error; updateErr != nil {
-				return updateErr
+		polls.Go(func() error {
+			now := common.GetTimestamp()
+			lease := now + 60
+			claimed := model.DB.WithContext(ctx).Model(&model.RSGatewaySettlement{}).
+				Where("request_id = ? AND state = ? AND reconcile_after = ? AND lease_until <= ?", record.RequestId, "pending", record.ReconcileAfter, now).
+				Update("lease_until", lease)
+			if claimed.Error != nil {
+				return claimed.Error
 			}
-		}
+			if claimed.RowsAffected != 1 {
+				return nil
+			}
+			record.LeaseUntil = lease
+			if err := reconcileRSGatewayReceipt(ctx, record); err != nil {
+				// Old unresolved records remain payable, but should not consume a
+				// polling slot every fifteen seconds indefinitely.
+				maxDelay := int64(5 * time.Minute / time.Second)
+				if errors.Is(err, errRSGatewayReceiptUnavailable) {
+					maxDelay = int64(time.Hour / time.Second)
+				}
+				delay := min(maxDelay, max(int64(15), (common.GetTimestamp()-record.CreatedAt)/4))
+				retryAt := common.GetTimestamp() + delay
+				common.SysError(fmt.Sprintf("gateway billing request %s remains pending (retry in %ds): %v", record.RequestId, delay, err))
+				// A request may finish while its recovery poll is in flight. Keep
+				// the new immediate priority while releasing only our own lease.
+				return model.DB.Model(&model.RSGatewaySettlement{}).
+					Where("request_id = ? AND state = ? AND lease_until = ?", record.RequestId, "pending", lease).
+					Updates(map[string]any{
+						"lease_until":     int64(0),
+						"reconcile_after": gorm.Expr("CASE WHEN reconcile_after = ? THEN ? ELSE reconcile_after END", record.ReconcileAfter, retryAt),
+					}).Error
+			}
+			return nil
+		})
 	}
-	return nil
+	return polls.Wait()
 }
 
 func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettlement) error {
@@ -273,7 +315,7 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 		return err
 	}
 	if channel.Type != constant.ChannelTypeRSGateway {
-		return errors.New("original gateway channel type changed")
+		return fmt.Errorf("%w: original gateway channel type changed", errRSGatewayReceiptUnavailable)
 	}
 	var key string
 	keys := channel.GetKeys()
@@ -287,7 +329,7 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 		}
 	}
 	if key == "" {
-		return errors.New("original gateway channel key is unavailable")
+		return fmt.Errorf("%w: original gateway channel key is unavailable", errRSGatewayReceiptUnavailable)
 	}
 	client, err := GetHttpClientWithProxySettings(channel.GetSetting().Proxy, channel.GetSetting())
 	if err != nil {
@@ -310,6 +352,9 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("%w: HTTP %d", errRSGatewayReceiptUnavailable, response.StatusCode)
+		}
 		return fmt.Errorf("gateway receipt HTTP %d", response.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
