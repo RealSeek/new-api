@@ -19,9 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, cleanup, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import i18next from 'i18next'
+import i18next, { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -32,6 +34,10 @@ import { DynamicPricingBreakdown } from '../components/dynamic-pricing-breakdown
 import { ModelCard } from '../components/model-card'
 import { ModelDetailsContent } from '../components/model-details'
 import { ModelPriceCell } from '../components/model-price-cell'
+import {
+  buildRequestRuleExpr,
+  tryParseRequestRuleExpr,
+} from '../lib/billing-expr'
 import { getTaskPricingDisplayTiers } from '../lib/task-matrix-display'
 import {
   getImageResolutionPriceRows,
@@ -75,6 +81,99 @@ it('renders weekday and hour conditions as time windows instead of expression so
     ).length
   ).toBeGreaterThan(0)
   expect(screen.queryByText(/weekday\(/)).not.toBeInTheDocument()
+})
+
+it('shows the weekday half-open bound as Monday through Friday in both multiplier rows', async () => {
+  const translations = createInstance()
+  await translations.init({ lng: 'zh', resources: { zh } })
+  const morning =
+    'hour("Asia/Shanghai") >= 9 && hour("Asia/Shanghai") < 12 && weekday("Asia/Shanghai") >= 1 && weekday("Asia/Shanghai") < 6'
+  const afternoon =
+    'hour("Asia/Shanghai") >= 14 && hour("Asia/Shanghai") < 18 && weekday("Asia/Shanghai") >= 1 && weekday("Asia/Shanghai") < 6'
+  const rules = `(${morning} ? 2 : 1) * (${afternoon} ? 2 : 1)`
+  render(
+    <I18nextProvider i18n={translations}>
+      <DynamicPricingBreakdown
+        billingExpr={`(tier("base", p * 3 + c * 9)) * ${rules}`}
+      />
+    </I18nextProvider>
+  )
+  for (const label of [
+    '周一至周五 09:00至12:00（Asia/Shanghai）',
+    '周一至周五 14:00至18:00（Asia/Shanghai）',
+  ]) {
+    const text = screen.getByText(label)
+    expect(text).toBeVisible()
+    const row = text.closest('li')
+    expect(row).toHaveClass(
+      'flex',
+      'items-center',
+      'justify-between',
+      'gap-3',
+      'px-3',
+      'py-2'
+    )
+    expect(within(row as HTMLElement).getByText('2x')).toHaveClass(
+      'bg-orange-100',
+      'shrink-0'
+    )
+  }
+  expect(screen.queryByText(/星期.*:00/)).not.toBeInTheDocument()
+  expect(buildRequestRuleExpr(tryParseRequestRuleExpr(rules) ?? [])).toBe(rules)
+})
+
+it.each([
+  ['weekday("UTC") >= 6 || weekday("UTC") < 1', 'Sat or Sun (UTC)'],
+  ['weekday("UTC") == 1', 'Mon (UTC)'],
+  ['weekday("UTC") >= 1', 'Mon–Sat (UTC)'],
+  ['weekday("UTC") < 6', 'Sun–Fri (UTC)'],
+  ['weekday("UTC") > 1 && weekday("UTC") <= 5', 'Tue–Fri (UTC)'],
+  ['hour("UTC") >= 21 || hour("UTC") < 6', '21:00–24:00 or 00:00–06:00 (UTC)'],
+])(
+  'formats request multiplier condition %s without calendar values turning into hours',
+  (condition, label) => {
+    render(
+      <DynamicPricingBreakdown
+        billingExpr={`(tier("base", p * 3 + c * 9)) * (${condition} ? 2 : 1)`}
+      />
+    )
+    expect(screen.getByText(label)).toBeVisible()
+    expect(screen.getByText('2x')).toBeVisible()
+  }
+)
+
+it.each([
+  '(weekday("UTC") >= 6 || weekday("UTC") < 1) && param("service_tier") == "fast"',
+  'weekday("UTC") >= 1 && weekday("UTC") < 6 && param("service_tier") == "fast"',
+  'weekday("UTC") >= 1 || weekday("UTC") < 6',
+])('keeps original AND/OR semantics when displaying %s', (condition) => {
+  render(
+    <DynamicPricingBreakdown
+      billingExpr={`(tier("base", p * 3 + c * 9)) * (${condition} ? 2 : 1)`}
+    />
+  )
+  if (condition.includes('param(')) {
+    expect(screen.getByText(condition)).toBeVisible()
+  } else {
+    expect(screen.getByText('Mon–Sat or Sun–Fri (UTC)')).toBeVisible()
+  }
+  expect(screen.queryByText(/Weekday.*:00/)).not.toBeInTheDocument()
+})
+
+it('preserves friendly parameter and header labels for multiplier conditions without time probes', () => {
+  const condition =
+    'param("service_tier") == "fast" && header("x-route") == "priority"'
+  render(
+    <DynamicPricingBreakdown
+      billingExpr={`(tier("base", p * 3 + c * 9)) * (${condition} ? 2 : 1)`}
+    />
+  )
+  expect(
+    screen.getByText(
+      'Body param service_tier = fast && Header x-route = priority'
+    )
+  ).toBeVisible()
+  expect(screen.getByText('2x')).toBeVisible()
 })
 
 const model: PricingModel = {

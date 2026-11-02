@@ -28,19 +28,15 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import {
   BILLING_PRICING_VARS,
   MATCH_CONTAINS,
-  MATCH_EQ,
   MATCH_EXISTS,
-  MATCH_GTE,
-  MATCH_LT,
-  MATCH_RANGE,
   SOURCE_TIME,
   parseTiersFromExpr,
   requestRuleGroupsFromTrace,
   splitBillingExprAndRequestRules,
   tryParseRequestRuleExpr,
+  type ParamHeaderCondition,
   type ParsedTaskTier,
   type ParsedTier,
-  type RequestCondition,
   type RequestRuleGroup,
   type RequestRuleTrace,
   type TierCondition,
@@ -134,13 +130,6 @@ const OP_LABELS: Record<string, string> = {
   '>': '>',
   '>=': '≥',
 }
-const TIME_FUNC_LABELS: Record<string, string> = {
-  hour: 'Hour',
-  minute: 'Minute',
-  weekday: 'Weekday',
-  month: 'Month',
-  day: 'Day',
-}
 
 function formatTokenHint(value: string | number): string {
   const n = Number(value)
@@ -223,22 +212,9 @@ function formatBreakdownPrice(
 }
 
 function describeCondition(
-  cond: RequestCondition,
+  cond: ParamHeaderCondition,
   t: (key: string) => string
 ): string {
-  if (cond.source === SOURCE_TIME) {
-    const fn = t(TIME_FUNC_LABELS[cond.timeFunc] || cond.timeFunc)
-    const tz = cond.timezone || 'UTC'
-    if (cond.mode === MATCH_RANGE) {
-      return `${fn} ${cond.rangeStart}:00~${cond.rangeEnd}:00 (${tz})`
-    }
-    const opMap: Record<string, string> = {
-      [MATCH_EQ]: '=',
-      [MATCH_GTE]: '≥',
-      [MATCH_LT]: '<',
-    }
-    return `${fn} ${opMap[cond.mode] || '='} ${cond.value} (${tz})`
-  }
   const src = cond.source === 'header' ? t('Header') : t('Body param')
   const path = cond.path || ''
   if (cond.mode === MATCH_EXISTS) return `${src} ${path} ${t('Exists')}`
@@ -260,14 +236,18 @@ function describeGroup(
   t: (key: string) => string,
   locale: string
 ): string {
-  if (group.conditionText) {
-    const formatted = formatBillingCondition(group.conditionText, t, locale)
-    if (formatted) return formatted
+  const source = group.conditionText || ''
+  const formatted = formatBillingCondition(source, t, locale)
+  if (formatted) return formatted
+  if (
+    group.conditions.length > 0 &&
+    group.conditions.every((condition) => condition.source !== SOURCE_TIME)
+  ) {
+    return group.conditions
+      .map((condition) => describeCondition(condition, t))
+      .join(' && ')
   }
-  const description = (group.conditions || [])
-    .map((condition) => describeCondition(condition, t))
-    .join(' && ')
-  return description || group.conditionText || ''
+  return source
 }
 
 function nextOccurrenceKey(
@@ -725,6 +705,7 @@ export function DynamicPricingBreakdown({
                   )}
                 >
                   <span
+                    title={group.conditionText}
                     className={cn(
                       'text-foreground break-all',
                       compact ? 'text-xs' : 'text-sm'
