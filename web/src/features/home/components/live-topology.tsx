@@ -37,6 +37,7 @@ import { GroupMultiplierBadge } from '@/components/group-badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useGroupStatusBoard } from '@/features/group-status/api'
+import { GroupCacheHitRate } from '@/features/group-status/components/group-cache-hit-rate'
 import { formatGroupRate } from '@/features/group-status/lib/format'
 import {
   GROUP_HEALTH_COLOR,
@@ -128,8 +129,13 @@ function GroupNodeText(props: { group: GroupStatusItem; locale?: string }) {
           className='h-[18px] min-w-0 shrink-0 px-1.5 text-[11px]'
         />
       </span>
-      <span className='text-muted-foreground block truncate font-mono text-[11px] leading-4'>
-        {modelLine || t('No models')}
+      <span className='text-muted-foreground flex min-w-0 items-center gap-2 font-mono text-[11px] leading-4'>
+        <span className='min-w-0 flex-1 truncate'>
+          {modelLine || t('No models')}
+        </span>
+        <span className='shrink-0'>
+          <GroupCacheHitRate group={group} compact />
+        </span>
       </span>
       <span className='text-muted-foreground/75 block truncate font-mono text-[10.5px] leading-4 tabular-nums'>
         {metricsLine}

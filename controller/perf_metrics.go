@@ -16,17 +16,19 @@ import (
 )
 
 type perfGroupStatusItem struct {
-	Name          string                   `json:"name"`
-	Description   string                   `json:"description"`
-	Ratio         float64                  `json:"ratio"`
-	Models        []string                 `json:"models"`
-	EndpointTypes []constant.EndpointType  `json:"endpoint_types"`
-	Status        *perfmetrics.GroupStatus `json:"status"`
+	Name           string                   `json:"name"`
+	Description    string                   `json:"description"`
+	Ratio          float64                  `json:"ratio"`
+	Models         []string                 `json:"models"`
+	EndpointTypes  []constant.EndpointType  `json:"endpoint_types"`
+	Status         *perfmetrics.GroupStatus `json:"status"`
+	CacheHitRate   *float64                 `json:"cache_hit_rate"`
+	CacheWindowEnd int64                    `json:"cache_window_end"`
 }
 
-// GetPerfMetricsGroups serves the public group status board: every group the
-// visitor can select with its ratio, models and the last 24 hours of relay
-// health. Groups without samples in the window keep a null status.
+// GetPerfMetricsGroups serves the visitor's named service groups with their
+// ratio, models and the last 24 hours of relay health. Groups without samples
+// in the window keep a null status.
 func GetPerfMetricsGroups(c *gin.Context) {
 	userGroup := ""
 	if userId, exists := c.Get("id"); exists {
@@ -38,9 +40,9 @@ func GetPerfMetricsGroups(c *gin.Context) {
 	usableGroups := service.GetUserUsableGroups(userGroup)
 	names := make([]string, 0, len(usableGroups))
 	for name := range usableGroups {
-		// Same rule as token group selection: auto is not a channel group and a
-		// group without a ratio cannot be selected.
-		if _, ok := groupRatios[name]; ok && name != "auto" {
+		// Account fallback and automatic selection are not service groups on
+		// the public board. Named groups still need a configured ratio.
+		if _, ok := groupRatios[name]; ok && name != "auto" && name != "default" {
 			names = append(names, name)
 		}
 	}
@@ -69,6 +71,10 @@ func GetPerfMetricsGroups(c *gin.Context) {
 		}
 		if status, ok := result.Groups[name]; ok {
 			item.Status = &status
+		}
+		if usage, ok := result.CacheUsage[name]; ok {
+			item.CacheHitRate = &usage.Rate
+			item.CacheWindowEnd = usage.WindowEnd
 		}
 		groups = append(groups, item)
 	}

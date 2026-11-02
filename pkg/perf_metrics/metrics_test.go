@@ -156,11 +156,13 @@ func TestRecordTaskResultSamplesTerminalTasks(t *testing.T) {
 	}, merged[bucketKey{model: "video-model", group: "a"}])
 }
 
-// TEST_PERF_MYSQL_DSN / TEST_PERF_POSTGRES_DSN optionally run the aggregation
-// against isolated real MySQL/PostgreSQL databases.
+// TEST_PERF_*_DSN and TEST_PERF_*_LOG_DSN run the aggregation against
+// isolated real main and log databases.
 func TestPerformanceAggregationAndFlush(t *testing.T) {
-	for _, dialect := range []struct{ name, env string }{
-		{"sqlite", ""}, {"mysql", "TEST_PERF_MYSQL_DSN"}, {"postgres", "TEST_PERF_POSTGRES_DSN"},
+	for _, dialect := range []struct{ name, env, logEnv string }{
+		{"sqlite", "", ""},
+		{"mysql", "TEST_PERF_MYSQL_DSN", "TEST_PERF_MYSQL_LOG_DSN"},
+		{"postgres", "TEST_PERF_POSTGRES_DSN", "TEST_PERF_POSTGRES_LOG_DSN"},
 	} {
 		t.Run(dialect.name, func(t *testing.T) {
 			dsn := ""
@@ -171,12 +173,13 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 				}
 			}
 			t.Setenv("SQL_DSN", dsn)
-			oldDB, oldPath, oldMaster, oldRedis := model.DB, common.SQLitePath, common.IsMasterNode, common.RedisEnabled
+			oldDB, oldLogDB, oldPath, oldMaster, oldRedis := model.DB, model.LOG_DB, common.SQLitePath, common.IsMasterNode, common.RedisEnabled
 			oldType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 			common.SQLitePath, common.IsMasterNode, common.RedisEnabled = filepath.Join(t.TempDir(), "perf.db"), false, false
 			hotBuckets.Clear()
 			t.Cleanup(func() {
 				model.DB, common.SQLitePath, common.IsMasterNode, common.RedisEnabled = oldDB, oldPath, oldMaster, oldRedis
+				model.LOG_DB = oldLogDB
 				common.SetDatabaseTypes(oldType, oldLogType)
 				hotBuckets.Clear()
 			})
@@ -187,6 +190,21 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 			require.NoError(t, db.Migrator().DropTable(&model.PerfMetric{}))
 			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}))
+			logDSN := "local"
+			if dialect.logEnv != "" {
+				logDSN = os.Getenv(dialect.logEnv)
+				require.NotEmpty(t, logDSN, "an isolated log database DSN is required")
+			}
+			t.Setenv("LOG_SQL_DSN", logDSN)
+			common.SQLitePath = filepath.Join(t.TempDir(), "perf-logs.db")
+			require.NoError(t, model.InitLogDB())
+			logDB := model.LOG_DB
+			require.NotSame(t, db, logDB)
+			logSQLDB, err := logDB.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, logSQLDB.Close()) })
+			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+			t.Cleanup(func() { require.NoError(t, logDB.Migrator().DropTable(&model.Log{})) })
 			versionQuery := "SELECT version()"
 			if dialect.name == "sqlite" {
 				versionQuery = "SELECT sqlite_version()"
@@ -265,9 +283,32 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 
 			// Status board: one point per hour across the window, the shortest
 			// trailing window with enough samples, and no entry for idle groups.
+			cacheEnd := now.Add(-48 * time.Hour).Unix()
+			for _, row := range []model.Log{
+				{Group: "a", Type: model.LogTypeConsume, CreatedAt: cacheEnd - 301, PromptTokens: 100, Other: `{"cache_tokens":100}`},
+				{Group: "a", Type: model.LogTypeConsume, CreatedAt: cacheEnd - 240, PromptTokens: 100, Other: `{"cache_tokens":20}`},
+				{Group: "a", Type: model.LogTypeConsume, CreatedAt: cacheEnd - 120, PromptTokens: 20, Other: `{"usage_semantic":"anthropic","cache_tokens":60,"cache_creation_tokens":20,"cache_creation_tokens_5m":2,"cache_creation_tokens_1h":18}`},
+				{Group: "a", Type: model.LogTypeConsume, CreatedAt: cacheEnd, PromptTokens: 800, Other: `{"usage_semantic":"openai","claude":true,"input_tokens_total":200,"cache_tokens":100}`},
+				{Group: "a", Type: model.LogTypeRefund, CreatedAt: now.Unix(), PromptTokens: 100, Other: `{"cache_tokens":100}`},
+				{Group: "b", Type: model.LogTypeConsume, CreatedAt: cacheEnd, Other: `{"claude":true,"cache_tokens":80,"cache_write_tokens":20,"cache_creation_tokens":20,"cache_creation_tokens_5m":20}`},
+				{Group: "uncached", Type: model.LogTypeConsume, CreatedAt: cacheEnd, PromptTokens: 100, Other: `{"cache_tokens":0}`},
+				{Group: "no-input", Type: model.LogTypeConsume, CreatedAt: cacheEnd, Other: `{"is_task":true}`},
+				{Group: "inactive", Type: model.LogTypeConsume, CreatedAt: cacheEnd, PromptTokens: 100, Other: `{"cache_tokens":100}`},
+			} {
+				require.NoError(t, logDB.Create(&row).Error)
+			}
 			clear(groupStatusCache)
-			board, err := QueryGroupStatus([]string{"a", "b", "idle"})
+			boardGroups := []string{"a", "b", "idle", "uncached", "no-input"}
+			board, err := QueryGroupStatus(boardGroups)
 			require.NoError(t, err)
+			assert.Equal(t, map[string]GroupCacheUsage{
+				"a": {Rate: 45, WindowEnd: cacheEnd}, "b": {Rate: 80, WindowEnd: cacheEnd},
+				"uncached": {Rate: 0, WindowEnd: cacheEnd},
+			}, board.CacheUsage, "aggregate token quantities, preserve real zero hits, and leave missing input unknown")
+			clear(groupStatusCache)
+			reloadedBoard, err := QueryGroupStatus(boardGroups)
+			require.NoError(t, err)
+			assert.Equal(t, board.CacheUsage, reloadedBoard.CacheUsage, "an idle group's last five-minute window survives rebuilding the process cache")
 			assert.Equal(t, &Summary{SuccessRate: 98.04, AvgLatencyMs: 1000, AvgTps: 5}, board.Summary)
 			assert.Equal(t, int64(102), board.RequestCount)
 			require.Len(t, board.Groups, 2)

@@ -28,6 +28,8 @@ const group: GroupStatusItem = {
   ratio: 1,
   models: [],
   endpoint_types: [],
+  cache_hit_rate: null,
+  cache_window_end: 0,
   status: null,
 }
 

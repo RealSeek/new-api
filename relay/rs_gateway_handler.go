@@ -215,6 +215,9 @@ func RSGatewayHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIE
 	streamInterrupted := false
 	defer func() {
 		if info.RSGatewayBillingReceipt {
+			if usage := usageTracker.Usage(); usage != nil {
+				info.PerformanceOutputTokens = int64(usage.CompletionTokens)
+			}
 			return
 		}
 		usage := imageUsage

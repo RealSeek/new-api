@@ -18,12 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  flexRender,
   getCoreRowModel,
   useReactTable,
   type VisibilityState,
 } from '@tanstack/react-table'
-import { render, screen, within, waitFor } from '@testing-library/react'
+import { act, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next, { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { expect, it, vi } from 'vitest'
 
 import { usageLogSchema, type UsageLog } from '../../data/schema'
@@ -60,6 +63,7 @@ function Fixture(props: {
   visibility?: VisibilityState
   logs?: UsageLog[]
   loading?: boolean
+  desktop?: boolean
 }) {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
@@ -69,6 +73,14 @@ function Fixture(props: {
     getCoreRowModel: getCoreRowModel(),
     state: { columnVisibility: props.visibility ?? {} },
   })
+  if (props.desktop) {
+    const cell = table
+      .getRowModel()
+      .rows[0].getAllCells()
+      .find((candidate) => candidate.column.id === 'prompt_tokens')
+    if (!cell) throw new Error('The log must have a token column')
+    return flexRender(cell.column.columnDef.cell, cell.getContext())
+  }
   return (
     <>
       <button type='button' onClick={() => context.setSensitiveVisible(false)}>
@@ -83,17 +95,22 @@ function Fixture(props: {
   )
 }
 
-function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
+function renderLogs(
+  props: Parameters<typeof Fixture>[0] = {},
+  language = i18next
+) {
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <UsageLogsProvider>
-        <Fixture {...props} />
-      </UsageLogsProvider>
-    </QueryClientProvider>
+    <I18nextProvider i18n={language}>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <UsageLogsProvider>
+          <Fixture {...props} />
+        </UsageLogsProvider>
+      </QueryClientProvider>
+    </I18nextProvider>
   )
 }
 
@@ -218,12 +235,242 @@ it('respects hidden columns and omits admin fields in the self view', () => {
   expect(screen.queryByText('enterprise-production')).not.toBeInTheDocument()
 })
 
-it('keeps input, output and cache quantities readable without empty metric cells', () => {
-  renderLogs()
-  expect(screen.getByText('Input')).toBeVisible()
-  expect(screen.getByText('Output')).toBeVisible()
-  expect(screen.getByText(/300/)).toBeVisible()
-  expect(screen.getByText('Cache ↑ 200')).toBeVisible()
+it.each([false, true])(
+  'keeps regular input and labeled cache quantities separate (desktop=%s)',
+  async (desktop) => {
+    const user = userEvent.setup()
+    renderLogs({ desktop })
+    const tokens = screen.getByRole('button', { name: 'Token usage' })
+    expect(
+      within(tokens).getByLabelText('Regular Input: 700')
+    ).toHaveTextContent('700')
+    expect(within(tokens).getByLabelText('Output: 800')).toHaveTextContent(
+      '800'
+    )
+    const read = within(tokens).getByText('Cache Read').parentElement
+    const write = within(tokens).getByText('Cache Write').parentElement
+    expect(read).toHaveTextContent('300')
+    expect(write).toHaveTextContent('200')
+    expect(read).toHaveClass('text-muted-foreground/60')
+    expect(write).toHaveClass('text-muted-foreground/60')
+    expect(tokens.querySelector('svg')).not.toBeInTheDocument()
+    expect(read?.compareDocumentPosition(write as HTMLElement)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(read?.parentElement).toHaveClass('flex-wrap')
+    expect(tokens).toHaveClass('max-w-full', 'items-start')
+    await user.hover(tokens)
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent(
+      'Total Input = Regular Input + Cache Read + Cache Write'
+    )
+    expect(tooltip).toHaveTextContent('1,200 = 700 + 300 + 200')
+    expect(tooltip).toHaveTextContent(
+      'Unreused Input = Total Input - Cache Read = Regular Input + Cache Write'
+    )
+    expect(tooltip).toHaveTextContent('900 = 1,200 - 300 = 700 + 200')
+    expect(tooltip).toHaveTextContent('Cache hits = Cache Read')
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    )
+  }
+)
+
+it.each([
+  {
+    total: 1717,
+    output: 522,
+    read: 0,
+    write: 1713,
+    ordinary: 4,
+    unreused: 1717,
+  },
+  {
+    total: 21038,
+    output: 435,
+    read: 1827,
+    write: 19207,
+    ordinary: 4,
+    unreused: 19211,
+  },
+  {
+    total: 67743,
+    output: 676,
+    read: 60628,
+    write: 7113,
+    ordinary: 2,
+    unreused: 7115,
+  },
+])(
+  'shows $ordinary regular input from total $total without changing cache counts',
+  async ({ total, output, read, write, ordinary, unreused }) => {
+    renderLogs({
+      desktop: true,
+      logs: [
+        {
+          ...log,
+          prompt_tokens: total,
+          completion_tokens: output,
+          other: JSON.stringify({
+            usage_semantic: 'openai',
+            input_tokens_total: total,
+            cache_tokens: read,
+            cache_creation_tokens: write,
+          }),
+        },
+      ],
+    })
+    expect(screen.getByLabelText(`Regular Input: ${ordinary}`)).toBeVisible()
+    if (read === 0) {
+      expect(screen.queryByText('Cache Read')).not.toBeInTheDocument()
+    }
+    expect(screen.getByText('Cache Write').parentElement).toHaveTextContent(
+      write.toLocaleString('en-US')
+    )
+    await userEvent
+      .setup()
+      .hover(screen.getByRole('button', { name: 'Token usage' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      `${unreused.toLocaleString('en-US')} = ${total.toLocaleString('en-US')} - ${read.toLocaleString('en-US')} = ${ordinary} + ${write.toLocaleString('en-US')}`
+    )
+  }
+)
+
+it.each([
+  { semantic: 'anthropic', claude: false, total: undefined, prompt: 4 },
+  { semantic: undefined, claude: true, total: undefined, prompt: 4 },
+  { semantic: 'anthropic', claude: true, total: 21038, prompt: 4 },
+  { semantic: 'openai', claude: true, total: undefined, prompt: 21038 },
+])(
+  'does not subtract cache twice for recorded semantics $semantic and legacy Claude=$claude',
+  async ({ semantic, claude, total, prompt }) => {
+    renderLogs({
+      desktop: true,
+      logs: [
+        {
+          ...log,
+          model_name: 'opaque-model',
+          prompt_tokens: prompt,
+          completion_tokens: 435,
+          other: JSON.stringify({
+            usage_semantic: semantic,
+            claude,
+            input_tokens_total: total,
+            cache_tokens: 1827,
+            cache_creation_tokens_5m: 19000,
+            cache_creation_tokens_1h: 207,
+          }),
+        },
+      ],
+    })
+    const tokens = screen.getByRole('button', { name: 'Token usage' })
+    expect(within(tokens).getByLabelText('Regular Input: 4')).toBeVisible()
+  }
+)
+
+it('hides zero cache rows while retaining ordinary input and output', () => {
+  renderLogs({ desktop: true, logs: [{ ...log, other: '{}' }] })
+  expect(screen.getByLabelText('Regular Input: 1,200')).toBeVisible()
+  expect(screen.getByLabelText('Output: 800')).toBeVisible()
+  expect(screen.queryByText('Cache Read')).not.toBeInTheDocument()
+  expect(screen.queryByText('Cache Write')).not.toBeInTheDocument()
+})
+
+it.each([
+  {
+    cache_write_tokens: 50,
+    cache_creation_tokens: 40,
+    cache_creation_tokens_5m: 10,
+  },
+  {
+    cache_creation_tokens: 50,
+    cache_creation_tokens_5m: 10,
+    cache_creation_tokens_1h: 20,
+    cache_creation_tokens_12h: 20,
+  },
+])(
+  'uses the complete cache write total when TTL details are partial: %j',
+  (cache) => {
+    renderLogs({
+      desktop: true,
+      logs: [{ ...log, prompt_tokens: 52, other: JSON.stringify(cache) }],
+    })
+    expect(screen.getByLabelText('Regular Input: 2')).toBeVisible()
+    expect(screen.getByText('Cache Write').parentElement).toHaveTextContent(
+      '50'
+    )
+  }
+)
+
+it('shows a fully cached Anthropic request even when ordinary input and output are zero', () => {
+  renderLogs({
+    logs: [
+      {
+        ...log,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        other: JSON.stringify({
+          usage_semantic: 'anthropic',
+          cache_tokens: 1827,
+          cache_creation_tokens: 19207,
+        }),
+      },
+    ],
+  })
+  expect(screen.getByLabelText('Regular Input: 0')).toBeVisible()
+  expect(screen.getByText('Cache Read').parentElement).toHaveTextContent(
+    '1,827'
+  )
+  expect(screen.getByText('Cache Write').parentElement).toHaveTextContent(
+    '19,207'
+  )
+})
+
+it.each([
+  ['zhCN', '1,200'],
+  ['zhTW', '1,200'],
+  ['en', '1,200'],
+  ['fr', '1\u202f200'],
+  ['ja', '1,200'],
+  ['ru', '1\u00a0200'],
+  ['vi', '1.200'],
+  ['invalid_locale', '1,200'],
+])(
+  'formats token quantities for interface language %s',
+  async (code, number) => {
+    const language = createInstance()
+    await language.init({
+      lng: code,
+      fallbackLng: false,
+      resources: { [code]: { translation: { 'Token usage': 'Token usage' } } },
+    })
+    renderLogs({ desktop: true, logs: [{ ...log, other: '{}' }] }, language)
+    expect(
+      screen.getByLabelText(`Regular Input: ${number}`, {
+        normalizer: (value) => value,
+      })
+    ).toBeVisible()
+  }
+)
+
+it('updates token formatting when the interface language changes', async () => {
+  const language = createInstance()
+  await language.init({
+    lng: 'en',
+    resources: {
+      en: { translation: { 'Token usage': 'Token usage' } },
+      fr: { translation: { 'Token usage': 'Token usage' } },
+    },
+  })
+  renderLogs({ desktop: true, logs: [{ ...log, other: '{}' }] }, language)
+  expect(screen.getByLabelText('Regular Input: 1,200')).toBeVisible()
+  await act(() => language.changeLanguage('fr'))
+  expect(
+    screen.getByLabelText('Regular Input: 1\u202f200', {
+      normalizer: (value) => value,
+    })
+  ).toBeVisible()
 })
 
 it('shows the established empty state when no logs exist', () => {

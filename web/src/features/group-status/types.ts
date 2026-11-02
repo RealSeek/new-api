@@ -42,6 +42,10 @@ export type GroupStatusItem = {
   /** Busiest models first. */
   models: string[]
   endpoint_types: string[]
+  /** Token-weighted cache read percentage in the latest valid five-minute window. */
+  cache_hit_rate: number | null
+  /** Unix seconds; unchanged during idle refreshes, or 0 before the first sample. */
+  cache_window_end: number
   /** Null when the group had no samples in the window. */
   status: GroupStatusMetrics | null
 }

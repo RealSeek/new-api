@@ -357,6 +357,53 @@ export function hasAnyCacheTokens(
   )
 }
 
+export type TokenUsageBreakdown = {
+  totalInput: number
+  regularInput: number
+  unreusedInput: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  hasUsage: boolean
+}
+
+/** Normalize the recorded input convention without changing the usage facts. */
+export function getTokenUsageBreakdown(
+  log: Pick<UsageLog, 'prompt_tokens' | 'completion_tokens'>,
+  other: LogOtherData | null
+): TokenUsageBreakdown {
+  const cacheRead = other?.cache_tokens ?? 0
+  // Split TTL counts may be partial; 12h is a subset of the aggregate.
+  const cacheWrite =
+    other?.cache_write_tokens ??
+    Math.max(
+      other?.cache_creation_tokens ?? 0,
+      (other?.cache_creation_tokens_5m ?? 0) +
+        (other?.cache_creation_tokens_1h ?? 0),
+      other?.cache_creation_tokens_12h ?? 0
+    )
+  const separateCache =
+    other?.usage_semantic === 'anthropic' ||
+    (other?.usage_semantic !== 'openai' && other?.claude === true)
+  const totalInput =
+    other?.input_tokens_total ??
+    log.prompt_tokens + (separateCache ? cacheRead + cacheWrite : 0)
+  const regularInput = Math.max(totalInput - cacheRead - cacheWrite, 0)
+  return {
+    totalInput,
+    regularInput,
+    unreusedInput: regularInput + cacheWrite,
+    output: log.completion_tokens,
+    cacheRead,
+    cacheWrite,
+    hasUsage:
+      totalInput > 0 ||
+      log.completion_tokens > 0 ||
+      cacheRead > 0 ||
+      cacheWrite > 0,
+  }
+}
+
 export function getTieredBillingSummary(
   other: LogOtherData | null
 ): TieredBillingSummary | null {

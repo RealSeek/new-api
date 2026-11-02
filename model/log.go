@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm.DB, error) {
@@ -521,6 +522,69 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 		tx = tx.Where("logs."+logGroupCol+" = ?", f.Group)
 	}
 	return tx, nil
+}
+
+type GroupLogCacheUsage struct {
+	CacheReadTokens int64
+	InputTokens     int64
+	WindowEnd       int64
+}
+
+// GetGroupLogCacheUsage anchors a five-minute window to the group's latest
+// consume log, so an idle group's last window survives restarts and other nodes.
+func GetGroupLogCacheUsage(group string) (GroupLogCacheUsage, error) {
+	query := LOG_DB.Model(&Log{}).Where("type = ?", LogTypeConsume).
+		Where(clause.Eq{Column: "group", Value: group})
+	var latest struct{ CreatedAt int64 }
+	if err := query.Select("created_at").Order("created_at DESC").Limit(1).Find(&latest).Error; err != nil {
+		return GroupLogCacheUsage{}, err
+	}
+	result := GroupLogCacheUsage{WindowEnd: latest.CreatedAt}
+	if latest.CreatedAt == 0 {
+		return result, nil
+	}
+	var logs []struct {
+		CreatedAt    int64
+		PromptTokens int64
+		Other        string
+	}
+	if err := LOG_DB.Model(&Log{}).Select("created_at, prompt_tokens, other").
+		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, latest.CreatedAt-300, latest.CreatedAt).
+		Where(clause.Eq{Column: "group", Value: group}).Find(&logs).Error; err != nil {
+		return GroupLogCacheUsage{}, err
+	}
+	for _, log := range logs {
+		var other struct {
+			CacheTokens            int64  `json:"cache_tokens"`
+			InputTokensTotal       *int64 `json:"input_tokens_total"`
+			UsageSemantic          string `json:"usage_semantic"`
+			Claude                 bool   `json:"claude"`
+			CacheWriteTokens       *int64 `json:"cache_write_tokens"`
+			CacheCreationTokens    int64  `json:"cache_creation_tokens"`
+			CacheCreationTokens5m  int64  `json:"cache_creation_tokens_5m"`
+			CacheCreationTokens1h  int64  `json:"cache_creation_tokens_1h"`
+			CacheCreationTokens12h int64  `json:"cache_creation_tokens_12h"`
+		}
+		if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+			continue
+		}
+		inputTokens := log.PromptTokens
+		if other.InputTokensTotal != nil {
+			inputTokens = *other.InputTokensTotal
+		} else if other.UsageSemantic == "anthropic" || other.UsageSemantic != "openai" && other.Claude {
+			cacheWrite := max(other.CacheCreationTokens, other.CacheCreationTokens5m+other.CacheCreationTokens1h, other.CacheCreationTokens12h)
+			if other.CacheWriteTokens != nil {
+				cacheWrite = *other.CacheWriteTokens
+			}
+			inputTokens += other.CacheTokens + cacheWrite
+		}
+		if inputTokens <= 0 || other.CacheTokens < 0 || other.CacheTokens > inputTokens {
+			continue
+		}
+		result.CacheReadTokens += other.CacheTokens
+		result.InputTokens += inputTokens
+	}
+	return result, nil
 }
 
 func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {

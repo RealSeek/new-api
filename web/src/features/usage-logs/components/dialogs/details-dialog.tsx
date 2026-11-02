@@ -62,8 +62,14 @@ import { BILLING_PRICING_VARS } from '@/features/pricing/lib/billing-expr'
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { PolicyDecisionRecord } from '@/features/system-settings/request-policies/decision-record'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import {
+  formatLogQuota,
+  formatNumber,
+  formatTokens,
+  formatUseTime,
+} from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -71,6 +77,7 @@ import { AuditDetailFields } from '../../audit/components/audit-detail-fields'
 import type { UsageLog } from '../../data/schema'
 import {
   parseLogOther,
+  getTokenUsageBreakdown,
   getParamOverrideActionLabel,
   parseAuditLine,
   decodeBillingExprB64,
@@ -392,89 +399,77 @@ function BillingBreakdown(props: {
 }
 
 function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
-  const { t } = useTranslation()
-  const { log, other } = props
-
-  const promptTokens = log.prompt_tokens || 0
-  const completionTokens = log.completion_tokens || 0
-  const cacheRead = other.cache_tokens || 0
-  const cacheWrite = other.cache_creation_tokens || 0
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const other = props.other
+  const usage = getTokenUsageBreakdown(props.log, other)
   const cacheWrite5m = other.cache_creation_tokens_5m || 0
   const cacheWrite1h = other.cache_creation_tokens_1h || 0
   const cacheWrite12h = other.cache_creation_tokens_12h || 0
-  // cache_creation_tokens counts OpenAI 30-minute and 12-hour writes together.
+  // OpenAI 12h writes are included in the normalized write total.
   const cacheWrite30m =
-    cacheWrite12h > 0 ? Math.max(cacheWrite - cacheWrite12h, 0) : 0
-  const hasTokens = promptTokens > 0 || completionTokens > 0
+    cacheWrite12h > 0 ? Math.max(usage.cacheWrite - cacheWrite12h, 0) : 0
+  if (!usage.hasUsage) return null
 
-  if (!hasTokens) return null
-
-  const rows: Array<{ label: string; value: string }> = []
-
-  rows.push({ label: t('Input Tokens'), value: promptTokens.toLocaleString() })
-  rows.push({
-    label: t('Output Tokens'),
-    value: completionTokens.toLocaleString(),
-  })
-
-  if (cacheRead > 0) {
-    rows.push({
-      label: t('Cache Read'),
-      value: cacheRead.toLocaleString(),
-    })
-  }
+  const rows: Array<{ label: string; value: string; detail?: boolean }> = [
+    { label: t('Total Input'), value: formatNumber(usage.totalInput, locale) },
+    {
+      label: t('Regular Input'),
+      value: formatNumber(usage.regularInput, locale),
+    },
+    { label: t('Output Tokens'), value: formatNumber(usage.output, locale) },
+    { label: t('Cache Read'), value: formatNumber(usage.cacheRead, locale) },
+    { label: t('Cache Write'), value: formatNumber(usage.cacheWrite, locale) },
+  ]
 
   if (other.image_cache_tokens !== undefined) {
     rows.push({
       label: t('Image Cache'),
-      value: other.image_cache_tokens.toLocaleString(),
-    })
-  }
-
-  if (
-    cacheWrite > 0 &&
-    cacheWrite5m === 0 &&
-    cacheWrite1h === 0 &&
-    cacheWrite12h === 0
-  ) {
-    rows.push({
-      label: t('Cache Write'),
-      value: cacheWrite.toLocaleString(),
+      value: formatNumber(other.image_cache_tokens, locale),
     })
   }
 
   if (cacheWrite5m > 0) {
     rows.push({
       label: t('Cache Write (5m)'),
-      value: cacheWrite5m.toLocaleString(),
+      value: formatNumber(cacheWrite5m, locale),
+      detail: true,
     })
   }
 
   if (cacheWrite1h > 0) {
     rows.push({
       label: t('Cache Write (1h)'),
-      value: cacheWrite1h.toLocaleString(),
+      value: formatNumber(cacheWrite1h, locale),
+      detail: true,
     })
   }
 
   if (cacheWrite30m > 0) {
     rows.push({
       label: t('Cache Write (30m)'),
-      value: cacheWrite30m.toLocaleString(),
+      value: formatNumber(cacheWrite30m, locale),
+      detail: true,
     })
   }
 
   if (cacheWrite12h > 0) {
     rows.push({
       label: t('Cache Write (12h)'),
-      value: cacheWrite12h.toLocaleString(),
+      value: formatNumber(cacheWrite12h, locale),
+      detail: true,
     })
   }
+
+  rows.push({
+    label: t('Unreused Input'),
+    value: formatNumber(usage.unreusedInput, locale),
+  })
 
   if (other.image && other.image_output) {
     rows.push({
       label: t('Image Tokens'),
-      value: other.image_output.toLocaleString(),
+      value: formatNumber(other.image_output, locale),
     })
   }
 
@@ -488,8 +483,22 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   return (
     <DetailSection label={t('Token Breakdown')}>
       {rows.map((row) => (
-        <DetailRow key={row.label} label={row.label} value={row.value} mono />
+        <div key={row.label} className={row.detail ? 'pl-2' : undefined}>
+          <DetailRow
+            label={row.label}
+            value={row.value}
+            mono
+            muted={row.detail}
+          />
+        </div>
       ))}
+      <p className='text-muted-foreground pt-1 text-xs'>
+        {t('Cache hits = Cache Read')}
+        <br />
+        {t(
+          'Unreused Input = Total Input - Cache Read = Regular Input + Cache Write'
+        )}
+      </p>
       {other.billing_tokens && (
         <div
           role='group'
@@ -506,7 +515,7 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
               <DetailRow
                 key={variable.key}
                 label={t(variable.shortLabel)}
-                value={count.toLocaleString()}
+                value={formatNumber(count, locale)}
                 mono
               />
             )

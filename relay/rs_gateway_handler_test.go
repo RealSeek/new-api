@@ -20,6 +20,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -82,6 +84,64 @@ func TestRSGatewayImageResponse(t *testing.T) {
 			} else {
 				assert.True(t, test.body == recorder.Body.String(), "原始图片响应必须完整保留")
 			}
+		})
+	}
+}
+
+func TestRSGatewayReceiptRelayCapturesPerformanceUsage(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.RSGatewaySettlement{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	previousDB, previousRedis := model.DB, common.RedisEnabled
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	previousGroups := ratio_setting.GroupRatio2JSONString()
+	previousFreePreConsume := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
+	model.DB, common.RedisEnabled = db, false
+	operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gateway-performance":0}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"gateway-performance-group":1}`))
+	t.Cleanup(func() {
+		model.DB, common.RedisEnabled = previousDB, previousRedis
+		operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = previousFreePreConsume
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups))
+	})
+	service.InitHttpClient()
+	for _, tc := range []struct {
+		name, contentType, body string
+		stream                  bool
+	}{
+		{"JSON", "application/json", `{"usage":{"input_tokens":20,"output_tokens":12}}`, false},
+		{"SSE", "text/event-stream", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":20,\"output_tokens\":12}}}\n\ndata: [DONE]\n\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(upstream.Close)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":"gateway-performance","stream":%t}`, tc.stream)))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeRSGateway)
+			common.SetContextKey(c, constant.ContextKeyChannelId, 61)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, "upstream-key")
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "gateway-performance")
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, "gateway-performance-group")
+			c.Set("id", 1)
+			c.Set(common.RequestIdKey, "gateway-performance-"+tc.name)
+			info := relaycommon.GenRSGatewayRelayInfo(c, types.RelayFormatOpenAIResponses, nil)
+			require.Nil(t, RSGatewayHelper(c, info))
+			assert.EqualValues(t, 12, info.PerformanceOutputTokens, "receipt billing still supplies the single request-boundary performance sample")
+			assert.True(t, info.RSGatewayBillingReceipt)
+			var ledger model.RSGatewaySettlement
+			require.NoError(t, db.First(&ledger, "request_id = ?", info.RequestId).Error)
+			assert.Equal(t, "pending", ledger.State, "collecting performance usage must not settle the receipt twice")
 		})
 	}
 }

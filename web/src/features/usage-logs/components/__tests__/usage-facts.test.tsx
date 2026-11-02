@@ -64,7 +64,11 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
+function renderDetails(
+  other: LogOtherData,
+  promptTokens = 0,
+  completionTokens = 0
+): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -79,7 +83,11 @@ function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
   render(
     <QueryClientProvider client={queryClient}>
       <DetailsDialog
-        log={{ ...makeLog(other), prompt_tokens: promptTokens }}
+        log={{
+          ...makeLog(other),
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+        }}
         isAdmin={false}
         isRoot={false}
         open
@@ -155,7 +163,7 @@ test('splits OpenAI cache writes into 30-minute and 12-hour rows with their pric
   )
   expect(rowValue('Cache Write (30m)')).toBe('500')
   expect(rowValue('Cache Write (12h)')).toBe('1,000')
-  expect(screen.queryByText('Cache Write')).toBeNull()
+  expect(rowValue('Cache Write')).toBe('1,500')
   expect(rowValue('Cache Creation (30m)')).toBe('$12.5/M')
   expect(rowValue('Cache Creation (12h)')).toBe('$25/M')
   queryClient.clear()
@@ -179,6 +187,115 @@ test('keeps one cache write row and no cache prices for OpenAI logs without 12-h
   expect(screen.queryByText('Cache Creation (30m)')).toBeNull()
   expect(screen.queryByText('Cache Creation')).toBeNull()
   queryClient.clear()
+})
+
+test.each([
+  {
+    total: 1717,
+    output: 522,
+    read: 0,
+    write: 1713,
+    regular: '4',
+    unreused: '1,717',
+  },
+  {
+    total: 21038,
+    output: 435,
+    read: 1827,
+    write: 19207,
+    regular: '4',
+    unreused: '19,211',
+  },
+  {
+    total: 67743,
+    output: 676,
+    read: 60628,
+    write: 7113,
+    regular: '2',
+    unreused: '7,115',
+  },
+])(
+  'shows ordinary and unreused input separately in details for total $total',
+  ({ total, output, read, write, regular, unreused }) => {
+    const client = renderDetails(
+      {
+        usage_semantic: 'openai',
+        input_tokens_total: total,
+        cache_tokens: read,
+        cache_creation_tokens: write,
+      },
+      total,
+      output
+    )
+    expect(rowValue('Regular Input')).toBe(regular)
+    expect(rowValue('Total Input')).toBe(total.toLocaleString('en-US'))
+    expect(rowValue('Unreused Input')).toBe(unreused)
+    expect(rowValue('Output Tokens')).toBe(output.toLocaleString('en-US'))
+    expect(rowValue('Cache Read')).toBe(read.toLocaleString('en-US'))
+    expect(rowValue('Cache Write')).toBe(write.toLocaleString('en-US'))
+    client.clear()
+  }
+)
+
+test.each([undefined, 21038])(
+  'keeps normalized Anthropic input consistent in details with explicit total %s',
+  (total) => {
+    const client = renderDetails(
+      {
+        usage_semantic: 'anthropic',
+        input_tokens_total: total,
+        cache_tokens: 1827,
+        cache_creation_tokens: 19207,
+      },
+      4,
+      435
+    )
+    expect(rowValue('Regular Input')).toBe('4')
+    expect(rowValue('Total Input')).toBe('21,038')
+    expect(rowValue('Unreused Input')).toBe('19,211')
+    client.clear()
+  }
+)
+
+test.each([undefined, 50])(
+  'retains cache write totals alongside partial TTL details with normalized total %s',
+  (total) => {
+    const client = renderDetails(
+      {
+        cache_write_tokens: total,
+        cache_creation_tokens: 50,
+        cache_creation_tokens_5m: 10,
+        cache_creation_tokens_1h: 20,
+      },
+      52
+    )
+    expect(rowValue('Regular Input')).toBe('2')
+    expect(rowValue('Cache Write')).toBe('50')
+    expect(rowValue('Cache Write (5m)')).toBe('10')
+    expect(rowValue('Cache Write (1h)')).toBe('20')
+    const totalWrite = screen.getByText('Cache Write')
+    const split = screen.getByText('Cache Write (5m)')
+    expect(
+      totalWrite.compareDocumentPosition(split) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    client.clear()
+  }
+)
+
+test('shows fully cached Anthropic usage in details when ordinary input and output are zero', () => {
+  const client = renderDetails({
+    usage_semantic: 'anthropic',
+    cache_tokens: 1827,
+    cache_write_tokens: 19207,
+  })
+  expect(screen.getByText('Token Breakdown')).toBeVisible()
+  expect(rowValue('Regular Input')).toBe('0')
+  expect(rowValue('Output Tokens')).toBe('0')
+  expect(rowValue('Total Input')).toBe('21,034')
+  expect(rowValue('Unreused Input')).toBe('19,207')
+  expect(rowValue('Cache Write')).toBe('19,207')
+  client.clear()
 })
 
 describe('usage facts billing details', () => {
@@ -228,7 +345,7 @@ describe('usage facts billing details', () => {
       '400'
     )
     expect(
-      screen.getByText('Input Tokens').nextElementSibling
+      screen.getByText('Total Input').nextElementSibling
     ).toHaveTextContent('1,000')
     expect(
       screen

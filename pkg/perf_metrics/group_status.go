@@ -50,9 +50,19 @@ func QueryGroupStatus(groups []string) (GroupStatusResult, error) {
 	hourly := map[string]map[int64]counters{}
 	modelRequests := map[string]map[string]int64{}
 	requested := allowedGroupSet(sortedGroups)
-	// The existing per-group-set query keeps this path free of new SQL; the
-	// short cache bounds the per-group round trips.
+	cacheUsage := make(map[string]GroupCacheUsage, len(sortedGroups))
+	// The short cache bounds per-group round trips to the main and log databases.
 	for _, group := range sortedGroups {
+		usage, err := model.GetGroupLogCacheUsage(group)
+		if err != nil {
+			return GroupStatusResult{}, err
+		}
+		if usage.InputTokens > 0 {
+			cacheUsage[group] = GroupCacheUsage{
+				Rate:      float64(usage.CacheReadTokens) / float64(usage.InputTokens) * 100,
+				WindowEnd: usage.WindowEnd,
+			}
+		}
 		rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, []string{group})
 		if err != nil {
 			return GroupStatusResult{}, err
@@ -90,7 +100,7 @@ func QueryGroupStatus(groups []string) (GroupStatusResult, error) {
 
 	currentHour := endTs - endTs%3600
 	all := counters{}
-	result := GroupStatusResult{WindowStart: startTs, WindowEnd: endTs, Groups: make(map[string]GroupStatus, len(hourly))}
+	result := GroupStatusResult{WindowStart: startTs, WindowEnd: endTs, Groups: make(map[string]GroupStatus, len(hourly)), CacheUsage: cacheUsage}
 	for group, buckets := range hourly {
 		total := counters{}
 		series := make([]GroupHourPoint, 0, groupStatusHours)

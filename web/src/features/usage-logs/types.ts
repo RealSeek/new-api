@@ -190,6 +190,9 @@ export interface LogOtherData {
   audio_output?: number
   text_input?: number
   text_output?: number
+  usage_semantic?: 'openai' | 'anthropic'
+  input_tokens_total?: number
+  cache_write_tokens?: number
   cache_tokens?: number
   image_cache_tokens?: number
   billing_tokens?: Record<string, number>

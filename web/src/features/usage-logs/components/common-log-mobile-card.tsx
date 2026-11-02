@@ -40,6 +40,7 @@ import {
 } from '../lib/utils'
 import { ModelBadge, ResponseModelDetails } from './model-badge'
 import { StreamTpsCell, TimingMetricsCell } from './timing-metrics-cell'
+import { TokenUsageDisplay } from './token-usage-display'
 import { useUsageLogsContext } from './usage-logs-provider'
 
 type FieldName =
@@ -127,19 +128,6 @@ export function CommonLogMobileCard<TData>(props: {
   const costCell = props.cells.get('quota')
   const contentCell = props.cells.get('content')
   const channelCell = props.cells.get('channel')
-  const cacheRead = other?.cache_tokens || 0
-  const cacheWrite =
-    (other?.cache_creation_tokens_5m || 0) +
-      (other?.cache_creation_tokens_1h || 0) ||
-    other?.cache_creation_tokens ||
-    0
-  const showTokens =
-    displayable &&
-    props.cells.has('prompt_tokens') &&
-    (log.prompt_tokens > 0 ||
-      log.completion_tokens > 0 ||
-      cacheRead > 0 ||
-      cacheWrite > 0)
 
   return (
     <div className='min-w-0 space-y-2.5 text-sm leading-5'>
@@ -289,31 +277,8 @@ export function CommonLogMobileCard<TData>(props: {
             )}
         </div>
       )}
-      {showTokens && (
-        <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs [overflow-wrap:anywhere]'>
-          <span>
-            {t('Input')}{' '}
-            <span className='text-foreground tabular-nums'>
-              {log.prompt_tokens.toLocaleString()}
-            </span>
-          </span>
-          <span>
-            {t('Output')}{' '}
-            <span className='text-foreground tabular-nums'>
-              {log.completion_tokens.toLocaleString()}
-            </span>
-          </span>
-          {cacheRead > 0 && (
-            <span>
-              {t('Cache')} ↓ {cacheRead.toLocaleString()}
-            </span>
-          )}
-          {cacheWrite > 0 && (
-            <span>
-              {t('Cache')} ↑ {cacheWrite.toLocaleString()}
-            </span>
-          )}
-        </div>
+      {displayable && props.cells.has('prompt_tokens') && (
+        <TokenUsageDisplay log={log} hideEmpty />
       )}
       {contentCell && (
         <div className='relative min-w-0 border-t pt-2 [&_button]:min-h-8 [&_button]:w-full [&_button]:max-w-full [&_button]:pr-5 [&_button]:text-sm [&_button>span]:line-clamp-2 [&_button>span]:[overflow-wrap:anywhere] [&_button>span]:whitespace-normal'>

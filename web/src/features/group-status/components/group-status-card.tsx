@@ -36,6 +36,7 @@ import {
   getGroupProvider,
 } from '../lib/status'
 import type { GroupHealth, GroupStatusItem } from '../types'
+import { GroupCacheHitRate } from './group-cache-hit-rate'
 import { GroupUptimeBars } from './group-uptime-bars'
 
 const PREVIEW_MODEL_COUNT = 3
@@ -123,7 +124,7 @@ export function GroupStatusCard(props: GroupStatusCardProps) {
 
       <GroupUptimeBars series={group.status?.series} />
 
-      <dl className='grid grid-cols-2 gap-2 font-mono text-[11px] tabular-nums sm:grid-cols-4'>
+      <dl className='grid grid-cols-2 gap-2 font-mono text-[11px] tabular-nums sm:grid-cols-5'>
         <div>
           <dt className='text-muted-foreground font-sans break-words'>
             {t('Availability')}
@@ -148,6 +149,14 @@ export function GroupStatusCard(props: GroupStatusCardProps) {
           </dt>
           <dd className='mt-0.5'>
             {formatThroughput(group.status?.avg_tps ?? 0)}
+          </dd>
+        </div>
+        <div>
+          <dt className='text-muted-foreground font-sans break-words'>
+            {t('Cache hit rate')}
+          </dt>
+          <dd className='mt-0.5'>
+            <GroupCacheHitRate group={group} />
           </dd>
         </div>
         <div>

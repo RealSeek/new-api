@@ -120,6 +120,14 @@ type GroupStatusResult struct {
 	WindowEnd    int64
 	// Groups holds only the requested groups that have samples in the window.
 	Groups map[string]GroupStatus
+	// CacheUsage includes only groups whose latest five-minute consume-log
+	// window reports positive input tokens. A measured zero hit rate is retained.
+	CacheUsage map[string]GroupCacheUsage
+}
+
+type GroupCacheUsage struct {
+	Rate      float64
+	WindowEnd int64
 }
 
 type bucketKey struct {
