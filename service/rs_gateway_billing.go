@@ -41,10 +41,13 @@ type RSGatewayBillingReceipt struct {
 }
 
 type RSGatewayBillingAttempt struct {
-	PhysicalID    string                 `json:"physical_id"`
-	Role          string                 `json:"role"`
-	State         string                 `json:"state"`
-	FirstByteMs   *int64                 `json:"first_byte_ms"`
+	PhysicalID  string `json:"physical_id"`
+	Role        string `json:"role"`
+	State       string `json:"state"`
+	FirstByteMs *int64 `json:"first_byte_ms"`
+	// TTFBMs is measured from CCHP request arrival to the winning response's
+	// first upstream byte, matching CCHP's request-level ttfb_ms.
+	TTFBMs        *int64                 `json:"ttfb_ms"`
 	DurationMs    *int64                 `json:"duration_ms"`
 	UsageObserved bool                   `json:"usage_observed"`
 	BillToUser    *bool                  `json:"bill_to_user,omitempty"`
@@ -436,8 +439,8 @@ func reconcileRSGatewayReceipt(ctx context.Context, record model.RSGatewaySettle
 	var durationMs int64
 	if primary >= 0 {
 		attempt := receipt.Attempts[primary]
-		if attempt.FirstByteMs != nil {
-			info.FirstResponseTime = info.StartTime.Add(time.Duration(*attempt.FirstByteMs) * time.Millisecond)
+		if attempt.TTFBMs != nil {
+			info.FirstResponseTime = info.StartTime.Add(time.Duration(*attempt.TTFBMs) * time.Millisecond)
 		}
 		if attempt.DurationMs != nil {
 			durationMs = *attempt.DurationMs

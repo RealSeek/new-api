@@ -266,9 +266,9 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	releaseHistoricalReceipts := make(chan struct{})
 	var releaseHistoricalOnce sync.Once
 	cacheIncluded := true
-	firstByteMs, winnerDurationMs, hedgeDurationMs := int64(250), int64(7500), int64(9200)
+	firstByteMs, ttfbMs, winnerDurationMs, hedgeDurationMs := int64(250), int64(120), int64(7500), int64(9200)
 	receipt := RSGatewayBillingReceipt{Version: 1, RequestID: requestID, Complete: true, Success: true, Attempts: []RSGatewayBillingAttempt{
-		{PhysicalID: "flow:1", Role: "winner", State: "succeeded", FirstByteMs: &firstByteMs, DurationMs: &winnerDurationMs, UsageObserved: true, Usage: &RSGatewayBillingUsage{
+		{PhysicalID: "flow:1", Role: "winner", State: "succeeded", FirstByteMs: &firstByteMs, TTFBMs: &ttfbMs, DurationMs: &winnerDurationMs, UsageObserved: true, Usage: &RSGatewayBillingUsage{
 			InputTokens: 80, OutputTokens: 10, CacheReadTokens: 20, CacheCreationTokens: 5, CacheCreation5mTokens: 2, CacheCreation1hTokens: 3, InputIncludesCache: &cacheIncluded,
 		}},
 		{PhysicalID: "flow:2", Role: "hedge", State: "cancelled", DurationMs: &hedgeDurationMs, UsageObserved: true, Usage: &RSGatewayBillingUsage{InputTokens: 80, OutputTokens: 5, InputIncludesCache: &cacheIncluded}},
@@ -366,6 +366,9 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 	if funding == "subscription" {
 		info.RelayFormat = types.RelayFormatClaude
 		info.RequestURLPath = "/v1/messages?beta=true"
+		// Older receipts have first-content timing only. It must not be
+		// presented as TTFB when the new field is absent.
+		receipt.Attempts[0].TTFBMs = nil
 	}
 	info.InitRequestConversionChain()
 	require.NoError(t, PrepareRSGatewayReceipt(c, info))
@@ -575,7 +578,11 @@ func runRSGatewayReceiptAccounting(t *testing.T, db *gorm.DB, funding string) {
 		assert.Equal(t, "/v1/chat/completions", other["request_path"])
 		assert.Equal(t, []any{"OpenAI Compatible"}, other["request_conversion"])
 	}
-	assert.Equal(t, float64(250), other["frt"])
+	if funding == "wallet" {
+		assert.Equal(t, float64(120), other["frt"], "first response uses CCHP request-level TTFB rather than the attempt's first content time")
+	} else {
+		assert.Zero(t, other["frt"], "a receipt without TTFB must not substitute its first-content time")
+	}
 	admin, ok := other["admin_info"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, float64(7500), admin["duration_ms"])
